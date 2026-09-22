@@ -8,7 +8,7 @@
     { "binding": "COUPON_ANALYZER", "service": "coupon-analyzer-api" }
   ],
   "d1_databases": [
-    { "binding": "DB", "database_name": "winning-url-vault", "database_id": "REPLACE_AFTER_D1_CREATE" }
+    { "binding": "DB", "database_name": "winning-url-vault", "database_id": "1d3e496f-3d8c-49d7-892a-d32ea5661e0c" }
   ],
   "vars": {
     "COKEON_REDEEM_BASE_URL": "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode="
