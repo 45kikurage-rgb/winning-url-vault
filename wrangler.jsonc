@@ -4,7 +4,14 @@
   "main": "src/index.js",
   "compatibility_date": "2026-09-22",
   "assets": { "directory": "./public", "binding": "ASSETS" },
+  "services": [
+    { "binding": "COUPON_ANALYZER", "service": "coupon-analyzer-api" }
+  ],
   "d1_databases": [
     { "binding": "DB", "database_name": "winning-url-vault", "database_id": "REPLACE_AFTER_D1_CREATE" }
-  ]
+  ],
+  "vars": {
+    "COKEON_REDEEM_BASE_URL": "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode="
+  },
+  "observability": { "enabled": true }
 }

@@ -1,1 +1,52 @@
-<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#020711"><title>当選URL管理</title><link rel="stylesheet" href="/styles.css"></head><body><main><header><p>WINNING URL VAULT</p><h1>当選URL管理</h1></header><section class="summary"><article><span>保有</span><strong id="total">—</strong></article><article><span>未判定</span><strong id="unknown">—</strong></article></section><section><h2>クーポン・コード</h2><p class="note">確定済みカードは後から自動再判定しません。判定情報の全一致時だけ自動振り分けします。</p><div id="cards" class="grid"><div class="empty">カード読み込み待ち</div></div></section><section class="unresolved"><div class="row"><div><h2>未判定URL</h2><p>解析ルール更新後、このカードだけ再解析できます。</p></div><button id="retry">再解析</button></div><strong id="unknownBottom">—件</strong><div id="unknownList"></div></section></main><script src="/app.js"></script></body></html>
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#020711">
+  <title>当選URL管理</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<main>
+  <header><p>WINNING URL VAULT</p><h1>当選URL管理</h1></header>
+
+  <section class="receive panel">
+    <div><h2>URL・コード受信</h2><p>1行に1件ずつ貼り付けます。重複は保存前に除外します。</p></div>
+    <textarea id="receiveInput" rows="4" placeholder="クーポンURL / Coke ONコード / PayPayコード"></textarea>
+    <div class="actions"><button id="paste" class="secondary">貼り付け</button><button id="receive">解析して保管</button></div>
+    <p id="receiveResult" class="result" aria-live="polite"></p>
+  </section>
+
+  <section class="summary" aria-label="集計">
+    <article><span>保有</span><strong id="total">—</strong></article>
+    <article><span>確認待ち</span><strong id="pendingCount">—</strong></article>
+    <article><span>未判定</span><strong id="unknown">—</strong></article>
+  </section>
+
+  <section id="pendingSection" class="panel hidden">
+    <h2>初回確認</h2>
+    <p>初めての商品・期限だけ確認します。確定後のカードは自動再判定しません。</p>
+    <div id="pendingList" class="pending-list"></div>
+  </section>
+
+  <section class="panel">
+    <h2>クーポン・コード</h2>
+    <p>判定用データと期限が全一致した場合だけ自動振り分けします。</p>
+    <div id="cards" class="grid"><div class="empty">カード読み込み待ち</div></div>
+  </section>
+
+  <section class="unresolved panel">
+    <div class="row"><div><h2>未判定URL</h2><p>ルール更新後、ここだけ手動で再解析できます。</p></div><button id="retry">再解析</button></div>
+    <strong id="unknownBottom">—件</strong><div id="unknownList"></div>
+  </section>
+</main>
+
+<dialog id="itemsDialog">
+  <div class="dialog-head"><div><small>カード内容</small><h2 id="dialogTitle"></h2></div><button id="dialogClose" class="secondary">閉じる</button></div>
+  <div id="itemList" class="item-list"></div>
+  <button id="loadMore" class="secondary hidden">続きを表示</button>
+</dialog>
+<script src="/app.js"></script>
+</body>
+</html>

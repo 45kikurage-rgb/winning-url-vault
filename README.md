@@ -1,19 +1,43 @@
 # Winning URL Vault
 
-次回抽選から運用する当選URL管理専用サイトのベースです。
+次回抽選から運用する、新しい当選URL管理Workerです。旧当選管理サイトの在庫や配置換え機能には触れません。
 
-## Core rules
-- URL受信時に解析し、確定済みカードは後から自動再判定・自動統合しない。
-- 判定は表示名ではなく product_id が参照する正規化済み判定データで行う。
-- URLクーポンは必須項目の正規化後「全一致」の場合だけ既存カードへ自動振り分ける。
-- 情報不足・未知パターンは未判定URLへ隔離する。
-- 未判定URLだけ、解析ルール更新後に利用者が「再解析」を押して再判定できる。
-- 初回カード作成は画像・表記を確認し OK / 修正 / キャンセル。
-- Coke ON / Amazonギフト券 / PayPay はコード判定系としてURL解析と分離する。
-- 大量URLをカード画面へ一括描画せず、DBでは個別レコードとして保持する。
+## 実装済みフロー
 
-## Data model
-product_master: raw_name / normalized_name / display_name / redeem_place / image
-cards: product_id + expiry + specification fingerprint
-items: URL/code inventory
-unresolved_items: unresolved queue
+1. `POST /api/receive` でURL・コードを受信し、`canonical_value` の一意制約で重複を排除
+2. URLはCloudflare Service Binding経由で `coupon-analyzer-api /api/analyze-detail` を呼び出す
+3. 正式商品名、容量・規格、利用先、必要条件を正規化し、全一致キーを作成
+4. 確認済みの商品＋同一期限カードがある場合だけ自動振り分け
+5. 初回の商品・期限は画像と解析内容を `pending_confirmations` に保存し、OK / 修正 / キャンセル待ち
+6. 必須情報不足、未知URL、汎用名は既存カードへ入れず `unresolved_items` に隔離
+7. `POST /api/unresolved/retry` は未判定だけを再解析。確定済みカードは対象外
+8. カード内容は50件ずつ取得し、2,000件以上でも全件DOM描画しない
+
+## 判定事故の防止
+
+- `display_name` は画面表示専用で、照合キーには使用しない
+- 「セブン-イレブン クーポン」などの汎用名は失敗扱い
+- 近似一致、部分一致、店舗名だけの一致は行わない
+- 一度確定したURLはAnalyzer更新後も自動で再判定・統合しない
+- Amazonギフト券は現行データ確認前のため自動判定しない
+
+## D1作成と反映
+
+```sh
+npx wrangler d1 create winning-url-vault
+# 表示された database_id を wrangler.jsonc に設定
+npm run db:remote
+npm run deploy
+```
+
+ローカル確認は `npm run db:local`、テストは `npm test` を使用します。
+
+## 主なAPI
+
+- `POST /api/receive` `{ "text": "URLまたはコードを1行1件" }`
+- `GET /api/cards`
+- `GET /api/cards/:id/items?limit=50&cursor=...`
+- `GET /api/pending`
+- `POST /api/pending/:id/confirm` `{ "action": "ok|edit|cancel" }`
+- `GET /api/unresolved`
+- `POST /api/unresolved/retry`
