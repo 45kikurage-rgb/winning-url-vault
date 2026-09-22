@@ -3,13 +3,118 @@ import {
   normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson
 } from "./core.js";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
+const SESSION_COOKIE = "wuv_session";
+const SESSION_SECONDS = 60 * 60 * 24 * 30;
+const encoder = new TextEncoder();
+const securityHeaders = {
+  "cache-control": "no-store",
+  "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "cross-origin-opener-policy": "same-origin",
+  "referrer-policy": "no-referrer",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY"
+};
 const json = (data, status = 200) => new Response(JSON.stringify(data), {
   status,
-  headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" }
+  headers: { "content-type": "application/json; charset=utf-8", ...securityHeaders }
 });
 const nowSql = () => new Date().toISOString();
 const id = () => crypto.randomUUID();
+
+function hex(bytes) {
+  return [...new Uint8Array(bytes)].map(value => value.toString(16).padStart(2, "0")).join("");
+}
+
+function base64url(bytes) {
+  const binary = String.fromCharCode(...new Uint8Array(bytes));
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+function safeEqual(left, right) {
+  const a = encoder.encode(String(left || ""));
+  const b = encoder.encode(String(right || ""));
+  let difference = a.length ^ b.length;
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index += 1) difference |= (a[index] || 0) ^ (b[index] || 0);
+  return difference === 0;
+}
+
+async function sha256(value) {
+  return hex(await crypto.subtle.digest("SHA-256", encoder.encode(value)));
+}
+
+async function sign(value, secret) {
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return base64url(await crypto.subtle.sign("HMAC", key, encoder.encode(value)));
+}
+
+function cookieValue(request, name) {
+  const source = request.headers.get("cookie") || "";
+  for (const part of source.split(";")) {
+    const [key, ...value] = part.trim().split("=");
+    if (key === name) return value.join("=");
+  }
+  return "";
+}
+
+async function authenticated(request, env) {
+  if (!env.SESSION_SECRET || !env.ACCESS_PASSWORD_SHA256) return false;
+  const token = cookieValue(request, SESSION_COOKIE);
+  const [expiryText, signature] = token.split(".");
+  const expiry = Number(expiryText);
+  if (!expiry || expiry <= Math.floor(Date.now() / 1000) || !signature) return false;
+  return safeEqual(signature, await sign(expiryText, env.SESSION_SECRET));
+}
+
+async function loginIdentifier(request, env) {
+  const address = request.headers.get("cf-connecting-ip") || "local";
+  return sha256(`${env.SESSION_SECRET}:${address}`);
+}
+
+async function login(request, env) {
+  if (!env.ACCESS_PASSWORD_SHA256 || !env.SESSION_SECRET) {
+    return json({ ok: false, error: "ログイン設定が未完了です" }, 503);
+  }
+  const identifier = await loginIdentifier(request, env);
+  const row = await env.DB.prepare("SELECT attempts,blocked_until,window_started FROM auth_rate_limits WHERE identifier_hash=?")
+    .bind(identifier).first();
+  const now = Date.now();
+  if (row?.blocked_until && Date.parse(row.blocked_until) > now) {
+    return json({ ok: false, error: "ログイン試行が多すぎます。15分後に再度お試しください" }, 429);
+  }
+  const body = await request.json().catch(() => ({}));
+  const passwordHash = await sha256(String(body.password || ""));
+  if (!safeEqual(passwordHash, env.ACCESS_PASSWORD_SHA256)) {
+    const windowStarted = row?.window_started && now - Date.parse(row.window_started) < 15 * 60 * 1000
+      ? row.window_started : new Date(now).toISOString();
+    const attempts = windowStarted === row?.window_started ? Number(row?.attempts || 0) + 1 : 1;
+    const blockedUntil = attempts >= 5 ? new Date(now + 15 * 60 * 1000).toISOString() : null;
+    await env.DB.prepare(`INSERT INTO auth_rate_limits (identifier_hash,attempts,window_started,blocked_until,updated_at)
+      VALUES (?,?,?,?,?) ON CONFLICT(identifier_hash) DO UPDATE SET attempts=excluded.attempts,
+      window_started=excluded.window_started,blocked_until=excluded.blocked_until,updated_at=excluded.updated_at`)
+      .bind(identifier, attempts, windowStarted, blockedUntil, new Date(now).toISOString()).run();
+    return json({ ok: false, error: attempts >= 5 ? "ログイン試行が多すぎます。15分後に再度お試しください" : "アクセスパスワードが違います" }, attempts >= 5 ? 429 : 401);
+  }
+  await env.DB.prepare("DELETE FROM auth_rate_limits WHERE identifier_hash=?").bind(identifier).run();
+  const expiry = Math.floor(now / 1000) + SESSION_SECONDS;
+  const signature = await sign(String(expiry), env.SESSION_SECRET);
+  const response = json({ ok: true, authenticated: true, mode: env.OPERATION_MODE || "trial" });
+  response.headers.append("set-cookie", `${SESSION_COOKIE}=${expiry}.${signature}; Max-Age=${SESSION_SECONDS}; Path=/; HttpOnly; Secure; SameSite=Strict`);
+  return response;
+}
+
+function logout(env) {
+  const response = json({ ok: true, authenticated: false, mode: env.OPERATION_MODE || "trial" });
+  response.headers.append("set-cookie", `${SESSION_COOKIE}=; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Strict`);
+  return response;
+}
+
+function protectedAsset(response) {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(securityHeaders)) headers.set(name, value);
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+}
 
 function patternKey(value) {
   try { return new URL(value).hostname.toLowerCase(); } catch { return "unknown-input"; }
@@ -264,7 +369,8 @@ async function listCards(env) {
   const rows = await env.DB.prepare(`SELECT c.id,c.expires_on,p.display_name,p.raw_name,p.redeem_place,p.specification,
     COUNT(i.id) count FROM cards c JOIN product_master p ON p.id=c.product_id
     LEFT JOIN items i ON i.card_id=c.id AND i.status='active'
-    GROUP BY c.id ORDER BY CASE WHEN c.expires_on='' THEN 1 ELSE 0 END,c.expires_on ASC,c.created_at DESC`).all();
+    GROUP BY c.id HAVING COUNT(i.id)>0
+    ORDER BY CASE WHEN c.expires_on='' THEN 1 ELSE 0 END,c.expires_on ASC,c.created_at DESC`).all();
   return json({ ok: true, cards: rows.results || [] });
 }
 
@@ -306,8 +412,21 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
     try {
+      if (url.pathname === "/api/auth/status" && request.method === "GET") {
+        return json({
+          ok: true,
+          authenticated: await authenticated(request, env),
+          configured: Boolean(env.ACCESS_PASSWORD_SHA256 && env.SESSION_SECRET),
+          mode: env.OPERATION_MODE || "trial"
+        });
+      }
+      if (url.pathname === "/api/auth/login" && request.method === "POST") return login(request, env);
+      if (url.pathname.startsWith("/api/") && !await authenticated(request, env)) {
+        return json({ ok: false, error: "ログインが必要です" }, 401);
+      }
+      if (url.pathname === "/api/auth/logout" && request.method === "POST") return logout(env);
       if (url.pathname === "/api/status" && request.method === "GET") {
-        return json({ ok: Boolean(env.DB), version: VERSION, analyzer: Boolean(env.COUPON_ANALYZER || env.ANALYZER_BASE_URL) });
+        return json({ ok: Boolean(env.DB), version: VERSION, analyzer: Boolean(env.COUPON_ANALYZER || env.ANALYZER_BASE_URL), mode: env.OPERATION_MODE || "trial" });
       }
       if (url.pathname === "/api/receive" && request.method === "POST") return receive(request, env);
       if (url.pathname === "/api/cards" && request.method === "GET") return listCards(env);
@@ -319,7 +438,7 @@ export default {
       const cardItems = url.pathname.match(/^\/api\/cards\/([0-9a-f-]+)\/items$/i);
       if (cardItems && request.method === "GET") return listCardItems(url, env, cardItems[1]);
       if (url.pathname.startsWith("/api/")) return json({ ok: false, error: "Not found" }, 404);
-      return env.ASSETS.fetch(request);
+      return protectedAsset(await env.ASSETS.fetch(request));
     } catch (error) {
       console.error(error);
       return json({ ok: false, error: error instanceof Error ? error.message : "Internal error" }, 500);

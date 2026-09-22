@@ -2,6 +2,15 @@
 
 次回抽選から運用する、新しい当選URL管理Workerです。旧当選管理サイトの在庫や配置換え機能には触れません。
 
+## アクセス保護と試用運用
+
+- すべての管理APIはログイン必須です。
+- アクセスパスワードのSHA-256値を `ACCESS_PASSWORD_SHA256`、署名用乱数を `SESSION_SECRET` としてWorker Secretへ登録します。
+- 5回連続でログインに失敗した接続元は15分間停止します。接続元情報はハッシュ化してD1へ保存します。
+- `OPERATION_MODE` が `trial` の間は画面に「試用運用中」と表示します。
+- 試用終了時は `npm run db:reset-trial` でURL、未判定、確認待ち、操作履歴だけを削除します。確認済み商品マスターとカード定義は残ります。
+- 初期化後に `OPERATION_MODE` を `production` へ変更して再デプロイします。
+
 ## 実装済みフロー
 
 1. `POST /api/receive` でURL・コードを受信し、`canonical_value` の一意制約で重複を排除

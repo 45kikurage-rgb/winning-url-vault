@@ -1,13 +1,14 @@
 {
   "name": "winning-url-vault",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "db:local": "wrangler d1 execute winning-url-vault --local --file=schema.sql",
     "db:remote": "wrangler d1 execute winning-url-vault --remote --file=schema.sql",
+    "db:reset-trial": "wrangler d1 execute winning-url-vault --remote --file=reset-trial-data.sql",
     "test": "node --test"
   },
   "devDependencies": {

@@ -3,7 +3,7 @@
   "name": "winning-url-vault",
   "main": "src/index.js",
   "compatibility_date": "2026-09-22",
-  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "assets": { "directory": "./public", "binding": "ASSETS", "run_worker_first": true },
   "services": [
     { "binding": "COUPON_ANALYZER", "service": "coupon-analyzer-api" }
   ],
@@ -11,7 +11,8 @@
     { "binding": "DB", "database_name": "winning-url-vault", "database_id": "1d3e496f-3d8c-49d7-892a-d32ea5661e0c" }
   ],
   "vars": {
-    "COKEON_REDEEM_BASE_URL": "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode="
+    "COKEON_REDEEM_BASE_URL": "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=",
+    "OPERATION_MODE": "trial"
   },
   "observability": { "enabled": true }
 }

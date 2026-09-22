@@ -8,8 +8,29 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-<main>
-  <header><p>WINNING URL VAULT</p><h1>当選URL管理</h1></header>
+<section id="loginScreen" class="login-screen">
+  <form id="loginForm" class="login-card">
+    <p>WINNING URL VAULT</p>
+    <h1>当選URL管理</h1>
+    <span class="mode-badge">試用運用中</span>
+    <label>アクセスパスワード
+      <input id="loginPassword" type="password" autocomplete="current-password" required>
+    </label>
+    <button id="loginButton" type="submit">ログイン</button>
+    <small id="loginMessage" aria-live="polite"></small>
+  </form>
+</section>
+
+<main id="app" class="hidden">
+  <header>
+    <div><p>WINNING URL VAULT</p><h1>当選URL管理</h1></div>
+    <div class="header-actions"><span id="modeBadge" class="mode-badge">試用運用中</span><button id="logout" class="secondary">ログアウト</button></div>
+  </header>
+
+  <section class="trial-notice">
+    <strong>試用運用中</strong>
+    <span>正式運用と同じ条件で確認しています。試用終了時にURLデータを初期化します。</span>
+  </section>
 
   <section class="receive panel">
     <div><h2>URL・コード受信</h2><p>1行に1件ずつ貼り付けます。重複は保存前に除外します。</p></div>

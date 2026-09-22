@@ -1,11 +1,70 @@
 const $ = id => document.getElementById(id);
-const state = { cursor: null, cardId: null };
+const state = { cursor: null, cardId: null, authenticated: false };
 
 async function api(path, options) {
   const response = await fetch(path, options);
   const payload = await response.json().catch(() => ({}));
+  if (response.status === 401 && path !== "/api/auth/login") showLogin(payload.error || "ログインが必要です");
   if (!response.ok || payload.ok === false) throw new Error(payload.error || `API error ${response.status}`);
   return payload;
+}
+
+function setMode(mode) {
+  const trial = mode !== "production";
+  document.querySelectorAll(".mode-badge").forEach(element => { element.textContent = trial ? "試用運用中" : "正式運用中"; });
+  document.querySelector(".trial-notice")?.classList.toggle("hidden", !trial);
+}
+
+function showLogin(message = "") {
+  state.authenticated = false;
+  $("app").classList.add("hidden");
+  $("loginScreen").classList.remove("hidden");
+  $("loginMessage").textContent = message;
+  $("loginPassword").value = "";
+}
+
+function showApp(mode) {
+  state.authenticated = true;
+  setMode(mode);
+  $("loginScreen").classList.add("hidden");
+  $("app").classList.remove("hidden");
+}
+
+async function login(event) {
+  event.preventDefault();
+  const password = $("loginPassword").value;
+  $("loginButton").disabled = true;
+  $("loginMessage").textContent = "確認中…";
+  try {
+    const result = await api("/api/auth/login", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password })
+    });
+    showApp(result.mode);
+    await load();
+  } catch (error) {
+    showLogin(error.message);
+  } finally {
+    $("loginPassword").value = "";
+    $("loginButton").disabled = false;
+  }
+}
+
+async function logout() {
+  try { await api("/api/auth/logout", { method: "POST" }); }
+  finally { showLogin("ログアウトしました"); }
+}
+
+async function boot() {
+  try {
+    const result = await api("/api/auth/status");
+    setMode(result.mode);
+    if (!result.configured) return showLogin("ログイン設定が未完了です");
+    if (!result.authenticated) return showLogin();
+    showApp(result.mode);
+    await load();
+  } catch (error) {
+    showLogin(error.message);
+  }
 }
 
 function esc(value = "") {
@@ -143,4 +202,6 @@ $("paste").onclick = async () => {
 };
 $("dialogClose").onclick = () => $("itemsDialog").close();
 $("loadMore").onclick = loadItems;
-load();
+$("loginForm").onsubmit = login;
+$("logout").onclick = logout;
+boot();

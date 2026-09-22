@@ -4,6 +4,8 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Miniflare } from "miniflare";
 
+const authCookies = new WeakMap();
+
 async function startAnalyzer() {
   const server = createServer(async (request, response) => {
   const chunks = [];
@@ -37,12 +39,24 @@ async function createRuntime() {
       modulesRules: [{ type: "ESModule", include: ["**/*.js"] }],
       compatibilityDate: "2026-09-22", d1Databases: { DB: "vault-db" },
       serviceBindings: { COUPON_ANALYZER: { external: { address: `127.0.0.1:${port}`, http: {} } } },
-      bindings: { COKEON_REDEEM_BASE_URL: "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=" }
+      bindings: {
+        COKEON_REDEEM_BASE_URL: "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=",
+        ACCESS_PASSWORD_SHA256: "b916a41ca29c2e11feef1e12aa42f69e6a5531c4995a8a4f4979c165206b0171",
+        SESSION_SECRET: "integration-test-session-secret",
+        OPERATION_MODE: "trial"
+      }
     });
     const { DB } = await mf.getBindings();
     const schema = await readFile(new URL("../schema.sql", import.meta.url), "utf8");
     for (const statement of schema.split(";").map(value => value.trim()).filter(Boolean)) await DB.prepare(statement).run();
-    return { mf, analyzer, worker: await mf.getWorker() };
+    const worker = await mf.getWorker();
+    const loginResponse = await worker.fetch("https://vault.test/api/auth/login", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "test-access-password" })
+    });
+    assert.equal(loginResponse.ok, true);
+    authCookies.set(worker, loginResponse.headers.get("set-cookie").split(";")[0]);
+    return { mf, analyzer, worker };
   } catch (error) {
     analyzer.close();
     throw error;
@@ -50,11 +64,23 @@ async function createRuntime() {
 }
 
 async function request(worker, path, options) {
-  const response = await worker.fetch(`https://vault.test${path}`, options);
+  const headers = new Headers(options?.headers || {});
+  headers.set("cookie", authCookies.get(worker) || "");
+  const response = await worker.fetch(`https://vault.test${path}`, { ...options, headers });
   const payload = await response.json();
   assert.equal(response.ok, true, JSON.stringify(payload));
   return payload;
 }
+
+test("未ログインではAPIを読めず、ログイン状態と試用モードを確認できる", async t => {
+  const { mf, analyzer, worker } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const denied = await worker.fetch("https://vault.test/api/cards");
+  assert.equal(denied.status, 401);
+  const status = await request(worker, "/api/auth/status");
+  assert.equal(status.authenticated, true);
+  assert.equal(status.mode, "trial");
+});
 
 async function cleanup(mf, analyzer) {
   await mf.dispose();
