@@ -33,13 +33,14 @@
   </section>
 
   <section class="receive panel">
-    <div><h2>URL・コード受信</h2><p>1行に1件ずつ貼り付けます。重複は保存前に除外します。</p></div>
+    <div><h2>URL・コード受信</h2><p>全件を先に受け付け、貼付内重複と既登録を分けてからバックグラウンド解析します。</p></div>
     <textarea id="receiveInput" rows="4" placeholder="クーポンURL / Coke ONコード / PayPayコード"></textarea>
     <div class="actions"><button id="paste" class="secondary">貼り付け</button><button id="clear" class="secondary">クリア</button><button id="receive">解析して保管</button></div>
     <div id="receiveProgress" class="receive-progress hidden" aria-live="polite">
       <div class="progress-head"><strong id="progressStatus">解析中</strong><span id="progressCount">0 / 0件</span></div>
       <progress id="progressBar" max="1" value="0"></progress>
-      <div class="progress-numbers"><span>完了 <strong id="progressDone">0件</strong></span><span>残り <strong id="progressRemaining">0件</strong></span></div>
+      <div class="progress-numbers"><span>完了 <strong id="progressDone">0件</strong></span><span>解析中 <strong id="progressActive">0件</strong></span><span>残り <strong id="progressRemaining">0件</strong></span></div>
+      <div id="acceptanceSummary" class="acceptance-summary"></div>
     </div>
     <p id="receiveResult" class="result" aria-live="polite"></p>
   </section>
@@ -69,8 +70,8 @@
 </main>
 
 <dialog id="pendingDialog" class="pending-dialog">
-  <div class="dialog-head"><div><small>解析を一時停止しています</small><h2>初めてのクーポンを確認</h2></div></div>
-  <p>画像と解析内容を確認してください。確定後、残りの解析を続けます。</p>
+  <div class="dialog-head"><div><small>残りの解析は継続しています</small><h2>初めてのクーポンを確認</h2></div></div>
+  <p>完全一致した候補をグループ化しています。判断結果は同じグループのURLへまとめて適用します。</p>
   <div id="pendingDialogContent"></div>
 </dialog>
 

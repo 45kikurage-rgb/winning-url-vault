@@ -1,5 +1,6 @@
 const $ = id => document.getElementById(id);
-const state = { cursor: null, cardId: null, authenticated: false, pendingItems: new Map(), pendingResolve: null };
+const state = { cursor: null, cardId: null, authenticated: false, pendingItems: new Map(),
+  activeJobId: null, pollTimer: null, refreshing: false, dialogPendingId: null };
 
 async function api(path, options) {
   const response = await fetch(path, options);
@@ -41,6 +42,8 @@ async function login(event) {
     });
     showApp(result.mode);
     await load();
+    await resumeLatestJob();
+    startPolling();
   } catch (error) {
     showLogin(error.message);
   } finally {
@@ -51,7 +54,7 @@ async function login(event) {
 
 async function logout() {
   try { await api("/api/auth/logout", { method: "POST" }); }
-  finally { showLogin("ログアウトしました"); }
+  finally { stopPolling(); showLogin("ログアウトしました"); }
 }
 
 async function boot() {
@@ -62,6 +65,8 @@ async function boot() {
     if (!result.authenticated) return showLogin();
     showApp(result.mode);
     await load();
+    await resumeLatestJob();
+    startPolling();
   } catch (error) {
     showLogin(error.message);
   }
@@ -80,24 +85,36 @@ function parseReceiveValues(text) {
     if (urls?.length) values.push(...urls.map(value => value.replace(/[.,;、。\])}]+$/, "")));
     else values.push(trimmed);
   }
-  return [...new Set(values)];
+  return values;
 }
 
-function showProgress(done, total, status = "解析中") {
+function showJobProgress(job) {
+  const total = Number(job.accepted || 0);
+  const done = Number(job.processed || 0);
   const remaining = Math.max(0, total - done);
+  const labels = { queued:"解析待ち", processing:"解析中", awaiting_confirmation:"解析完了・初回確認待ち", completed:"解析完了" };
   $("receiveProgress").classList.remove("hidden");
-  $("progressStatus").textContent = status;
+  $("progressStatus").textContent = labels[job.status] || "解析中";
   $("progressCount").textContent = `${done.toLocaleString()} / ${total.toLocaleString()}件`;
   $("progressBar").max = Math.max(1, total);
-  $("progressBar").value = done;
+  $("progressBar").value = total ? done : 1;
   $("progressDone").textContent = `${done.toLocaleString()}件`;
+  $("progressActive").textContent = `${Number(job.processing || 0).toLocaleString()}件`;
   $("progressRemaining").textContent = `${remaining.toLocaleString()}件`;
+  $("acceptanceSummary").innerHTML = [
+    ["貼り付け", job.inputTotal], ["解析対象", job.accepted],
+    ["貼付内重複", job.inputDuplicates], ["既に登録済み", job.existing],
+    ["カード保管", job.active], ["確認待ちURL", job.pendingConfirmation]
+  ].map(([label, value]) => `<span>${label} <strong>${Number(value || 0).toLocaleString()}件</strong></span>`).join("");
+  $("receiveResult").textContent = job.lastError
+    ? `前回エラー: ${job.lastError}（自動再試行します）`
+    : `受付 ${Number(job.inputTotal || 0).toLocaleString()}件 / 貼付内重複 ${Number(job.inputDuplicates || 0).toLocaleString()}件 / 既登録 ${Number(job.existing || 0).toLocaleString()}件`;
 }
 
 function clearReceive() {
   $("receiveInput").value = "";
   $("receiveResult").textContent = "";
-  $("receiveProgress").classList.add("hidden");
+  if (!state.activeJobId) $("receiveProgress").classList.add("hidden");
   $("receiveInput").focus();
 }
 
@@ -113,7 +130,7 @@ function pendingCard(item) {
       <div class="field-row"><label>容量・規格<input name="specification" value="${esc(item.specification)}" readonly></label>
       <label>利用先<input name="redeem_place" value="${esc(item.redeem_place)}" readonly></label></div>
       <label>使用期限<input name="expires_on" type="date" value="${esc(item.expires_on)}" readonly></label>
-      <p class="waiting">同じ条件の確認待ち ${Number(item.item_count || 0).toLocaleString()}件</p>
+      <p class="waiting">完全一致グループ ${Number(item.item_count || 0).toLocaleString()}件（残りの解析は継続中）</p>
       <button class="secondary copy-analysis" data-action="copy">ChatGPT用にコピー</button>
       <div class="confirm-actions"><button data-action="ok">OK</button><button class="secondary" data-action="edit">修正</button><button class="danger" data-action="cancel">キャンセル</button></div>
     </div></article>`;
@@ -142,6 +159,7 @@ async function load() {
     $("unknownList").innerHTML = unresolved.items.slice(0, 10).map(item =>
       `<div class="unknown-row"><span>${esc(item.reason)}</span><small>${esc(item.pattern_key || "未知パターン")} / 再解析 ${Number(item.retry_count || 0)}回</small></div>`).join("");
     bindDynamic();
+    syncPendingDialog(pending.items);
   } catch (error) {
     $("cards").innerHTML = `<div class="empty error">${esc(error.message)}</div>`;
   }
@@ -150,6 +168,26 @@ async function load() {
 function bindDynamic() {
   document.querySelectorAll("[data-card]").forEach(button => button.onclick = () => openItems(button.dataset.card, button.dataset.title));
   document.querySelectorAll("[data-pending]").forEach(bindPendingControls);
+}
+
+function syncPendingDialog(items) {
+  if ($("pendingDialog").open) {
+    const current = items.find(item => item.id === state.dialogPendingId);
+    if (!current) {
+      $("pendingDialog").close();
+      state.dialogPendingId = null;
+    } else if (!$("pendingDialogContent").querySelector(".editing")) {
+      $("pendingDialogContent").innerHTML = pendingCard(current);
+      bindPendingControls($("pendingDialogContent").querySelector("[data-pending]"));
+    }
+  }
+  if (!$("pendingDialog").open && items.length) {
+    const item = items[0];
+    state.dialogPendingId = item.id;
+    $("pendingDialogContent").innerHTML = pendingCard(item);
+    bindPendingControls($("pendingDialogContent").querySelector("[data-pending]"));
+    $("pendingDialog").showModal();
+  }
 }
 
 function bindPendingControls(card) {
@@ -193,33 +231,6 @@ async function copyPendingForChatGPT(card, button) {
   }
 }
 
-function finishPendingPause(action) {
-  if ($("pendingDialog").open) $("pendingDialog").close();
-  $("pendingDialogContent").innerHTML = "";
-  const resolve = state.pendingResolve;
-  state.pendingResolve = null;
-  resolve?.(action);
-}
-
-async function pauseForPending(pendingId) {
-  let pending = await api("/api/pending");
-  let item = pending.items.find(candidate => candidate.id === pendingId);
-  if (!item) return "missing";
-  if (!item.image_data_uri) {
-    try {
-      $("progressStatus").textContent = "初回画像を取得中";
-      await api(`/api/pending/${pendingId}/reanalyze`, { method:"POST" });
-      pending = await api("/api/pending");
-      item = pending.items.find(candidate => candidate.id === pendingId) || item;
-    } catch {}
-  }
-  state.pendingItems.set(item.id, item);
-  $("pendingDialogContent").innerHTML = pendingCard(item);
-  bindPendingControls($("pendingDialogContent").querySelector("[data-pending]"));
-  $("pendingDialog").showModal();
-  return new Promise(resolve => { state.pendingResolve = resolve; });
-}
-
 async function reanalyzePending(card, button) {
   const inPauseDialog = Boolean(card.closest("#pendingDialog"));
   button.disabled = true;
@@ -251,8 +262,13 @@ async function submitConfirmation(card, action) {
   try {
     await api(`/api/pending/${card.dataset.pending}/confirm`, { method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify(body) });
     const inPauseDialog = Boolean(card.closest("#pendingDialog"));
+    if (inPauseDialog && $("pendingDialog").open) {
+      $("pendingDialog").close();
+      $("pendingDialogContent").innerHTML = "";
+      state.dialogPendingId = null;
+    }
     await load();
-    if (inPauseDialog) finishPendingPause(action);
+    await loadJob();
   } catch (error) {
     alert(error.message);
     buttons.forEach(button => button.disabled = false);
@@ -264,36 +280,50 @@ async function receive() {
   if (!values.length) return;
   const controls = [$("receive"), $("paste"), $("clear")];
   controls.forEach(button => button.disabled = true);
-  const totals = { received:0, duplicate:0, active:0, pending_confirmation:0, unresolved:0 };
-  let done = 0;
-  showProgress(0, values.length);
-  $("receiveResult").textContent = "解析を開始しました…";
+  $("receiveProgress").classList.remove("hidden");
+  $("progressStatus").textContent = "全件を受付中";
+  $("progressCount").textContent = `${values.length.toLocaleString()}件`;
+  $("receiveResult").textContent = "貼付内重複と既登録を確認しています…";
   try {
-    for (let start = 0; start < values.length; start += 1) {
-      const batch = values.slice(start, start + 1);
-      const result = await api("/api/receive", { method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify({ values:batch }) });
-      totals.received += Number(result.received || 0);
-      totals.duplicate += Number(result.duplicate || 0);
-      for (const status of ["active", "pending_confirmation", "unresolved"]) totals[status] += Number(result.counts?.[status] || 0);
-      done += batch.length;
-      const newPending = result.items?.find(item => item.status === "pending_confirmation" && item.pendingId);
-      showProgress(done, values.length, newPending ? "初回確認待ち" : done === values.length ? "解析完了" : "解析中");
-      $("receiveResult").textContent = `受信 ${totals.received}件 / 重複 ${totals.duplicate}件 / 確認待ち ${totals.pending_confirmation}件 / 未判定 ${totals.unresolved}件`;
-      if (newPending) {
-        const action = await pauseForPending(newPending.pendingId);
-        if (["ok", "edit"].includes(action)) { totals.pending_confirmation -= 1; totals.active += 1; }
-        if (action === "cancel") { totals.pending_confirmation -= 1; totals.unresolved += 1; }
-        showProgress(done, values.length, done === values.length ? "解析完了" : "解析中");
-        $("receiveResult").textContent = `受信 ${totals.received}件 / 重複 ${totals.duplicate}件 / 確認待ち ${totals.pending_confirmation}件 / 未判定 ${totals.unresolved}件`;
-      }
-    }
+    const requestId = crypto.randomUUID();
+    const result = await api("/api/receive", { method:"POST", headers:{ "content-type":"application/json" },
+      body:JSON.stringify({ values, clientRequestId:requestId }) });
+    state.activeJobId = result.job.id;
     $("receiveInput").value = "";
+    showJobProgress(result.job);
     await load();
+    await loadJob();
   } catch (error) {
-    showProgress(done, values.length, "解析中断");
-    $("receiveResult").textContent = `${error.message}（${done.toLocaleString()}件まで処理済み）`;
-    if (done) await load();
+    $("progressStatus").textContent = "受付失敗";
+    $("receiveResult").textContent = error.message;
   } finally { controls.forEach(button => button.disabled = false); }
+}
+
+async function loadJob() {
+  const result = await api(state.activeJobId ? `/api/jobs/${state.activeJobId}` : "/api/jobs/latest");
+  if (!result.job) return;
+  state.activeJobId = result.job.id;
+  showJobProgress(result.job);
+}
+
+async function resumeLatestJob() {
+  try { await loadJob(); } catch (error) { console.warn("job resume", error); }
+}
+
+function stopPolling() {
+  if (state.pollTimer) clearInterval(state.pollTimer);
+  state.pollTimer = null;
+}
+
+function startPolling() {
+  stopPolling();
+  state.pollTimer = setInterval(async () => {
+    if (!state.authenticated || state.refreshing) return;
+    state.refreshing = true;
+    try { await Promise.all([loadJob(), load()]); }
+    catch (error) { console.warn("refresh", error); }
+    finally { state.refreshing = false; }
+  }, 2500);
 }
 
 async function retry() {
