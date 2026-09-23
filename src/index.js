@@ -1,9 +1,10 @@
 import {
-  classifyValue, codeCard, extractValues, isGenericName, normalizeAnalysis,
+  classifyValue, codeCard, extractInputValues, isGenericName, normalizeAnalysis,
   normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson
 } from "./core.js";
 
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
+const ANALYSIS_BATCH_SIZE = 10;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
 const encoder = new TextEncoder();
@@ -205,16 +206,25 @@ async function processAnalysis(env, item, result) {
 
   let pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=?")
     .bind(normalized.matchKey, normalized.expiresOn).first();
+  let createdPending = false;
   if (!pending) {
     const pendingId = id();
-    await env.DB.prepare(`INSERT OR IGNORE INTO pending_confirmations
+    const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO pending_confirmations
       (id,match_key,expires_on,source_type,raw_name,normalized_name,display_name,redeem_place,specification,
        required_conditions,image_data_uri,analysis_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
       .bind(pendingId, normalized.matchKey, normalized.expiresOn, "url", normalized.rawName, normalized.normalizedName,
         normalized.displayName, normalized.redeemPlace, normalized.specification, normalized.requiredConditions,
         normalized.imageDataUri, analysisJson).run();
+    createdPending = Number(inserted.meta?.changes || 0) > 0;
     pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=?")
       .bind(normalized.matchKey, normalized.expiresOn).first();
+    if (!pending) {
+      const confirmedDuringAnalysis = await env.DB.prepare(`SELECT c.id card_id FROM product_master p
+        JOIN cards c ON c.product_id=p.id WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? LIMIT 1`)
+        .bind(normalized.matchKey, normalized.expiresOn).first();
+      if (confirmedDuringAnalysis) return assignCard(env, item.id, confirmedDuringAnalysis.card_id, result);
+      return markUnresolved(env, item, "確認候補グループを作成できませんでした");
+    }
   } else if (!pending.image_data_uri && normalized.imageDataUri) {
     await env.DB.prepare("UPDATE pending_confirmations SET image_data_uri=?,analysis_json=? WHERE id=?")
       .bind(normalized.imageDataUri, analysisJson, pending.id).run();
@@ -225,7 +235,8 @@ async function processAnalysis(env, item, result) {
     env.DB.prepare("DELETE FROM unresolved_items WHERE item_id=?").bind(item.id)
   ]);
   await audit(env, item.id, "pending_confirmation", { pendingId: pending.id });
-  return { id: item.id, status: "pending_confirmation", pendingId: pending.id };
+  return { id: item.id, status: "pending_confirmation", pendingId: pending.id,
+    needsImage: createdPending && !pending.image_data_uri };
 }
 
 async function processUrlChunk(env, items) {
@@ -257,30 +268,163 @@ async function processUrls(env, items) {
   return output;
 }
 
+async function findExistingCanonicals(env, values) {
+  const existing = new Set();
+  for (let start = 0; start < values.length; start += 50) {
+    const chunk = values.slice(start, start + 50);
+    const placeholders = chunk.map(() => "?").join(",");
+    const rows = await env.DB.prepare(`SELECT canonical_value FROM items WHERE canonical_value IN (${placeholders})`)
+      .bind(...chunk).all();
+    for (const row of rows.results || []) existing.add(row.canonical_value);
+  }
+  return existing;
+}
+
+async function jobSummary(env, jobId) {
+  const job = await env.DB.prepare("SELECT * FROM analysis_jobs WHERE id=?").bind(jobId).first();
+  if (!job) return null;
+  const counts = await env.DB.prepare(`SELECT
+    COUNT(*) accepted,
+    COALESCE(SUM(CASE WHEN ji.state='queued' THEN 1 ELSE 0 END),0) queued,
+    COALESCE(SUM(CASE WHEN ji.state='processing' THEN 1 ELSE 0 END),0) processing,
+    COALESCE(SUM(CASE WHEN ji.state='done' THEN 1 ELSE 0 END),0) processed,
+    COALESCE(SUM(CASE WHEN ji.state='done' AND i.status='active' THEN 1 ELSE 0 END),0) active,
+    COALESCE(SUM(CASE WHEN ji.state='done' AND i.status='pending_confirmation' THEN 1 ELSE 0 END),0) pending_confirmation,
+    COALESCE(SUM(CASE WHEN ji.state='done' AND i.status='unresolved' THEN 1 ELSE 0 END),0) unresolved
+    FROM analysis_job_items ji JOIN items i ON i.id=ji.item_id WHERE ji.job_id=?`).bind(jobId).first();
+  const accepted = Number(counts?.accepted || 0);
+  const processed = Number(counts?.processed || 0);
+  const pending = Number(counts?.pending_confirmation || 0);
+  let status = job.status;
+  if (processed >= accepted) status = pending ? "awaiting_confirmation" : "completed";
+  else if (Number(counts?.processing || 0) > 0) status = "processing";
+  else if (accepted > 0) status = "queued";
+  return {
+    id: job.id, clientRequestId: job.client_request_id, status,
+    inputTotal: Number(job.input_total || 0), inputDuplicates: Number(job.input_duplicates || 0),
+    existing: Number(job.existing_count || 0), accepted,
+    queued: Number(counts?.queued || 0), processing: Number(counts?.processing || 0), processed,
+    active: Number(counts?.active || 0), pendingConfirmation: pending,
+    unresolved: Number(counts?.unresolved || 0), lastError: job.last_error || "",
+    createdAt: job.created_at, completedAt: job.completed_at
+  };
+}
+
+async function finishJobIfComplete(env, jobId) {
+  const remaining = await env.DB.prepare(`SELECT COUNT(*) count FROM analysis_job_items
+    WHERE job_id=? AND state!='done'`).bind(jobId).first();
+  const complete = Number(remaining?.count || 0) === 0;
+  await env.DB.prepare(`UPDATE analysis_jobs SET status=?,completed_at=CASE WHEN ? THEN COALESCE(completed_at,?) ELSE NULL END,
+    updated_at=? WHERE id=?`).bind(complete ? "completed" : "processing", complete ? 1 : 0, nowSql(), nowSql(), jobId).run();
+  return complete;
+}
+
+async function processJobBatch(env, jobId) {
+  const rows = await env.DB.prepare(`SELECT ji.item_id,i.id,i.value,i.canonical_value,i.value_type
+    FROM analysis_job_items ji JOIN items i ON i.id=ji.item_id
+    WHERE ji.job_id=? AND ji.state='queued' ORDER BY ji.ordinal LIMIT ?`)
+    .bind(jobId, ANALYSIS_BATCH_SIZE).all();
+  const items = rows.results || [];
+  if (!items.length) return finishJobIfComplete(env, jobId);
+
+  const claimedAt = nowSql();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE analysis_jobs SET status='processing',started_at=COALESCE(started_at,?),updated_at=?,last_error=NULL WHERE id=?")
+      .bind(claimedAt, claimedAt, jobId),
+    ...items.map(item => env.DB.prepare("UPDATE analysis_job_items SET state='processing',updated_at=? WHERE job_id=? AND item_id=? AND state='queued'")
+      .bind(claimedAt, jobId, item.id))
+  ]);
+
+  try {
+    const output = [];
+    const urls = [];
+    for (const item of items) {
+      if (item.value_type === "url") urls.push(item);
+      else if (["cokeon", "paypay"].includes(item.value_type)) {
+        const cardId = await ensureCodeCard(env, item.value_type);
+        output.push(await assignCard(env, item.id, cardId));
+      } else output.push(await markUnresolved(env, item, "未対応の入力形式"));
+    }
+    output.push(...await processUrlChunk(env, urls));
+    await env.DB.batch(items.map(item => env.DB.prepare("UPDATE analysis_job_items SET state='done',updated_at=? WHERE job_id=? AND item_id=?")
+      .bind(nowSql(), jobId, item.id)));
+
+    const pendingForImage = [...new Set(output.filter(item => item.needsImage && item.pendingId).map(item => item.pendingId))];
+    for (const pendingId of pendingForImage) {
+      try { await reanalyzePending(env, pendingId); } catch (error) { console.warn("pending image", error); }
+    }
+
+    const complete = await finishJobIfComplete(env, jobId);
+    if (!complete && env.ANALYSIS_QUEUE?.send) await env.ANALYSIS_QUEUE.send({ jobId });
+    return complete;
+  } catch (error) {
+    await env.DB.batch([
+      ...items.map(item => env.DB.prepare("UPDATE analysis_job_items SET state='queued',updated_at=? WHERE job_id=? AND item_id=?")
+        .bind(nowSql(), jobId, item.id)),
+      env.DB.prepare("UPDATE analysis_jobs SET status='queued',last_error=?,updated_at=? WHERE id=?")
+        .bind(error instanceof Error ? error.message : String(error), nowSql(), jobId)
+    ]);
+    throw error;
+  }
+}
+
+async function processJobFully(env, jobId) {
+  for (let index = 0; index < 1000; index += 1) {
+    if (await processJobBatch(env, jobId)) return;
+  }
+  throw new Error("解析ジョブの件数が上限を超えました");
+}
+
 async function receive(request, env) {
   const body = await request.json().catch(() => ({}));
-  const values = extractValues(body);
+  const values = extractInputValues(body);
   if (!values.length) return json({ ok: false, error: "URLまたはコードを入力してください" }, 400);
-  const accepted = []; const duplicates = []; const urlItems = []; const output = [];
+  if (values.length >= 5000) return json({ ok: false, error: "1回に送信できる上限は4,999件です" }, 413);
+  const clientRequestId = /^[0-9a-f-]{16,64}$/i.test(String(body.clientRequestId || ""))
+    ? String(body.clientRequestId) : id();
+  const previous = await env.DB.prepare("SELECT id,status FROM analysis_jobs WHERE client_request_id=?")
+    .bind(clientRequestId).first();
+  if (previous) return json({ ok: true, resumed: true, job: await jobSummary(env, previous.id) });
+
+  const unique = [];
+  const seen = new Set();
+  let inputDuplicates = 0;
   for (const raw of values) {
     const classified = classifyValue(raw, env.COKEON_REDEEM_BASE_URL);
     if (!classified) continue;
-    const duplicate = await env.DB.prepare("SELECT id,status,card_id FROM items WHERE canonical_value=?")
-      .bind(classified.canonicalValue).first();
-    if (duplicate) { duplicates.push({ id: duplicate.id, status: duplicate.status }); continue; }
-    const item = { id: id(), value: classified.storedValue, canonicalValue: classified.canonicalValue, type: classified.type };
-    await env.DB.prepare(`INSERT INTO items (id,value,canonical_value,value_type,status) VALUES (?,?,?,?, 'received')`)
-      .bind(item.id, item.value, item.canonicalValue, item.type).run();
-    accepted.push(item.id);
-    if (classified.type === "url") urlItems.push(item);
-    else if (["cokeon", "paypay"].includes(classified.type)) {
-      const cardId = await ensureCodeCard(env, classified.type);
-      output.push(await assignCard(env, item.id, cardId));
-    } else output.push(await markUnresolved(env, item, classified.reason || "未対応の入力形式"));
+    if (seen.has(classified.canonicalValue)) { inputDuplicates += 1; continue; }
+    seen.add(classified.canonicalValue);
+    unique.push(classified);
   }
-  output.push(...await processUrls(env, urlItems));
-  const counts = output.reduce((acc, item) => { acc[item.status] = (acc[item.status] || 0) + 1; return acc; }, {});
-  return json({ ok: true, received: accepted.length, duplicate: duplicates.length, counts, items: output, duplicates });
+  const existingCanonicals = await findExistingCanonicals(env, unique.map(item => item.canonicalValue));
+  const accepted = unique.filter(item => !existingCanonicals.has(item.canonicalValue))
+    .map((item, ordinal) => ({ ...item, id: id(), ordinal }));
+  const jobId = id();
+  await env.DB.prepare(`INSERT INTO analysis_jobs
+    (id,client_request_id,input_total,input_duplicates,existing_count,accepted_count,status,updated_at)
+    VALUES (?,?,?,?,?,?,?,?)`).bind(jobId, clientRequestId, values.length, inputDuplicates,
+      existingCanonicals.size, accepted.length, accepted.length ? "queued" : "completed", nowSql()).run();
+  for (let start = 0; start < accepted.length; start += 40) {
+    const chunk = accepted.slice(start, start + 40);
+    await env.DB.batch(chunk.flatMap(item => [
+      env.DB.prepare(`INSERT INTO items (id,value,canonical_value,value_type,status) VALUES (?,?,?,?, 'queued')`)
+        .bind(item.id, item.storedValue, item.canonicalValue, item.type),
+      env.DB.prepare("INSERT INTO analysis_job_items (job_id,item_id,ordinal,state,updated_at) VALUES (?,?,?,'queued',?)")
+        .bind(jobId, item.id, item.ordinal, nowSql())
+    ]));
+  }
+  if (!accepted.length) {
+    await env.DB.prepare("UPDATE analysis_jobs SET completed_at=?,updated_at=? WHERE id=?").bind(nowSql(), nowSql(), jobId).run();
+  } else if (env.ANALYSIS_QUEUE?.send) {
+    await env.ANALYSIS_QUEUE.send({ jobId });
+  } else {
+    await processJobFully(env, jobId);
+  }
+  const summary = await jobSummary(env, jobId);
+  return json({ ok: true, received: accepted.length, duplicate: inputDuplicates + existingCanonicals.size,
+    inputDuplicate: inputDuplicates, existing: existingCanonicals.size,
+    counts: { active: summary.active, pending_confirmation: summary.pendingConfirmation, unresolved: summary.unresolved },
+    job: summary }, 202);
 }
 
 async function retryUnresolved(env) {
@@ -309,16 +453,17 @@ async function confirmPending(request, env, pendingId) {
   const itemRows = await env.DB.prepare("SELECT id,value FROM items WHERE pending_id=? AND status='pending_confirmation'").bind(pendingId).all();
   const items = itemRows.results || [];
   if (body.action === "cancel") {
-    const statements = [];
-    for (const item of items) {
-      statements.push(env.DB.prepare("UPDATE items SET status='unresolved',pending_id=NULL WHERE id=?").bind(item.id));
-      statements.push(env.DB.prepare(`INSERT INTO unresolved_items (item_id,reason,pattern_key,updated_at) VALUES (?,?,?,?)
+    await env.DB.batch([
+      env.DB.prepare(`INSERT INTO unresolved_items (item_id,reason,pattern_key,updated_at)
+        SELECT id,'初回確認でキャンセルされました','confirmation-cancelled',? FROM items
+        WHERE pending_id=? AND status='pending_confirmation'
         ON CONFLICT(item_id) DO UPDATE SET reason=excluded.reason,pattern_key=excluded.pattern_key,updated_at=excluded.updated_at`)
-        .bind(item.id, "初回確認でキャンセルされました", patternKey(item.value), nowSql()));
-    }
-    statements.push(env.DB.prepare("DELETE FROM pending_confirmations WHERE id=?").bind(pendingId));
-    await env.DB.batch(statements);
-    for (const item of items) await audit(env, item.id, "confirmation_cancelled", { pendingId });
+        .bind(nowSql(), pendingId),
+      env.DB.prepare("UPDATE items SET status='unresolved',pending_id=NULL WHERE pending_id=? AND status='pending_confirmation'")
+        .bind(pendingId),
+      env.DB.prepare("DELETE FROM pending_confirmations WHERE id=?").bind(pendingId)
+    ]);
+    await audit(env, null, "confirmation_group_cancelled", { pendingId, count: items.length });
     return json({ ok: true, action: "cancel", movedToUnresolved: items.length });
   }
   if (!["ok", "edit"].includes(body.action)) return json({ ok: false, error: "actionは ok / edit / cancel のいずれかです" }, 400);
@@ -357,15 +502,15 @@ async function confirmPending(request, env, pendingId) {
       .bind(cardId, product.id, expiresOn).run();
     card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=?").bind(product.id, expiresOn).first();
   }
-  const statements = [];
-  for (const item of items) {
-    statements.push(env.DB.prepare("UPDATE items SET status='active',card_id=?,pending_id=NULL,classified_at=? WHERE id=?")
-      .bind(card.id, nowSql(), item.id));
-    statements.push(env.DB.prepare("DELETE FROM unresolved_items WHERE item_id=?").bind(item.id));
-  }
-  statements.push(env.DB.prepare("DELETE FROM pending_confirmations WHERE id=?").bind(pendingId));
-  await env.DB.batch(statements);
-  for (const item of items) await audit(env, item.id, "confirmation_approved", { pendingId, cardId: card.id, edited: body.action === "edit" });
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM unresolved_items WHERE item_id IN
+      (SELECT id FROM items WHERE pending_id=? AND status='pending_confirmation')`).bind(pendingId),
+    env.DB.prepare(`UPDATE items SET status='active',card_id=?,pending_id=NULL,classified_at=?
+      WHERE pending_id=? AND status='pending_confirmation'`).bind(card.id, nowSql(), pendingId),
+    env.DB.prepare("DELETE FROM pending_confirmations WHERE id=?").bind(pendingId)
+  ]);
+  await audit(env, null, "confirmation_group_approved", { pendingId, cardId: card.id,
+    edited: body.action === "edit", count: items.length });
   return json({ ok: true, action: body.action, productId: product.id, cardId: card.id, classified: items.length });
 }
 
@@ -428,6 +573,16 @@ async function listUnresolved(env) {
   return json({ ok: true, items: rows.results || [] });
 }
 
+async function latestJob(env) {
+  const row = await env.DB.prepare("SELECT id FROM analysis_jobs ORDER BY created_at DESC LIMIT 1").first();
+  return json({ ok: true, job: row ? await jobSummary(env, row.id) : null });
+}
+
+async function getJob(env, jobId) {
+  const job = await jobSummary(env, jobId);
+  return job ? json({ ok: true, job }) : json({ ok: false, error: "解析ジョブが見つかりません" }, 404);
+}
+
 function decodeCursor(value) {
   try { const parsed = JSON.parse(atob(value)); return parsed?.t && parsed?.id ? parsed : null; } catch { return null; }
 }
@@ -470,6 +625,9 @@ export default {
         return json({ ok: Boolean(env.DB), version: VERSION, analyzer: Boolean(env.COUPON_ANALYZER || env.ANALYZER_BASE_URL), mode: env.OPERATION_MODE || "trial" });
       }
       if (url.pathname === "/api/receive" && request.method === "POST") return receive(request, env);
+      if (url.pathname === "/api/jobs/latest" && request.method === "GET") return latestJob(env);
+      const jobStatus = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
+      if (jobStatus && request.method === "GET") return getJob(env, jobStatus[1]);
       if (url.pathname === "/api/cards" && request.method === "GET") return listCards(env);
       if (url.pathname === "/api/pending" && request.method === "GET") return listPending(env);
       if (url.pathname === "/api/unresolved" && request.method === "GET") return listUnresolved(env);
@@ -485,6 +643,19 @@ export default {
     } catch (error) {
       console.error(error);
       return json({ ok: false, error: error instanceof Error ? error.message : "Internal error" }, 500);
+    }
+  },
+  async queue(batch, env) {
+    for (const message of batch.messages) {
+      const jobId = String(message.body?.jobId || "");
+      if (!/^[0-9a-f-]{16,64}$/i.test(jobId)) { message.ack(); continue; }
+      try {
+        await processJobBatch(env, jobId);
+        message.ack();
+      } catch (error) {
+        console.error("analysis queue", jobId, error);
+        message.retry();
+      }
     }
   }
 };

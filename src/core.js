@@ -92,7 +92,7 @@ export function classifyValue(raw, cokeOnBaseUrl = "https://c.cocacola.co.jp/spn
   }
 }
 
-export function extractValues(body) {
+export function extractInputValues(body, limit = 5000) {
   const values = Array.isArray(body?.values) ? body.values : [];
   const text = typeof body?.text === "string" ? body.text : "";
   const tokens = [...values];
@@ -103,7 +103,11 @@ export function extractValues(body) {
     if (urls?.length) tokens.push(...urls.map(value => value.replace(/[.,;、。\])}]+$/, "")));
     else tokens.push(trimmed);
   }
-  return [...new Set(tokens.map(value => String(value).trim()).filter(Boolean))].slice(0, 100);
+  return tokens.map(value => String(value).trim()).filter(Boolean).slice(0, limit);
+}
+
+export function extractValues(body) {
+  return [...new Set(extractInputValues(body, 5000))];
 }
 
 export function normalizeAnalysis(result) {
