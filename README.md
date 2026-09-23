@@ -13,14 +13,15 @@
 
 ## 実装済みフロー
 
-1. `POST /api/receive` でURL・コードを受信し、`canonical_value` の一意制約で重複を排除
-2. URLはCloudflare Service Binding経由で `coupon-analyzer-api /api/analyze-detail` を呼び出す
+1. `POST /api/receive` で全URL・コードを先にD1へ保存し、貼付内重複と既登録を分離
+2. Cloudflare Queueから10件単位で取り出し、Service Binding経由で `coupon-analyzer-api /api/analyze-detail` を呼び出す
 3. 正式商品名、容量・規格、利用先、必要条件を正規化し、全一致キーを作成
-4. 確認済みの商品＋同一期限カードがある場合だけ自動振り分け
-5. 初回の商品・期限は画像と解析内容を `pending_confirmations` に保存し、OK / 修正 / キャンセル待ち
+4. 解析結果は確認中も処理を止めず、完全一致キー＋期限で候補グループ化
+5. 初回の商品・期限は代表画像と解析内容を `pending_confirmations` に保存し、グループ単位でOK / 修正 / キャンセル待ち
 6. 必須情報不足、未知URL、汎用名は既存カードへ入れず `unresolved_items` に隔離
 7. `POST /api/unresolved/retry` は未判定だけを再解析。確定済みカードは対象外
 8. カード内容は50件ずつ取得し、2,000件以上でも全件DOM描画しない
+9. `GET /api/jobs/latest` と `GET /api/jobs/:id` で画面を閉じた後も解析進捗を復元
 
 ## 判定事故の防止
 

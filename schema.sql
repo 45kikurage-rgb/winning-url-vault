@@ -62,6 +62,34 @@ CREATE TABLE IF NOT EXISTS items (
 CREATE INDEX IF NOT EXISTS idx_items_card ON items(card_id, status, received_at, id);
 CREATE INDEX IF NOT EXISTS idx_items_pending ON items(pending_id, status);
 
+CREATE TABLE IF NOT EXISTS analysis_jobs (
+  id TEXT PRIMARY KEY,
+  client_request_id TEXT NOT NULL UNIQUE,
+  input_total INTEGER NOT NULL DEFAULT 0,
+  input_duplicates INTEGER NOT NULL DEFAULT 0,
+  existing_count INTEGER NOT NULL DEFAULT 0,
+  accepted_count INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'receiving',
+  last_error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  started_at TEXT,
+  completed_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_jobs_created ON analysis_jobs(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS analysis_job_items (
+  job_id TEXT NOT NULL,
+  item_id TEXT NOT NULL UNIQUE,
+  ordinal INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'queued',
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(job_id,item_id),
+  FOREIGN KEY(job_id) REFERENCES analysis_jobs(id) ON DELETE CASCADE,
+  FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_job_items_state ON analysis_job_items(job_id,state,ordinal);
+
 CREATE TABLE IF NOT EXISTS unresolved_items (
   item_id TEXT PRIMARY KEY,
   reason TEXT NOT NULL,

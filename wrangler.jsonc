@@ -10,6 +10,14 @@
   "d1_databases": [
     { "binding": "DB", "database_name": "winning-url-vault", "database_id": "1d3e496f-3d8c-49d7-892a-d32ea5661e0c" }
   ],
+  "queues": {
+    "producers": [
+      { "binding": "ANALYSIS_QUEUE", "queue": "winning-url-analysis" }
+    ],
+    "consumers": [
+      { "queue": "winning-url-analysis", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 1 }
+    ]
+  },
   "vars": {
     "COKEON_REDEEM_BASE_URL": "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=",
     "OPERATION_MODE": "trial"
