@@ -10,7 +10,7 @@ const GENERIC_NAMES = [
 export function normalizeText(value) {
   return String(value || "")
     .normalize("NFKC")
-    .replace(/[‐‑‒–—―ー-]/g, "-")
+    .replace(/[‐‑‒–—―-]/g, "-")
     .replace(/\s+/g, " ")
     .trim()
     .toLocaleLowerCase("ja-JP");
@@ -31,7 +31,7 @@ export function normalizeSpecification(value) {
 export function normalizeRedeemPlace(value) {
   const normalized = normalizeText(value).replace(/[・･\s-]/g, "");
   if (/^(?:セブンイレブン|7eleven)$/.test(normalized)) return "セブンイレブン";
-  if (/^(?:ファミリーマート|ファミマ|familymart)$/.test(normalized)) return "ファミリーマート";
+  if (/^(?:ファミリーマート|ファミリマト|ファミマ|familymart)$/.test(normalized)) return "ファミリーマート";
   if (/^(?:ミスタードーナツ|ミスド)$/.test(normalized)) return "ミスタードーナツ";
   if (/^(?:スターバックス|starbucks)$/.test(normalized)) return "スターバックス";
   return normalized;

@@ -104,6 +104,10 @@ test("受信から初回確認、自動振り分け、未判定隔離まで実�
   let pending = await request(worker, "/api/pending");
   assert.equal(pending.items.length, 1);
   const pendingId = pending.items[0].id;
+  const reanalyzed = await request(worker, `/api/pending/${pendingId}/reanalyze`, { method: "POST" });
+  assert.equal(reanalyzed.imageUpdated, true);
+  pending = await request(worker, "/api/pending");
+  assert.match(pending.items[0].image_data_uri, /^data:image\/png;base64,/);
   const approved = await request(worker, `/api/pending/${pendingId}/confirm`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "ok" })
   });

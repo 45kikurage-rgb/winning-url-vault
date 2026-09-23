@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyValue, extractValues, isGenericName, normalizeAnalysis } from "../src/core.js";
+import { classifyValue, extractValues, isGenericName, normalizeAnalysis, normalizeName, normalizeRedeemPlace } from "../src/core.js";
+
+test("日本語の長音を商品名と利用先で保持する", () => {
+  assert.equal(normalizeName("男梅サワー 350ml"), "男梅サワー 350ml");
+  assert.equal(normalizeRedeemPlace("ファミリーマート"), "ファミリーマート");
+  assert.equal(normalizeRedeemPlace("ファミリマト"), "ファミリーマート");
+});
 
 test("汎用名は解析成功として扱わない", () => {
   for (const name of ["セブン-イレブン クーポン", "セブンイレブン クーポン", "ファミリーマート クーポン", "商品名不明"]) {

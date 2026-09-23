@@ -202,7 +202,7 @@ async function processAnalysis(env, item, result) {
     .bind(normalized.matchKey, normalized.expiresOn).first();
   if (existing) return assignCard(env, item.id, existing.card_id, result);
 
-  let pending = await env.DB.prepare("SELECT id FROM pending_confirmations WHERE match_key=? AND expires_on=?")
+  let pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=?")
     .bind(normalized.matchKey, normalized.expiresOn).first();
   if (!pending) {
     const pendingId = id();
@@ -212,8 +212,11 @@ async function processAnalysis(env, item, result) {
       .bind(pendingId, normalized.matchKey, normalized.expiresOn, "url", normalized.rawName, normalized.normalizedName,
         normalized.displayName, normalized.redeemPlace, normalized.specification, normalized.requiredConditions,
         normalized.imageDataUri, analysisJson).run();
-    pending = await env.DB.prepare("SELECT id FROM pending_confirmations WHERE match_key=? AND expires_on=?")
+    pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=?")
       .bind(normalized.matchKey, normalized.expiresOn).first();
+  } else if (!pending.image_data_uri && normalized.imageDataUri) {
+    await env.DB.prepare("UPDATE pending_confirmations SET image_data_uri=?,analysis_json=? WHERE id=?")
+      .bind(normalized.imageDataUri, analysisJson, pending.id).run();
   }
   await env.DB.batch([
     env.DB.prepare("UPDATE items SET status='pending_confirmation',pending_id=?,card_id=NULL,analysis_json=?,analyzed_at=? WHERE id=?")
@@ -381,6 +384,43 @@ async function listPending(env) {
   return json({ ok: true, items: rows.results || [] });
 }
 
+async function reanalyzePending(env, pendingId) {
+  const pending = await env.DB.prepare("SELECT * FROM pending_confirmations WHERE id=?").bind(pendingId).first();
+  if (!pending) return json({ ok: false, error: "確認待ちデータが見つかりません" }, 404);
+  const item = await env.DB.prepare(`SELECT id,value FROM items
+    WHERE pending_id=? AND status='pending_confirmation' ORDER BY received_at,id LIMIT 1`).bind(pendingId).first();
+  if (!item) return json({ ok: false, error: "再解析できる確認待ちURLがありません" }, 404);
+
+  let results;
+  try { results = await analyzerRequest(env, [item.value]); }
+  catch (error) { return json({ ok: false, error: `画像の再取得に失敗しました: ${error.message}` }, 502); }
+  const result = results.find(candidate => candidate?.url === item.value || String(candidate?.label) === "1");
+  if (!result) return json({ ok: false, error: "AnalyzerがURLを対応対象として認識しませんでした" }, 422);
+  const normalized = normalizeAnalysis(result);
+  if (!normalized.valid) return json({ ok: false, error: normalized.reason }, 422);
+  if (!normalized.imageDataUri) return json({ ok: false, error: "商品画像を取得できませんでした" }, 422);
+
+  const sameProduct = normalizeName(pending.raw_name) === normalized.normalizedName
+    && normalizeSpecification(pending.specification) === normalized.specification
+    && pending.expires_on === normalized.expiresOn;
+  if (!sameProduct) return json({ ok: false, error: "再解析結果の商品条件が元の確認待ちデータと一致しません" }, 409);
+
+  try {
+    await env.DB.prepare(`UPDATE pending_confirmations SET match_key=?,raw_name=?,normalized_name=?,display_name=?,
+      redeem_place=?,specification=?,required_conditions=?,image_data_uri=?,analysis_json=? WHERE id=?`)
+      .bind(normalized.matchKey, normalized.rawName, normalized.normalizedName, normalized.displayName,
+        normalized.redeemPlace, normalized.specification, normalized.requiredConditions, normalized.imageDataUri,
+        JSON.stringify(result), pendingId).run();
+  } catch (error) {
+    if (/unique/i.test(error.message || "")) return json({ ok: false, error: "同じ条件の確認待ちカードが既にあります" }, 409);
+    throw error;
+  }
+  await env.DB.prepare(`UPDATE items SET analysis_json=?,analyzed_at=?
+    WHERE pending_id=? AND status='pending_confirmation'`).bind(JSON.stringify(result), nowSql(), pendingId).run();
+  await audit(env, item.id, "pending_reanalyzed", { pendingId, imageUpdated: true });
+  return json({ ok: true, pendingId, imageUpdated: true });
+}
+
 async function listUnresolved(env) {
   const rows = await env.DB.prepare(`SELECT i.id,i.received_at,u.reason,u.pattern_key,u.retry_count,u.last_error
     FROM unresolved_items u JOIN items i ON i.id=u.item_id ORDER BY i.received_at ASC LIMIT 500`).all();
@@ -435,6 +475,8 @@ export default {
       if (url.pathname === "/api/unresolved/retry" && request.method === "POST") return retryUnresolved(env);
       const confirmation = url.pathname.match(/^\/api\/pending\/([0-9a-f-]+)\/confirm$/i);
       if (confirmation && request.method === "POST") return confirmPending(request, env, confirmation[1]);
+      const pendingReanalysis = url.pathname.match(/^\/api\/pending\/([0-9a-f-]+)\/reanalyze$/i);
+      if (pendingReanalysis && request.method === "POST") return reanalyzePending(env, pendingReanalysis[1]);
       const cardItems = url.pathname.match(/^\/api\/cards\/([0-9a-f-]+)\/items$/i);
       if (cardItems && request.method === "GET") return listCardItems(url, env, cardItems[1]);
       if (url.pathname.startsWith("/api/")) return json({ ok: false, error: "Not found" }, 404);
