@@ -202,9 +202,17 @@ function finishPendingPause(action) {
 }
 
 async function pauseForPending(pendingId) {
-  const pending = await api("/api/pending");
-  const item = pending.items.find(candidate => candidate.id === pendingId);
+  let pending = await api("/api/pending");
+  let item = pending.items.find(candidate => candidate.id === pendingId);
   if (!item) return "missing";
+  if (!item.image_data_uri) {
+    try {
+      $("progressStatus").textContent = "初回画像を取得中";
+      await api(`/api/pending/${pendingId}/reanalyze`, { method:"POST" });
+      pending = await api("/api/pending");
+      item = pending.items.find(candidate => candidate.id === pendingId) || item;
+    } catch {}
+  }
   state.pendingItems.set(item.id, item);
   $("pendingDialogContent").innerHTML = pendingCard(item);
   bindPendingControls($("pendingDialogContent").querySelector("[data-pending]"));

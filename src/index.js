@@ -172,11 +172,12 @@ async function ensureCodeCard(env, type) {
   return card.id;
 }
 
-async function analyzerRequest(env, values) {
+async function analyzerRequest(env, values, options = {}) {
   if (!values.length) return [];
   const request = new Request("https://coupon-analyzer.internal/api/analyze-detail", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ items: values.map((value, index) => ({ label: String(index + 1), url: value })), mode: "stable" })
+    body: JSON.stringify({ items: values.map((value, index) => ({ label: String(index + 1), url: value })),
+      mode: "stable", renderImage: options.renderImage === true })
   });
   let response;
   if (env.COUPON_ANALYZER?.fetch) response = await env.COUPON_ANALYZER.fetch(request);
@@ -392,7 +393,7 @@ async function reanalyzePending(env, pendingId) {
   if (!item) return json({ ok: false, error: "再解析できる確認待ちURLがありません" }, 404);
 
   let results;
-  try { results = await analyzerRequest(env, [item.value]); }
+  try { results = await analyzerRequest(env, [item.value], { renderImage: true }); }
   catch (error) { return json({ ok: false, error: `画像の再取得に失敗しました: ${error.message}` }, 502); }
   const result = results.find(candidate => candidate?.url === item.value || String(candidate?.label) === "1");
   if (!result) return json({ ok: false, error: "AnalyzerがURLを対応対象として認識しませんでした" }, 422);
