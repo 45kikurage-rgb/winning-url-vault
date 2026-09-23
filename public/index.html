@@ -28,8 +28,9 @@
   </header>
 
   <section class="trial-notice">
-    <strong>試用運用中</strong>
-    <span>正式運用と同じ条件で確認しています。試用終了時にURLデータを初期化します。</span>
+    <div><strong>試用運用中</strong>
+    <span>正式運用と同じ条件で確認しています。商品マスターを残したまま、試用URLを全件削除できます。</span></div>
+    <button id="openTrialReset" class="danger">URLデータ完全削除</button>
   </section>
 
   <section class="receive panel">
@@ -79,6 +80,16 @@
   <div class="dialog-head"><div><small>カード内容</small><h2 id="dialogTitle"></h2></div><button id="dialogClose" class="secondary">閉じる</button></div>
   <div id="itemList" class="item-list"></div>
   <button id="loadMore" class="secondary hidden">続きを表示</button>
+</dialog>
+
+<dialog id="trialResetDialog">
+  <div class="dialog-head"><div><small>試用データ初期化</small><h2>URLデータを完全削除</h2></div></div>
+  <p>登録URL、解析ジョブ、確認待ち、未判定、操作履歴をすべて削除します。商品マスターとカード定義は残します。この操作は取り消せません。</p>
+  <label class="danger-confirm">確認のため「完全削除」と入力
+    <input id="trialResetConfirmation" autocomplete="off" placeholder="完全削除">
+  </label>
+  <p id="trialResetMessage" class="result" aria-live="polite"></p>
+  <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
 <script src="/app.js"></script>
 </body>

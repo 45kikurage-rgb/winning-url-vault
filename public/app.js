@@ -57,6 +57,39 @@ async function logout() {
   finally { stopPolling(); showLogin("ログアウトしました"); }
 }
 
+function openTrialReset() {
+  $("trialResetConfirmation").value = "";
+  $("trialResetMessage").textContent = "";
+  $("confirmTrialReset").disabled = true;
+  $("trialResetDialog").showModal();
+  $("trialResetConfirmation").focus();
+}
+
+async function resetTrialData() {
+  const button = $("confirmTrialReset");
+  button.disabled = true;
+  $("trialResetMessage").textContent = "削除中…";
+  stopPolling();
+  try {
+    const result = await api("/api/trial/reset", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ confirmation: $("trialResetConfirmation").value })
+    });
+    state.activeJobId = null;
+    state.dialogPendingId = null;
+    $("receiveProgress").classList.add("hidden");
+    $("receiveResult").textContent = `${Number(result.deleted || 0).toLocaleString()}件のURLデータを削除しました。`;
+    if ($("pendingDialog").open) $("pendingDialog").close();
+    $("trialResetDialog").close();
+    await load();
+  } catch (error) {
+    $("trialResetMessage").textContent = error.message;
+  } finally {
+    button.disabled = $("trialResetConfirmation").value !== "完全削除";
+    startPolling();
+  }
+}
+
 async function boot() {
   try {
     const result = await api("/api/auth/status");
@@ -372,5 +405,11 @@ $("dialogClose").onclick = () => $("itemsDialog").close();
 $("loadMore").onclick = loadItems;
 $("loginForm").onsubmit = login;
 $("logout").onclick = logout;
+$("openTrialReset").onclick = openTrialReset;
+$("cancelTrialReset").onclick = () => $("trialResetDialog").close();
+$("trialResetConfirmation").oninput = event => {
+  $("confirmTrialReset").disabled = event.currentTarget.value !== "完全削除";
+};
+$("confirmTrialReset").onclick = resetTrialData;
 $("pendingDialog").addEventListener("cancel", event => event.preventDefault());
 boot();
