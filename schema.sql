@@ -90,6 +90,19 @@ CREATE TABLE IF NOT EXISTS analysis_job_items (
 );
 CREATE INDEX IF NOT EXISTS idx_job_items_state ON analysis_job_items(job_id,state,ordinal);
 
+CREATE TABLE IF NOT EXISTS analysis_staging (
+  item_id TEXT PRIMARY KEY,
+  job_id TEXT NOT NULL,
+  batch_no INTEGER NOT NULL,
+  result_json TEXT,
+  error_reason TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY(job_id) REFERENCES analysis_jobs(id) ON DELETE CASCADE,
+  FOREIGN KEY(item_id) REFERENCES items(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_analysis_staging_job ON analysis_staging(job_id,batch_no,item_id);
+
 CREATE TABLE IF NOT EXISTS unresolved_items (
   item_id TEXT PRIMARY KEY,
   reason TEXT NOT NULL,

@@ -11,6 +11,7 @@ async function startAnalyzer() {
   const chunks = [];
   for await (const chunk of request) chunks.push(chunk);
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  server.analysisRequests.push(body);
   const results = [];
   for (const item of body.items || []) {
     if (item.url.includes("unsupported")) continue;
@@ -20,12 +21,13 @@ async function startAnalyzer() {
       product: generic ? "セブン-イレブン クーポン" : "セブンカフェ カフェラテ",
       capacity: "300ml", size: "other", redeemPlace: "セブンイレブン",
       expiresOn: item.url.includes("new-expiry") ? "2026-11-30" : "2026-10-31",
-      productImageDataUri: "data:image/png;base64,aW1hZ2U="
+      productImageDataUri: body.includeProductImage === true ? "data:image/png;base64,aW1hZ2U=" : null
     });
   }
   response.writeHead(200, { "content-type": "application/json" });
   response.end(JSON.stringify({ results, mode: "stable", processingMs: 1 }));
   });
+  server.analysisRequests = [];
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   return server;
 }
@@ -179,6 +181,31 @@ test("全件受付で貼付内重複と既登録を分け、完全一致候補�
   assert.equal(second.job.accepted, 0);
 });
 
+test("40件単位の並列解析を一時領域で集約し、商品画像は初回確認用の1件だけ取得する", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const values = Array.from({ length: 85 }, (_, index) => `https://coupon.sej.co.jp/bulk-${index}`);
+  const result = await request(worker, "/api/receive", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientRequestId: crypto.randomUUID(), values })
+  });
+
+  assert.equal(result.job.accepted, 85);
+  assert.equal(result.job.processed, 85);
+  assert.equal(result.job.pendingConfirmation, 85);
+  const pending = await request(worker, "/api/pending");
+  assert.equal(pending.items.length, 1);
+  assert.equal(Number(pending.items[0].item_count), 85);
+  assert.match(pending.items[0].image_data_uri, /^data:image\/png;base64,/);
+  assert.equal((await DB.prepare("SELECT COUNT(*) count FROM analysis_staging").first()).count, 0);
+
+  const bulkRequests = analyzer.analysisRequests.filter(body => body.includeProductImage === false);
+  const imageRequests = analyzer.analysisRequests.filter(body => body.includeProductImage === true);
+  assert.deepEqual(bulkRequests.map(body => body.items.length).sort((a, b) => a - b), [5, 40, 40]);
+  assert.equal(imageRequests.length, 1);
+  assert.equal(imageRequests[0].items.length, 1);
+});
+
 test("試用版の完全削除はURLデータだけを消し、商品マスターを残す", async t => {
   const { mf, analyzer, worker, DB } = await createRuntime();
   t.after(() => cleanup(mf, analyzer));
@@ -199,6 +226,7 @@ test("試用版の完全削除はURLデータだけを消し、商品マスタ�
   assert.equal(reset.deleted, 1);
   assert.equal((await DB.prepare("SELECT COUNT(*) count FROM items").first()).count, 0);
   assert.equal((await DB.prepare("SELECT COUNT(*) count FROM analysis_jobs").first()).count, 0);
+  assert.equal((await DB.prepare("SELECT COUNT(*) count FROM analysis_staging").first()).count, 0);
   assert.equal((await DB.prepare("SELECT COUNT(*) count FROM product_master").first()).count, 1);
   assert.equal((await request(worker, "/api/cards")).cards.length, 0);
   assert.equal((await request(worker, "/api/jobs/latest")).job, null);

@@ -3,8 +3,8 @@ import {
   normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson
 } from "./core.js";
 
-const VERSION = "0.4.1";
-const ANALYSIS_BATCH_SIZE = 10;
+const VERSION = "0.5.0";
+const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
 const encoder = new TextEncoder();
@@ -178,7 +178,9 @@ async function analyzerRequest(env, values, options = {}) {
   const request = new Request("https://coupon-analyzer.internal/api/analyze-detail", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ items: values.map((value, index) => ({ label: String(index + 1), url: value })),
-      mode: "stable", renderImage: options.renderImage === true })
+      mode: options.mode === "fast" ? "fast" : "stable",
+      renderImage: options.renderImage === true,
+      includeProductImage: options.includeProductImage === true })
   });
   let response;
   if (env.COUPON_ANALYZER?.fetch) response = await env.COUPON_ANALYZER.fetch(request);
@@ -287,7 +289,8 @@ async function jobSummary(env, jobId) {
     COUNT(*) accepted,
     COALESCE(SUM(CASE WHEN ji.state='queued' THEN 1 ELSE 0 END),0) queued,
     COALESCE(SUM(CASE WHEN ji.state='processing' THEN 1 ELSE 0 END),0) processing,
-    COALESCE(SUM(CASE WHEN ji.state='done' THEN 1 ELSE 0 END),0) processed,
+    COALESCE(SUM(CASE WHEN ji.state='staged' THEN 1 ELSE 0 END),0) staged,
+    COALESCE(SUM(CASE WHEN ji.state IN ('staged','done') THEN 1 ELSE 0 END),0) processed,
     COALESCE(SUM(CASE WHEN ji.state='done' AND i.status='active' THEN 1 ELSE 0 END),0) active,
     COALESCE(SUM(CASE WHEN ji.state='done' AND i.status='pending_confirmation' THEN 1 ELSE 0 END),0) pending_confirmation,
     COALESCE(SUM(CASE WHEN ji.state='done' AND i.status='unresolved' THEN 1 ELSE 0 END),0) unresolved
@@ -296,14 +299,16 @@ async function jobSummary(env, jobId) {
   const processed = Number(counts?.processed || 0);
   const pending = Number(counts?.pending_confirmation || 0);
   let status = job.status;
-  if (processed >= accepted) status = pending ? "awaiting_confirmation" : "completed";
+  if (job.status === "finalizing") status = "finalizing";
+  else if (processed >= accepted) status = pending ? "awaiting_confirmation" : "completed";
   else if (Number(counts?.processing || 0) > 0) status = "processing";
   else if (accepted > 0) status = "queued";
   return {
     id: job.id, clientRequestId: job.client_request_id, status,
     inputTotal: Number(job.input_total || 0), inputDuplicates: Number(job.input_duplicates || 0),
     existing: Number(job.existing_count || 0), accepted,
-    queued: Number(counts?.queued || 0), processing: Number(counts?.processing || 0), processed,
+    queued: Number(counts?.queued || 0), processing: Number(counts?.processing || 0),
+    staged: Number(counts?.staged || 0), processed,
     active: Number(counts?.active || 0), pendingConfirmation: pending,
     unresolved: Number(counts?.unresolved || 0), lastError: job.last_error || "",
     createdAt: job.created_at, completedAt: job.completed_at
@@ -319,60 +324,248 @@ async function finishJobIfComplete(env, jobId) {
   return complete;
 }
 
-async function processJobBatch(env, jobId) {
-  const rows = await env.DB.prepare(`SELECT ji.item_id,i.id,i.value,i.canonical_value,i.value_type
+function sliceInto(values, size) {
+  const output = [];
+  for (let start = 0; start < values.length; start += size) output.push(values.slice(start, start + size));
+  return output;
+}
+
+function bindList(values) {
+  return values.map(() => "?").join(",");
+}
+
+async function stageJobBatch(env, jobId, batchNo, scheduleFinalize = true) {
+  const start = batchNo * ANALYSIS_BATCH_SIZE;
+  const end = start + ANALYSIS_BATCH_SIZE;
+  const rows = await env.DB.prepare(`SELECT ji.item_id,i.value,i.canonical_value,i.value_type
     FROM analysis_job_items ji JOIN items i ON i.id=ji.item_id
-    WHERE ji.job_id=? AND ji.state='queued' ORDER BY ji.ordinal LIMIT ?`)
-    .bind(jobId, ANALYSIS_BATCH_SIZE).all();
+    WHERE ji.job_id=? AND ji.ordinal>=? AND ji.ordinal<? AND ji.state!='done'
+    ORDER BY ji.ordinal`).bind(jobId, start, end).all();
   const items = rows.results || [];
-  if (!items.length) return finishJobIfComplete(env, jobId);
+  if (!items.length) return false;
 
   const claimedAt = nowSql();
   await env.DB.batch([
-    env.DB.prepare("UPDATE analysis_jobs SET status='processing',started_at=COALESCE(started_at,?),updated_at=?,last_error=NULL WHERE id=?")
+    env.DB.prepare("UPDATE analysis_jobs SET status='processing',started_at=COALESCE(started_at,?),updated_at=?,last_error=NULL WHERE id=? AND status!='completed'")
       .bind(claimedAt, claimedAt, jobId),
-    ...items.map(item => env.DB.prepare("UPDATE analysis_job_items SET state='processing',updated_at=? WHERE job_id=? AND item_id=? AND state='queued'")
-      .bind(claimedAt, jobId, item.id))
+    ...items.map(item => env.DB.prepare("UPDATE analysis_job_items SET state='processing',updated_at=? WHERE job_id=? AND item_id=? AND state!='done'")
+      .bind(claimedAt, jobId, item.item_id))
   ]);
 
+  const staged = [];
+  const urls = items.filter(item => item.value_type === "url");
+  let results = [];
+  let analyzerError = "";
+  if (urls.length) {
+    try { results = await analyzerRequest(env, urls.map(item => item.value), { includeProductImage: false }); }
+    catch (error) { analyzerError = error instanceof Error ? error.message : String(error); }
+  }
+  const byUrl = new Map(results.filter(result => result?.url).map(result => [result.url, result]));
+  const byLabel = new Map(results.filter(result => result?.label).map(result => [String(result.label), result]));
+  let urlIndex = 0;
+  for (const item of items) {
+    if (["cokeon", "paypay"].includes(item.value_type)) {
+      staged.push({ item, result: { localCodeType: item.value_type }, error: "" });
+      continue;
+    }
+    if (item.value_type !== "url") {
+      staged.push({ item, result: null, error: "未対応の入力形式" });
+      continue;
+    }
+    const labelled = byLabel.get(String(urlIndex + 1));
+    const result = byUrl.get(item.value) || (labelled?.url === item.value ? labelled : null);
+    urlIndex += 1;
+    staged.push({ item, result, error: analyzerError || (!result ? "AnalyzerがURLを対応対象として認識しませんでした" : "") });
+  }
+
+  for (const chunk of sliceInto(staged, 30)) {
+    await env.DB.batch(chunk.flatMap(entry => [
+      env.DB.prepare(`INSERT INTO analysis_staging
+        (item_id,job_id,batch_no,result_json,error_reason,updated_at) VALUES (?,?,?,?,?,?)
+        ON CONFLICT(item_id) DO UPDATE SET job_id=excluded.job_id,batch_no=excluded.batch_no,
+        result_json=excluded.result_json,error_reason=excluded.error_reason,updated_at=excluded.updated_at`)
+        .bind(entry.item.item_id, jobId, batchNo, entry.result ? JSON.stringify(entry.result) : null,
+          entry.error || null, nowSql()),
+      env.DB.prepare("UPDATE analysis_job_items SET state='staged',updated_at=? WHERE job_id=? AND item_id=? AND state!='done'")
+        .bind(nowSql(), jobId, entry.item.item_id)
+    ]));
+  }
+
+  const counts = await env.DB.prepare(`SELECT COUNT(*) total,
+    COALESCE(SUM(CASE WHEN state IN ('staged','done') THEN 1 ELSE 0 END),0) ready
+    FROM analysis_job_items WHERE job_id=?`).bind(jobId).first();
+  const ready = Number(counts?.ready || 0) >= Number(counts?.total || 0);
+  if (ready && scheduleFinalize) {
+    if (env.ANALYSIS_QUEUE?.send) await env.ANALYSIS_QUEUE.send({ type: "finalize", jobId });
+    else await finalizeJob(env, jobId);
+  }
+  return ready;
+}
+
+async function updateItemsAsGroup(env, entries, model) {
+  if (!entries.length) return;
+  const analysisJson = JSON.stringify(entries[0].result || {});
+  const idChunks = sliceInto(entries.map(entry => entry.item_id), 80);
+  const statements = [];
+  for (const ids of idChunks) {
+    if (model.status === "active") {
+      statements.push(env.DB.prepare(`UPDATE items SET status='active',card_id=?,pending_id=NULL,
+        analysis_json=?,analyzed_at=?,classified_at=? WHERE id IN (${bindList(ids)})`)
+        .bind(model.cardId, analysisJson, nowSql(), nowSql(), ...ids));
+    } else {
+      statements.push(env.DB.prepare(`UPDATE items SET status='pending_confirmation',card_id=NULL,pending_id=?,
+        analysis_json=?,analyzed_at=? WHERE id IN (${bindList(ids)})`)
+        .bind(model.pendingId, analysisJson, nowSql(), ...ids));
+    }
+    statements.push(env.DB.prepare(`DELETE FROM unresolved_items WHERE item_id IN (${bindList(ids)})`).bind(...ids));
+  }
+  await env.DB.batch(statements);
+  await audit(env, null, model.status === "active" ? "classified_group" : "pending_confirmation_group",
+    { cardId: model.cardId || null, pendingId: model.pendingId || null, count: entries.length });
+}
+
+async function updateItemsAsUnresolved(env, entries) {
+  const buckets = new Map();
+  for (const entry of entries) {
+    const key = `${entry.reason}\u001f${patternKey(entry.value)}`;
+    if (!buckets.has(key)) buckets.set(key, { reason: entry.reason, pattern: patternKey(entry.value), entries: [] });
+    buckets.get(key).entries.push(entry);
+  }
+  for (const bucket of buckets.values()) {
+    for (const chunk of sliceInto(bucket.entries, 80)) {
+      const ids = chunk.map(entry => entry.item_id);
+      const analysisJson = JSON.stringify(chunk[0].result || {});
+      await env.DB.batch([
+        env.DB.prepare(`UPDATE items SET status='unresolved',card_id=NULL,pending_id=NULL,
+          analysis_json=?,analyzed_at=? WHERE id IN (${bindList(ids)})`).bind(analysisJson, nowSql(), ...ids),
+        env.DB.prepare(`INSERT INTO unresolved_items (item_id,reason,pattern_key,last_error,updated_at)
+          SELECT id,?,?,NULL,? FROM items WHERE id IN (${bindList(ids)})
+          ON CONFLICT(item_id) DO UPDATE SET reason=excluded.reason,pattern_key=excluded.pattern_key,
+          last_error=excluded.last_error,updated_at=excluded.updated_at`)
+          .bind(bucket.reason, bucket.pattern, nowSql(), ...ids)
+      ]);
+    }
+    await audit(env, null, "unresolved_group", { reason: bucket.reason, pattern: bucket.pattern, count: bucket.entries.length });
+  }
+}
+
+async function loadPendingImage(env, pending, normalized, entry) {
+  if (pending.image_data_uri) return pending;
   try {
-    const output = [];
-    const urls = [];
-    for (const item of items) {
-      if (item.value_type === "url") urls.push(item);
-      else if (["cokeon", "paypay"].includes(item.value_type)) {
-        const cardId = await ensureCodeCard(env, item.value_type);
-        output.push(await assignCard(env, item.id, cardId));
-      } else output.push(await markUnresolved(env, item, "未対応の入力形式"));
+    const [result] = await analyzerRequest(env, [entry.value], { includeProductImage: true, renderImage: true });
+    const imageModel = result ? normalizeAnalysis(result) : null;
+    if (imageModel?.valid && imageModel.matchKey === normalized.matchKey
+      && imageModel.expiresOn === normalized.expiresOn && imageModel.imageDataUri) {
+      await env.DB.prepare("UPDATE pending_confirmations SET image_data_uri=? WHERE id=? AND image_data_uri IS NULL")
+        .bind(imageModel.imageDataUri, pending.id).run();
+      pending = { ...pending, image_data_uri: imageModel.imageDataUri };
     }
-    output.push(...await processUrlChunk(env, urls));
-    await env.DB.batch(items.map(item => env.DB.prepare("UPDATE analysis_job_items SET state='done',updated_at=? WHERE job_id=? AND item_id=?")
-      .bind(nowSql(), jobId, item.id)));
+  } catch (error) { console.warn("pending image", error); }
+  return pending;
+}
 
-    const pendingForImage = [...new Set(output.filter(item => item.needsImage && item.pendingId).map(item => item.pendingId))];
-    for (const pendingId of pendingForImage) {
-      try { await reanalyzePending(env, pendingId); } catch (error) { console.warn("pending image", error); }
+async function finalizeJob(env, jobId) {
+  const readiness = await env.DB.prepare(`SELECT COUNT(*) total,
+    COALESCE(SUM(CASE WHEN state IN ('staged','done') THEN 1 ELSE 0 END),0) ready
+    FROM analysis_job_items WHERE job_id=?`).bind(jobId).first();
+  if (Number(readiness?.ready || 0) < Number(readiness?.total || 0)) return false;
+  const locked = await env.DB.prepare(`UPDATE analysis_jobs SET status='finalizing',updated_at=?
+    WHERE id=? AND status NOT IN ('finalizing','completed')`).bind(nowSql(), jobId).run();
+  if (Number(locked.meta?.changes || 0) === 0) return false;
+
+  try {
+    const rows = await env.DB.prepare(`SELECT s.item_id,s.result_json,s.error_reason,i.value,i.value_type
+      FROM analysis_staging s JOIN items i ON i.id=s.item_id
+      WHERE s.job_id=? ORDER BY s.batch_no,s.item_id`).bind(jobId).all();
+    const grouped = new Map();
+    const unresolved = [];
+    const codeGroups = new Map();
+    for (const row of rows.results || []) {
+      let result = null;
+      try { result = row.result_json ? JSON.parse(row.result_json) : null; } catch {}
+      if (result?.localCodeType) {
+        if (!codeGroups.has(result.localCodeType)) codeGroups.set(result.localCodeType, []);
+        codeGroups.get(result.localCodeType).push({ ...row, result });
+        continue;
+      }
+      if (row.error_reason) {
+        unresolved.push({ ...row, result, reason: row.error_reason });
+        continue;
+      }
+      const normalized = normalizeAnalysis(result);
+      if (!normalized.valid) {
+        unresolved.push({ ...row, result, reason: normalized.reason });
+        continue;
+      }
+      const groupKey = `${normalized.matchKey}\u001e${normalized.expiresOn}`;
+      if (!grouped.has(groupKey)) grouped.set(groupKey, { normalized, entries: [] });
+      grouped.get(groupKey).entries.push({ ...row, result });
     }
 
-    const complete = await finishJobIfComplete(env, jobId);
-    if (!complete && env.ANALYSIS_QUEUE?.send) await env.ANALYSIS_QUEUE.send({ jobId });
-    return complete;
-  } catch (error) {
+    for (const [type, entries] of codeGroups) {
+      const cardId = await ensureCodeCard(env, type);
+      await updateItemsAsGroup(env, entries, { status: "active", cardId });
+    }
+    if (unresolved.length) await updateItemsAsUnresolved(env, unresolved);
+
+    for (const group of grouped.values()) {
+      const { normalized, entries } = group;
+      let card = await env.DB.prepare(`SELECT c.id FROM product_master p JOIN cards c ON c.product_id=p.id
+        WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? LIMIT 1`)
+        .bind(normalized.matchKey, normalized.expiresOn).first();
+      if (card) {
+        await updateItemsAsGroup(env, entries, { status: "active", cardId: card.id });
+        continue;
+      }
+
+      let pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=?")
+        .bind(normalized.matchKey, normalized.expiresOn).first();
+      if (!pending) {
+        const pendingId = id();
+        await env.DB.prepare(`INSERT OR IGNORE INTO pending_confirmations
+          (id,match_key,expires_on,source_type,raw_name,normalized_name,display_name,redeem_place,specification,
+           required_conditions,image_data_uri,analysis_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .bind(pendingId, normalized.matchKey, normalized.expiresOn, "url", normalized.rawName,
+            normalized.normalizedName, normalized.displayName, normalized.redeemPlace, normalized.specification,
+            normalized.requiredConditions, normalized.imageDataUri, JSON.stringify(entries[0].result)).run();
+        pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=?")
+          .bind(normalized.matchKey, normalized.expiresOn).first();
+      }
+      card = await env.DB.prepare(`SELECT c.id FROM product_master p JOIN cards c ON c.product_id=p.id
+        WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? LIMIT 1`)
+        .bind(normalized.matchKey, normalized.expiresOn).first();
+      if (card) {
+        await updateItemsAsGroup(env, entries, { status: "active", cardId: card.id });
+        continue;
+      }
+      if (!pending) {
+        await updateItemsAsUnresolved(env, entries.map(entry => ({
+          ...entry, reason: "確認候補グループを作成できませんでした"
+        })));
+        continue;
+      }
+      pending = await loadPendingImage(env, pending, normalized, entries[0]);
+      await updateItemsAsGroup(env, entries, { status: "pending_confirmation", pendingId: pending.id });
+    }
+
     await env.DB.batch([
-      ...items.map(item => env.DB.prepare("UPDATE analysis_job_items SET state='queued',updated_at=? WHERE job_id=? AND item_id=?")
-        .bind(nowSql(), jobId, item.id)),
-      env.DB.prepare("UPDATE analysis_jobs SET status='queued',last_error=?,updated_at=? WHERE id=?")
-        .bind(error instanceof Error ? error.message : String(error), nowSql(), jobId)
+      env.DB.prepare("UPDATE analysis_job_items SET state='done',updated_at=? WHERE job_id=?").bind(nowSql(), jobId),
+      env.DB.prepare("DELETE FROM analysis_staging WHERE job_id=?").bind(jobId),
+      env.DB.prepare("UPDATE analysis_jobs SET status='completed',completed_at=COALESCE(completed_at,?),updated_at=?,last_error=NULL WHERE id=?")
+        .bind(nowSql(), nowSql(), jobId)
     ]);
+    return true;
+  } catch (error) {
+    await env.DB.prepare("UPDATE analysis_jobs SET status='processing',last_error=?,updated_at=? WHERE id=?")
+      .bind(error instanceof Error ? error.message : String(error), nowSql(), jobId).run();
     throw error;
   }
 }
 
-async function processJobFully(env, jobId) {
-  for (let index = 0; index < 1000; index += 1) {
-    if (await processJobBatch(env, jobId)) return;
-  }
-  throw new Error("解析ジョブの件数が上限を超えました");
+async function processJobFully(env, jobId, acceptedCount) {
+  const batchCount = Math.ceil(acceptedCount / ANALYSIS_BATCH_SIZE);
+  await Promise.all(Array.from({ length: batchCount }, (_, batchNo) => stageJobBatch(env, jobId, batchNo, false)));
+  await finalizeJob(env, jobId);
 }
 
 async function receive(request, env) {
@@ -397,32 +590,51 @@ async function receive(request, env) {
     unique.push(classified);
   }
   const existingCanonicals = await findExistingCanonicals(env, unique.map(item => item.canonicalValue));
-  const accepted = unique.filter(item => !existingCanonicals.has(item.canonicalValue))
-    .map((item, ordinal) => ({ ...item, id: id(), ordinal }));
+  const candidates = unique.filter(item => !existingCanonicals.has(item.canonicalValue))
+    .map(item => ({ ...item, id: id() }));
   const jobId = id();
   await env.DB.prepare(`INSERT INTO analysis_jobs
     (id,client_request_id,input_total,input_duplicates,existing_count,accepted_count,status,updated_at)
-    VALUES (?,?,?,?,?,?,?,?)`).bind(jobId, clientRequestId, values.length, inputDuplicates,
-      existingCanonicals.size, accepted.length, accepted.length ? "queued" : "completed", nowSql()).run();
-  for (let start = 0; start < accepted.length; start += 40) {
-    const chunk = accepted.slice(start, start + 40);
-    await env.DB.batch(chunk.flatMap(item => [
-      env.DB.prepare(`INSERT INTO items (id,value,canonical_value,value_type,status) VALUES (?,?,?,?, 'queued')`)
-        .bind(item.id, item.storedValue, item.canonicalValue, item.type),
-      env.DB.prepare("INSERT INTO analysis_job_items (job_id,item_id,ordinal,state,updated_at) VALUES (?,?,?,'queued',?)")
-        .bind(jobId, item.id, item.ordinal, nowSql())
-    ]));
+    VALUES (?,?,?,?,?,0,'receiving',?)`).bind(jobId, clientRequestId, values.length, inputDuplicates,
+      existingCanonicals.size, nowSql()).run();
+
+  const accepted = [];
+  for (const chunk of sliceInto(candidates, 40)) {
+    await env.DB.batch(chunk.map(item => env.DB.prepare(
+      `INSERT OR IGNORE INTO items (id,value,canonical_value,value_type,status) VALUES (?,?,?,?, 'queued')`
+    ).bind(item.id, item.storedValue, item.canonicalValue, item.type)));
+    const canonicalValues = chunk.map(item => item.canonicalValue);
+    const rows = await env.DB.prepare(`SELECT id,canonical_value FROM items
+      WHERE canonical_value IN (${bindList(canonicalValues)})`).bind(...canonicalValues).all();
+    const storedIds = new Map((rows.results || []).map(row => [row.canonical_value, row.id]));
+    accepted.push(...chunk.filter(item => storedIds.get(item.canonicalValue) === item.id));
   }
+  const raceDuplicates = candidates.length - accepted.length;
+  accepted.forEach((item, ordinal) => { item.ordinal = ordinal; });
+  for (const chunk of sliceInto(accepted, 40)) {
+    await env.DB.batch(chunk.map(item => env.DB.prepare(
+      "INSERT INTO analysis_job_items (job_id,item_id,ordinal,state,updated_at) VALUES (?,?,?,'queued',?)"
+    ).bind(jobId, item.id, item.ordinal, nowSql())));
+  }
+  const existingCount = existingCanonicals.size + raceDuplicates;
+  await env.DB.prepare(`UPDATE analysis_jobs SET existing_count=?,accepted_count=?,status=?,updated_at=? WHERE id=?`)
+    .bind(existingCount, accepted.length, accepted.length ? "queued" : "completed", nowSql(), jobId).run();
   if (!accepted.length) {
     await env.DB.prepare("UPDATE analysis_jobs SET completed_at=?,updated_at=? WHERE id=?").bind(nowSql(), nowSql(), jobId).run();
   } else if (env.ANALYSIS_QUEUE?.send) {
-    await env.ANALYSIS_QUEUE.send({ jobId });
+    const messages = Array.from({ length: Math.ceil(accepted.length / ANALYSIS_BATCH_SIZE) },
+      (_, batchNo) => ({ body: { type: "analyze", jobId, batchNo } }));
+    if (env.ANALYSIS_QUEUE.sendBatch) {
+      for (const chunk of sliceInto(messages, 100)) await env.ANALYSIS_QUEUE.sendBatch(chunk);
+    } else {
+      await Promise.all(messages.map(message => env.ANALYSIS_QUEUE.send(message.body)));
+    }
   } else {
-    await processJobFully(env, jobId);
+    await processJobFully(env, jobId, accepted.length);
   }
   const summary = await jobSummary(env, jobId);
-  return json({ ok: true, received: accepted.length, duplicate: inputDuplicates + existingCanonicals.size,
-    inputDuplicate: inputDuplicates, existing: existingCanonicals.size,
+  return json({ ok: true, received: accepted.length, duplicate: inputDuplicates + existingCount,
+    inputDuplicate: inputDuplicates, existing: existingCount,
     counts: { active: summary.active, pending_confirmation: summary.pendingConfirmation, unresolved: summary.unresolved },
     job: summary }, 202);
 }
@@ -526,7 +738,7 @@ async function listCards(env) {
 async function listPending(env) {
   const rows = await env.DB.prepare(`SELECT p.*,COUNT(i.id) item_count FROM pending_confirmations p
     LEFT JOIN items i ON i.pending_id=p.id AND i.status='pending_confirmation'
-    GROUP BY p.id ORDER BY p.created_at ASC LIMIT 100`).all();
+    GROUP BY p.id HAVING COUNT(i.id)>0 ORDER BY p.created_at ASC LIMIT 100`).all();
   return json({ ok: true, items: rows.results || [] });
 }
 
@@ -538,7 +750,7 @@ async function reanalyzePending(env, pendingId) {
   if (!item) return json({ ok: false, error: "再解析できる確認待ちURLがありません" }, 404);
 
   let results;
-  try { results = await analyzerRequest(env, [item.value], { renderImage: true }); }
+  try { results = await analyzerRequest(env, [item.value], { renderImage: true, includeProductImage: true }); }
   catch (error) { return json({ ok: false, error: `画像の再取得に失敗しました: ${error.message}` }, 502); }
   const result = results.find(candidate => candidate?.url === item.value || String(candidate?.label) === "1");
   if (!result) return json({ ok: false, error: "AnalyzerがURLを対応対象として認識しませんでした" }, 422);
@@ -546,23 +758,11 @@ async function reanalyzePending(env, pendingId) {
   if (!normalized.valid) return json({ ok: false, error: normalized.reason }, 422);
   if (!normalized.imageDataUri) return json({ ok: false, error: "商品画像を取得できませんでした" }, 422);
 
-  const sameProduct = normalizeName(pending.raw_name) === normalized.normalizedName
-    && normalizeSpecification(pending.specification) === normalized.specification
-    && pending.expires_on === normalized.expiresOn;
+  const sameProduct = pending.match_key === normalized.matchKey && pending.expires_on === normalized.expiresOn;
   if (!sameProduct) return json({ ok: false, error: "再解析結果の商品条件が元の確認待ちデータと一致しません" }, 409);
 
-  try {
-    await env.DB.prepare(`UPDATE pending_confirmations SET match_key=?,raw_name=?,normalized_name=?,display_name=?,
-      redeem_place=?,specification=?,required_conditions=?,image_data_uri=?,analysis_json=? WHERE id=?`)
-      .bind(normalized.matchKey, normalized.rawName, normalized.normalizedName, normalized.displayName,
-        normalized.redeemPlace, normalized.specification, normalized.requiredConditions, normalized.imageDataUri,
-        JSON.stringify(result), pendingId).run();
-  } catch (error) {
-    if (/unique/i.test(error.message || "")) return json({ ok: false, error: "同じ条件の確認待ちカードが既にあります" }, 409);
-    throw error;
-  }
-  await env.DB.prepare(`UPDATE items SET analysis_json=?,analyzed_at=?
-    WHERE pending_id=? AND status='pending_confirmation'`).bind(JSON.stringify(result), nowSql(), pendingId).run();
+  await env.DB.prepare("UPDATE pending_confirmations SET image_data_uri=? WHERE id=?")
+    .bind(normalized.imageDataUri, pendingId).run();
   await audit(env, item.id, "pending_reanalyzed", { pendingId, imageUpdated: true });
   return json({ ok: true, pendingId, imageUpdated: true });
 }
@@ -591,6 +791,7 @@ async function resetTrialData(request, env) {
   await env.DB.batch([
     env.DB.prepare("DELETE FROM unresolved_items"),
     env.DB.prepare("DELETE FROM audit_log"),
+    env.DB.prepare("DELETE FROM analysis_staging"),
     env.DB.prepare("DELETE FROM analysis_job_items"),
     env.DB.prepare("DELETE FROM analysis_jobs"),
     env.DB.prepare("DELETE FROM items"),
@@ -672,7 +873,13 @@ export default {
       const jobId = String(message.body?.jobId || "");
       if (!/^[0-9a-f-]{16,64}$/i.test(jobId)) { message.ack(); continue; }
       try {
-        await processJobBatch(env, jobId);
+        if (message.body?.type === "finalize") {
+          await finalizeJob(env, jobId);
+        } else {
+          const batchNo = Number(message.body?.batchNo);
+          if (!Number.isInteger(batchNo) || batchNo < 0) { message.ack(); continue; }
+          await stageJobBatch(env, jobId, batchNo);
+        }
         message.ack();
       } catch (error) {
         console.error("analysis queue", jobId, error);

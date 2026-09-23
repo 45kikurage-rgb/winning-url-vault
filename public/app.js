@@ -125,7 +125,8 @@ function showJobProgress(job) {
   const total = Number(job.accepted || 0);
   const done = Number(job.processed || 0);
   const remaining = Math.max(0, total - done);
-  const labels = { queued:"解析待ち", processing:"解析中", awaiting_confirmation:"解析完了・初回確認待ち", completed:"解析完了" };
+  const labels = { queued:"解析待ち", processing:"解析中", finalizing:"照合・登録中",
+    awaiting_confirmation:"解析完了・初回確認待ち", completed:"解析完了" };
   $("receiveProgress").classList.remove("hidden");
   $("progressStatus").textContent = labels[job.status] || "解析中";
   $("progressCount").textContent = `${done.toLocaleString()} / ${total.toLocaleString()}件`;

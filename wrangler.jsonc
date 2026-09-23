@@ -15,7 +15,7 @@
       { "binding": "ANALYSIS_QUEUE", "queue": "winning-url-analysis" }
     ],
     "consumers": [
-      { "queue": "winning-url-analysis", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 1 }
+      { "queue": "winning-url-analysis", "max_batch_size": 1, "max_batch_timeout": 1, "max_retries": 3, "max_concurrency": 3 }
     ]
   },
   "vars": {

@@ -4,6 +4,7 @@ PRAGMA foreign_keys = ON;
 -- 確認済みの商品マスターとカード定義は残るため、正式運用で自動振り分けを継続できます。
 DELETE FROM unresolved_items;
 DELETE FROM audit_log;
+DELETE FROM analysis_staging;
 DELETE FROM analysis_job_items;
 DELETE FROM analysis_jobs;
 DELETE FROM items;
