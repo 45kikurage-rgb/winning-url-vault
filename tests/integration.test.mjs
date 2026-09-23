@@ -56,7 +56,7 @@ async function createRuntime() {
     });
     assert.equal(loginResponse.ok, true);
     authCookies.set(worker, loginResponse.headers.get("set-cookie").split(";")[0]);
-    return { mf, analyzer, worker };
+    return { mf, analyzer, worker, DB };
   } catch (error) {
     analyzer.close();
     throw error;
@@ -148,4 +148,58 @@ test("コード系はURL解析と分離し、Coke ONをURL化する", async t =>
   const coke = cards.cards.find(card => card.display_name === "Coke ON");
   const items = await request(worker, `/api/cards/${coke.id}/items`);
   assert.equal(items.items[0].value, "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=cdAb12Cd34Ef56");
+});
+
+test("全件受付で貼付内重複と既登録を分け、完全一致候補をグループ化する", async t => {
+  const { mf, analyzer, worker } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const firstUrl = "https://coupon.sej.co.jp/group-first";
+  const secondUrl = "https://coupon.sej.co.jp/group-second";
+  const first = await request(worker, "/api/receive", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientRequestId: crypto.randomUUID(), values: [firstUrl, firstUrl, secondUrl] })
+  });
+  assert.equal(first.job.inputTotal, 3);
+  assert.equal(first.job.inputDuplicates, 1);
+  assert.equal(first.job.existing, 0);
+  assert.equal(first.job.accepted, 2);
+  assert.equal(first.job.processed, 2);
+  assert.equal(first.job.pendingConfirmation, 2);
+
+  const pending = await request(worker, "/api/pending");
+  assert.equal(pending.items.length, 1);
+  assert.equal(Number(pending.items[0].item_count), 2);
+
+  const second = await request(worker, "/api/receive", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clientRequestId: crypto.randomUUID(), values: [firstUrl, secondUrl] })
+  });
+  assert.equal(second.job.inputDuplicates, 0);
+  assert.equal(second.job.existing, 2);
+  assert.equal(second.job.accepted, 0);
+});
+
+test("試用版の完全削除はURLデータだけを消し、商品マスターを残す", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const first = await request(worker, "/api/receive", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ values: ["https://coupon.sej.co.jp/reset-target"] })
+  });
+  const pending = await request(worker, "/api/pending");
+  await request(worker, `/api/pending/${pending.items[0].id}/confirm`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "ok" })
+  });
+  assert.equal(first.job.accepted, 1);
+
+  const reset = await request(worker, "/api/trial/reset", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ confirmation: "完全削除" })
+  });
+  assert.equal(reset.deleted, 1);
+  assert.equal((await DB.prepare("SELECT COUNT(*) count FROM items").first()).count, 0);
+  assert.equal((await DB.prepare("SELECT COUNT(*) count FROM analysis_jobs").first()).count, 0);
+  assert.equal((await DB.prepare("SELECT COUNT(*) count FROM product_master").first()).count, 1);
+  assert.equal((await request(worker, "/api/cards")).cards.length, 0);
+  assert.equal((await request(worker, "/api/jobs/latest")).job, null);
 });

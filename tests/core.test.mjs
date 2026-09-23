@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyValue, extractValues, isGenericName, normalizeAnalysis, normalizeName, normalizeRedeemPlace } from "../src/core.js";
+import { classifyValue, extractInputValues, extractValues, isGenericName, normalizeAnalysis, normalizeName, normalizeRedeemPlace } from "../src/core.js";
 
 test("日本語の長音を商品名と利用先で保持する", () => {
   assert.equal(normalizeName("男梅サワー 350ml"), "男梅サワー 350ml");
@@ -51,4 +51,6 @@ test("Coke ONとPayPayの現行形式を分離判定する", () => {
 test("受信テキストはURL抽出と入力内重複排除を行う", () => {
   const values = extractValues({ text:"https://example.com/a\nhttps://example.com/a\ncdAb12Cd34Ef56" });
   assert.deepEqual(values, ["https://example.com/a", "cdAb12Cd34Ef56"]);
+  assert.deepEqual(extractInputValues({ text:"https://example.com/a\nhttps://example.com/a" }),
+    ["https://example.com/a", "https://example.com/a"]);
 });
