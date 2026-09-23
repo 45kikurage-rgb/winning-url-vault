@@ -3,7 +3,7 @@ import {
   normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson
 } from "./core.js";
 
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 const ANALYSIS_BATCH_SIZE = 10;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -578,6 +578,27 @@ async function latestJob(env) {
   return json({ ok: true, job: row ? await jobSummary(env, row.id) : null });
 }
 
+async function resetTrialData(request, env) {
+  if ((env.OPERATION_MODE || "trial") === "production") {
+    return json({ ok: false, error: "正式運用中は画面からURLデータを削除できません" }, 403);
+  }
+  const body = await request.json().catch(() => ({}));
+  if (body.confirmation !== "完全削除") {
+    return json({ ok: false, error: "確認欄に「完全削除」と入力してください" }, 400);
+  }
+  const row = await env.DB.prepare("SELECT COUNT(*) count FROM items").first();
+  const deleted = Number(row?.count || 0);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM unresolved_items"),
+    env.DB.prepare("DELETE FROM audit_log"),
+    env.DB.prepare("DELETE FROM analysis_job_items"),
+    env.DB.prepare("DELETE FROM analysis_jobs"),
+    env.DB.prepare("DELETE FROM items"),
+    env.DB.prepare("DELETE FROM pending_confirmations")
+  ]);
+  return json({ ok: true, deleted, preserved: "product_master_and_cards" });
+}
+
 async function getJob(env, jobId) {
   const job = await jobSummary(env, jobId);
   return job ? json({ ok: true, job }) : json({ ok: false, error: "解析ジョブが見つかりません" }, 404);
@@ -625,6 +646,7 @@ export default {
         return json({ ok: Boolean(env.DB), version: VERSION, analyzer: Boolean(env.COUPON_ANALYZER || env.ANALYZER_BASE_URL), mode: env.OPERATION_MODE || "trial" });
       }
       if (url.pathname === "/api/receive" && request.method === "POST") return receive(request, env);
+      if (url.pathname === "/api/trial/reset" && request.method === "POST") return resetTrialData(request, env);
       if (url.pathname === "/api/jobs/latest" && request.method === "GET") return latestJob(env);
       const jobStatus = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
       if (jobStatus && request.method === "GET") return getJob(env, jobStatus[1]);
