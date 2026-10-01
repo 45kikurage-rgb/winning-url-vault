@@ -41,7 +41,7 @@
   },
   "vars": {
     "COKEON_REDEEM_BASE_URL": "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=",
-    "OPERATION_MODE": "trial"
+    "OPERATION_MODE": "production"
   },
   "observability": { "enabled": true }
 }
