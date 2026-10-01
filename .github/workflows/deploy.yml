@@ -1,7 +1,5 @@
 name: Deploy
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 permissions:
   contents: read
@@ -20,4 +18,6 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - name: Verify Cloudflare credentials
+        run: test -n "$CLOUDFLARE_API_TOKEN" || (echo "CLOUDFLARE_API_TOKEN repository secret is required" && exit 1)
       - run: npm run deploy
