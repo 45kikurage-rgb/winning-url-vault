@@ -1,15 +1,18 @@
 {
   "name": "winning-url-vault",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler d1 migrations apply winning-url-vault --remote && wrangler deploy",
     "db:local": "wrangler d1 execute winning-url-vault --local --file=schema.sql",
     "db:remote": "wrangler d1 execute winning-url-vault --remote --file=schema.sql",
     "db:reset-trial": "wrangler d1 execute winning-url-vault --remote --file=reset-trial-data.sql",
-    "test": "node --test"
+    "test": "node --test",
+    "db:migrate:local": "wrangler d1 migrations apply winning-url-vault --local",
+    "db:migrate:remote": "wrangler d1 migrations apply winning-url-vault --remote",
+    "check": "node --check src/index.js && node --check src/ledger.js && node --check src/worker.js && node --check public/app.js && node --check public/ledger-ui.js"
   },
   "devDependencies": {
     "miniflare": "^3.20250718.3",
