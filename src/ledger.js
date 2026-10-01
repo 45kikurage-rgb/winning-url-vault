@@ -138,6 +138,22 @@ function enqueueProductAndTotals(db, productId, campaignId, occurredAt) {
   ];
 }
 
+function enqueueTotalsOnly(db, campaignId, occurredAt, outboxId) {
+  const record = `totals:${campaignId}`;
+  return [
+    db.prepare(`INSERT INTO ledger_sync_series(source_record_id,current_revision,updated_at) VALUES (?,1,?)
+      ON CONFLICT(source_record_id) DO UPDATE SET current_revision=current_revision+1,updated_at=excluded.updated_at`).bind(record, occurredAt),
+    db.prepare(`INSERT INTO ledger_outbox(id,source_record_id,source_revision,path,payload_json,status,created_at,updated_at)
+      SELECT ?,?,s.current_revision,'/api/v1/totals/sync',json_object(
+        'source_system',?,'source_record_id',?,'source_revision',s.current_revision,'occurred_at',?,
+        'data',json_object('campaign_id',?,'current_winner_count',
+          (SELECT COUNT(*) FROM item_campaign_assignments a JOIN items i ON i.id=a.item_id
+            WHERE a.campaign_id=? AND i.status='active'))
+      ),'pending',?,? FROM ledger_sync_series s WHERE s.source_record_id=?`)
+      .bind(outboxId, record, SOURCE_SYSTEM, record, occurredAt, campaignId, campaignId, occurredAt, occurredAt, record)
+  ];
+}
+
 export async function assignCardToCampaign(env, cardId, campaignId, choice = {}) {
   const preview = await assignmentPreview(env, cardId, campaignId);
   if (!preview.card.unassigned_count) throw new VaultLedgerError("このカードに未仕分けURLはありません", 409, "NO_UNASSIGNED_ITEMS");
@@ -264,7 +280,32 @@ export async function retryOutbox(env) {
   return processOutbox(env, { limit: 50 });
 }
 
+export async function ensureCampaignTotals(env, campaignId) {
+  const campaign = await env.DB.prepare("SELECT status FROM vault_campaigns WHERE campaign_id=?").bind(campaignId).first();
+  if (!campaign) throw new VaultLedgerError("キャンペーンが見つかりません", 404, "CAMPAIGN_NOT_FOUND");
+  const record = `totals:${campaignId}`;
+  let latest = await env.DB.prepare(`SELECT * FROM ledger_outbox WHERE source_record_id=?
+    ORDER BY source_revision DESC LIMIT 1`).bind(record).first();
+  if (!latest) {
+    const outboxId = uuid();
+    const occurredAt = now();
+    await env.DB.batch(enqueueTotalsOnly(env.DB, campaignId, occurredAt, outboxId));
+    latest = await env.DB.prepare("SELECT * FROM ledger_outbox WHERE id=?").bind(outboxId).first();
+  }
+  if (latest?.status !== "sent") {
+    await env.DB.prepare("UPDATE ledger_outbox SET status='pending',next_attempt_at=NULL,updated_at=? WHERE id=?")
+      .bind(now(), latest.id).run();
+    const delivery = await processOutbox(env, { id: latest.id });
+    if (!delivery.results[0]?.ok) {
+      throw new VaultLedgerError("当選数を中央管理台帳へ同期できませんでした。自動再送します", 503,
+        "TOTALS_SYNC_PENDING", { delivery: delivery.results[0] || null });
+    }
+  }
+  return { campaign_id: campaignId, ready: true };
+}
+
 export async function closePreview(env, campaignId) {
+  await ensureCampaignTotals(env, campaignId);
   return callLedger(env, "vault", `/api/v1/campaigns/${encodeURIComponent(campaignId)}/close-preview`);
 }
 

@@ -6,8 +6,13 @@ import {
   VaultLedgerError, assignCardToCampaign, assignmentPreview, closeCampaign, closePreview,
   enrichCards, outboxStatus, processOutbox, refreshCampaigns, retryOutbox, startCorrection
 } from "./ledger.js";
+import {
+  cancelExportBatch, completeExportBatch, completeExportItem, getExportBatch,
+  getPendingExportBatch, listWinningLists, nextExportItem, setOutputMethod,
+  startExportBatch, undoExportBatch
+} from "./extraction.js";
 
-const VERSION = "0.6.0";
+const VERSION = "0.7.0";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -860,6 +865,45 @@ export default {
       const jobStatus = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
       if (jobStatus && request.method === "GET") return getJob(env, jobStatus[1]);
       if (url.pathname === "/api/cards" && request.method === "GET") return listCards(env);
+      if (url.pathname === "/api/winning-lists" && request.method === "GET") {
+        return json({ ok: true, products: await listWinningLists(env) });
+      }
+      if (url.pathname === "/api/export-batches/pending" && request.method === "GET") {
+        return json({ ok: true, batch: await getPendingExportBatch(env) });
+      }
+      const outputMethodRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/output-method$/i);
+      if (outputMethodRoute && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        return json({ ok: true, ...await setOutputMethod(env, outputMethodRoute[1], String(body.output_method || "")) });
+      }
+      const startBatchRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/export-batches$/i);
+      if (startBatchRoute && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        return json({ ok: true, ...await startExportBatch(env, startBatchRoute[1], String(body.copy_order || "received")) }, 201);
+      }
+      const nextExportRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/export-next$/i);
+      if (nextExportRoute && request.method === "GET") {
+        return json({ ok: true, ...await nextExportItem(env, nextExportRoute[1]) });
+      }
+      const completeItemRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/items\/([0-9a-f-]+)\/export-complete$/i);
+      if (completeItemRoute && request.method === "POST") {
+        return json({ ok: true, ...await completeExportItem(env, completeItemRoute[1], completeItemRoute[2]) });
+      }
+      const completeBatchRoute = url.pathname.match(/^\/api\/export-batches\/([0-9a-f-]+)\/complete$/i);
+      if (completeBatchRoute && request.method === "POST") {
+        return json({ ok: true, ...await completeExportBatch(env, completeBatchRoute[1]) });
+      }
+      const undoBatchRoute = url.pathname.match(/^\/api\/export-batches\/([0-9a-f-]+)\/undo$/i);
+      if (undoBatchRoute && request.method === "POST") {
+        return json({ ok: true, ...await undoExportBatch(env, undoBatchRoute[1]) });
+      }
+      const exportBatchRoute = url.pathname.match(/^\/api\/export-batches\/([0-9a-f-]+)$/i);
+      if (exportBatchRoute && request.method === "GET") {
+        return json({ ok: true, batch: await getExportBatch(env, exportBatchRoute[1]) });
+      }
+      if (exportBatchRoute && request.method === "DELETE") {
+        return json({ ok: true, ...await cancelExportBatch(env, exportBatchRoute[1]) });
+      }
       if (url.pathname === "/api/ledger/campaigns" && request.method === "GET") {
         return json({ ok: true, ...await refreshCampaigns(env) });
       }
