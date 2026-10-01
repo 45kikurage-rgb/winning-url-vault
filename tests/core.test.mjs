@@ -48,6 +48,19 @@ test("Coke ONとPayPayの現行形式を分離判定する", () => {
   assert.equal(classifyValue("https://giftcard.paypay.ne.jp/card/example").type, "paypay");
 });
 
+test("QUOカードPayのバリューコードURLを専用カードとして判定する", () => {
+  const quo = classifyValue("https://br.quocardpay.jp/card/A1B2C3D4E5F6G7H8");
+  assert.equal(quo.type, "quocardpay");
+  assert.equal(quo.code, "A1B2C3D4E5F6G7H8");
+  assert.equal(quo.canonicalValue, "https://br.quocardpay.jp/card/A1B2C3D4E5F6G7H8");
+
+  const tracked = classifyValue("https://br.quocardpay.jp/card/A1B2C3D4E5F6G7H8?source=line#gift");
+  assert.equal(tracked.type, "quocardpay");
+  assert.equal(tracked.canonicalValue, quo.canonicalValue);
+
+  assert.equal(classifyValue("https://br.quocardpay.jp/help").type, "url");
+});
+
 test("受信テキストはURL抽出と入力内重複排除を行う", () => {
   const values = extractValues({ text:"https://example.com/a\nhttps://example.com/a\ncdAb12Cd34Ef56" });
   assert.deepEqual(values, ["https://example.com/a", "cdAb12Cd34Ef56"]);

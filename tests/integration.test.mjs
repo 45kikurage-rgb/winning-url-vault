@@ -210,19 +210,24 @@ test("受信から初回確認、自動振り分け、未判定隔離まで実�
   assert.equal(pending.items[0].expires_on, "2026-11-30");
 });
 
-test("コード系はURL解析と分離し、Coke ONをURL化する", async t => {
+test("コード系とQUOカードPayはURL解析と分離し、専用カードへ保管する", async t => {
   const { mf, analyzer, worker } = await createRuntime();
   t.after(() => cleanup(mf, analyzer));
   const result = await request(worker, "/api/receive", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ text: "cdAb12Cd34Ef56\nABCD-EFGH-IJKL-MNOP" })
+    body: JSON.stringify({ text: "cdAb12Cd34Ef56\nABCD-EFGH-IJKL-MNOP\nhttps://br.quocardpay.jp/card/A1B2C3D4E5F6G7H8" })
   });
-  assert.equal(result.counts.active, 2);
+  assert.equal(result.counts.active, 3);
   const cards = await request(worker, "/api/cards");
-  assert.equal(cards.cards.length, 2);
+  assert.equal(cards.cards.length, 3);
   const coke = cards.cards.find(card => card.display_name === "Coke ON");
   const items = await request(worker, `/api/cards/${coke.id}/items`);
   assert.equal(items.items[0].value, "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=cdAb12Cd34Ef56");
+  const quo = cards.cards.find(card => card.display_name === "QUOカードPay");
+  assert.equal(Number(quo.unassigned_count), 1);
+  const quoItems = await request(worker, `/api/cards/${quo.id}/items`);
+  assert.equal(quoItems.items[0].value, "https://br.quocardpay.jp/card/A1B2C3D4E5F6G7H8");
+  assert.equal(analyzer.analysisRequests.length, 0);
 });
 
 test("全件受付で貼付内重複と既登録を分け、完全一致候補をグループ化する", async t => {
