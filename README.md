@@ -20,6 +20,7 @@
 5. 初回の商品・期限だけ代表URLから公式商品画像を1枚取得し、解析内容と共に `pending_confirmations` へ保存してグループ単位でOK / 修正 / キャンセル待ち
 6. 必須情報不足、未知URL、汎用名は既存カードへ入れず `unresolved_items` に隔離
 7. `POST /api/unresolved/retry` は未判定だけを再解析。確定済みカードは対象外
+   - `https://br.quocardpay.jp/card/英数字16桁` はCoupon Analyzerへ送らず、QUOカードPayカードへ直接保管します。複数キャンペーンが同時進行する場合は、キャンペーンごとの送信後にカードの未仕分け分を振り分けてから次のキャンペーン分を送信します。
 8. カード内容は50件ずつ取得し、2,000件以上でも全件DOM描画しない
 9. `GET /api/jobs/latest` と `GET /api/jobs/:id` で画面を閉じた後も解析進捗を復元
 
