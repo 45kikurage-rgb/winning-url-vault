@@ -61,6 +61,11 @@ export function codeCard(type) {
     displayName: "PayPay", redeemPlace: "PayPay", specification: "16文字英数字",
     conditions: { codeFormat: "alnum16", kind: "code" }
   };
+  if (type === "quocardpay") return {
+    sourceType: "quocardpay", rawName: "QUOカードPay", normalizedName: "quoカードpay",
+    displayName: "QUOカードPay", redeemPlace: "QUOカードPay", specification: "バリューコードURL",
+    conditions: { codeFormat: "quocardpay-url-alnum16", kind: "digital_gift" }
+  };
   return null;
 }
 
@@ -85,6 +90,13 @@ export function classifyValue(raw, cokeOnBaseUrl = "https://c.cocacola.co.jp/spn
     url.hash = "";
     if (url.hostname === "giftcard.paypay.ne.jp") {
       return { type: "paypay", canonicalValue: url.href, storedValue: url.href, code: "" };
+    }
+    if (url.hostname.toLowerCase() === "br.quocardpay.jp") {
+      const match = url.pathname.match(/^\/card\/([A-Za-z0-9]{16})\/?$/);
+      if (match) {
+        const cleanUrl = `https://br.quocardpay.jp/card/${match[1]}`;
+        return { type: "quocardpay", canonicalValue: cleanUrl, storedValue: cleanUrl, code: match[1] };
+      }
     }
     return { type: "url", canonicalValue: url.href, storedValue: url.href, hostname: url.hostname };
   } catch {

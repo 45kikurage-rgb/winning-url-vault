@@ -368,7 +368,7 @@ async function stageJobBatch(env, jobId, batchNo, scheduleFinalize = true) {
   const byLabel = new Map(results.filter(result => result?.label).map(result => [String(result.label), result]));
   let urlIndex = 0;
   for (const item of items) {
-    if (["cokeon", "paypay"].includes(item.value_type)) {
+    if (["cokeon", "paypay", "quocardpay"].includes(item.value_type)) {
       staged.push({ item, result: { localCodeType: item.value_type }, error: "" });
       continue;
     }
@@ -652,7 +652,7 @@ async function retryUnresolved(env) {
     await env.DB.prepare("UPDATE unresolved_items SET retry_count=retry_count+1,updated_at=? WHERE item_id=?")
       .bind(nowSql(), item.id).run();
     const classified = classifyValue(item.value, env.COKEON_REDEEM_BASE_URL);
-    if (classified && ["cokeon", "paypay"].includes(classified.type)) {
+    if (classified && ["cokeon", "paypay", "quocardpay"].includes(classified.type)) {
       const cardId = await ensureCodeCard(env, classified.type);
       output.push(await assignCard(env, item.id, cardId));
     } else if (classified?.type === "url") urlItems.push(item);
