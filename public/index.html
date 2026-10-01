@@ -35,7 +35,7 @@
 
   <section class="receive panel">
     <div><h2>URL・コード受信</h2><p>全件を先に受け付け、貼付内重複と既登録を分けてからバックグラウンド解析します。</p></div>
-    <textarea id="receiveInput" rows="4" placeholder="クーポンURL / Coke ONコード / PayPayコード"></textarea>
+    <textarea id="receiveInput" rows="4" placeholder="クーポンURL / QUOカードPay URL / Coke ONコード / PayPayコード"></textarea>
     <div class="actions"><button id="paste" class="secondary">貼り付け</button><button id="clear" class="secondary">クリア</button><button id="receive">解析して保管</button></div>
     <div id="receiveProgress" class="receive-progress hidden" aria-live="polite">
       <div class="progress-head"><strong id="progressStatus">解析中</strong><span id="progressCount">0 / 0件</span></div>
@@ -67,7 +67,7 @@
 
   <section class="panel">
     <h2>クーポン・コード</h2>
-    <p>判定用データと期限が全一致した場合だけ自動振り分けします。</p>
+    <p>判定用データと期限が全一致したURL、または対応済みのコード・デジタルギフト形式をカードへ振り分けます。</p>
     <div id="cards" class="grid"><div class="empty">カード読み込み待ち</div></div>
   </section>
 
