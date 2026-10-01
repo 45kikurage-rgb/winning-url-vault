@@ -25,6 +25,10 @@ async function startAnalyzer() {
     const previewMatch = path.match(/^\/api\/v1\/campaigns\/([^/]+)\/close-preview$/);
     if (request.method === "GET" && previewMatch) {
       const campaignId = previewMatch[1];
+      if (!server.totals.has(campaignId)) {
+        response.writeHead(409, { "content-type": "application/json" });
+        return response.end(JSON.stringify({ ok: false, error: { code: "DEPENDENCY_NOT_READY", retryable: true, details: {} } }));
+      }
       const products = [...server.products.values()].filter(item => item.campaign_id === campaignId);
       const total = server.totals.get(campaignId)?.current_winner_count || 0;
       const productTotal = products.reduce((sum, item) => sum + item.current_winner_count, 0);
@@ -430,6 +434,97 @@ test("closingの差分を表示し、明示承認で終了後、訂正フロー�
   });
   assert.equal(corrected.delivery.ok, true);
   assert.equal(analyzer.campaigns.find(item => item.campaign_id === "campaign-closing").status, "correcting");
+});
+
+test("当選0件のclosingでも0件同期を先に作り終了確認できる", async t => {
+  const { mf, analyzer, worker } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  await request(worker, "/api/ledger/campaigns");
+  assert.equal(analyzer.totals.has("campaign-closing"), false);
+  const preview = await request(worker, "/api/ledger/campaigns/campaign-closing/close-preview");
+  assert.equal(preview.final_winner_count, 1);
+  assert.equal(analyzer.totals.get("campaign-closing").current_winner_count, 0);
+});
+
+test("当選カードごとに抽出方法を設定し、一括確定・取消・1件ずつ処理できる", async t => {
+  const { mf, analyzer, worker } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  await request(worker, "/api/ledger/campaigns");
+  await createConfirmedCard(worker, "export-one");
+  await createConfirmedCard(worker, "export-two");
+  const card = await createConfirmedCard(worker, "export-three");
+  const assigned = await request(worker, `/api/cards/${card.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ campaign_id: "campaign-active-a" })
+  });
+
+  let lists = await request(worker, "/api/winning-lists");
+  assert.equal(lists.products.length, 1);
+  assert.equal(Number(lists.products[0].total_count), 3);
+  assert.equal(lists.products[0].output_method, "unset");
+
+  await request(worker, `/api/products/${assigned.product_id}/output-method`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ output_method: "normal" })
+  });
+  lists = await request(worker, "/api/winning-lists");
+  assert.equal(Number(lists.products[0].unexported_count), 3);
+
+  const batch = await request(worker, `/api/products/${assigned.product_id}/export-batches`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ copy_order: "received" })
+  });
+  assert.equal(batch.batch.count, 3);
+  assert.equal((await request(worker, "/api/winning-lists")).products[0].unexported_count, 3);
+  const completed = await request(worker, `/api/export-batches/${batch.batch.id}/complete`, { method: "POST" });
+  assert.equal(completed.changed_count, 3);
+  lists = await request(worker, "/api/winning-lists");
+  assert.equal(Number(lists.products[0].unexported_count), 0);
+  assert.equal(Number(lists.products[0].exported_count), 3);
+
+  const undone = await request(worker, `/api/export-batches/${batch.batch.id}/undo`, { method: "POST" });
+  assert.equal(undone.undone_count, 3);
+  const next = await request(worker, `/api/products/${assigned.product_id}/export-next`);
+  assert.equal(next.remaining_count, 3);
+  await request(worker, `/api/products/${assigned.product_id}/items/${next.item.id}/export-complete`, { method: "POST" });
+  lists = await request(worker, "/api/winning-lists");
+  assert.equal(Number(lists.products[0].unexported_count), 2);
+  assert.equal(Number(lists.products[0].exported_count), 1);
+});
+
+test("1000件を超える当選URLを1カードから一括抽出できる", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  await request(worker, "/api/ledger/campaigns");
+  const card = await createConfirmedCard(worker, "bulk-1005-base");
+  const assigned = await request(worker, `/api/cards/${card.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ campaign_id: "campaign-active-a" })
+  });
+  const records = Array.from({ length: 1004 }, (_, index) => ({
+    id: crypto.randomUUID(), value: `https://coupon.example.test/bulk-${String(index).padStart(4, "0")}`
+  }));
+  for (let start = 0; start < records.length; start += 80) {
+    const group = records.slice(start, start + 80);
+    await DB.batch(group.flatMap((item, offset) => [
+      DB.prepare(`INSERT INTO items(id,value,canonical_value,value_type,card_id,status,received_at)
+        VALUES (?,?,?,?,?,'active',?)`).bind(item.id, item.value, item.value, "url", card.id,
+        new Date(Date.UTC(2026, 9, 1, 0, start + offset)).toISOString()),
+      DB.prepare(`INSERT INTO item_campaign_assignments(item_id,campaign_id,product_id,assigned_at)
+        VALUES (?,?,?,?)`).bind(item.id, "campaign-active-a", assigned.product_id, "2026-10-01T00:00:00.000Z")
+    ]));
+  }
+  await request(worker, `/api/products/${assigned.product_id}/output-method`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ output_method: "normal" })
+  });
+  const batch = await request(worker, `/api/products/${assigned.product_id}/export-batches`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ copy_order: "asc" })
+  });
+  assert.equal(batch.batch.count, 1005);
+  assert.equal(batch.batch.items.length, 1005);
+  const completed = await request(worker, `/api/export-batches/${batch.batch.id}/complete`, { method: "POST" });
+  assert.equal(completed.changed_count, 1005);
+  const list = (await request(worker, "/api/winning-lists")).products[0];
+  assert.equal(Number(list.exported_count), 1005);
+  assert.equal(Number(list.unexported_count), 0);
 });
 
 test("outbox再送はduplicateとstaleを成功扱いし、同一revision異内容を競合として保持する", async t => {
