@@ -52,6 +52,13 @@
     <article><span>未判定</span><strong id="unknown">—</strong></article>
   </section>
 
+  <section class="panel ledger-panel">
+    <div class="row"><div><h2>キャンペーン連携</h2><p>中央管理台帳のキャンペーンと同期します。表示はキャンペーン名＋抽選開始日、関連付けはcampaign_idです。</p></div>
+      <button id="refreshCampaigns" class="secondary">再読込</button></div>
+    <div id="ledgerSyncStatus" class="sync-summary">同期状態を確認中…</div>
+    <div id="campaigns" class="campaign-list"></div>
+  </section>
+
   <section id="pendingSection" class="panel hidden">
     <h2>初回確認</h2>
     <p>初めての商品・期限だけ確認します。確定後のカードは自動再判定しません。</p>
@@ -82,6 +89,31 @@
   <button id="loadMore" class="secondary hidden">続きを表示</button>
 </dialog>
 
+<dialog id="assignmentDialog">
+  <div class="dialog-head"><div><small>キャンペーン仕分け</small><h2 id="assignmentTitle">振り分け</h2></div><button id="assignmentClose" class="secondary">閉じる</button></div>
+  <p>同名キャンペーンは抽選開始日で区別します。内部ではcampaign_idを使用します。</p>
+  <label>仕分け先キャンペーン
+    <select id="assignmentCampaign"></select>
+  </label>
+  <div id="assignmentDecision" class="assignment-decision"></div>
+  <p id="assignmentMessage" class="result" aria-live="polite"></p>
+  <div class="confirm-actions"><button id="assignmentConfirm">確認して振り分け</button></div>
+</dialog>
+
+<dialog id="closeDialog">
+  <div class="dialog-head"><div><small>中央管理台帳</small><h2 id="closeTitle">終了確認</h2></div><button id="closeDialogClose" class="secondary">閉じる</button></div>
+  <div id="closePreview"></div>
+  <p id="closeMessage" class="result" aria-live="polite"></p>
+  <div class="confirm-actions"><button id="closeConfirm" class="danger">終了を確定</button></div>
+</dialog>
+
+<dialog id="correctionDialog">
+  <div class="dialog-head"><div><small>終了後訂正</small><h2 id="correctionTitle">訂正を開始</h2></div><button id="correctionDialogClose" class="secondary">閉じる</button></div>
+  <label>訂正理由<textarea id="correctionReason" rows="3" maxlength="500" placeholder="訂正が必要な理由"></textarea></label>
+  <p id="correctionMessage" class="result" aria-live="polite"></p>
+  <div class="confirm-actions"><button id="correctionConfirm">訂正を開始</button></div>
+</dialog>
+
 <dialog id="trialResetDialog">
   <div class="dialog-head"><div><small>試用データ初期化</small><h2>URLデータを完全削除</h2></div></div>
   <p>登録URL、解析ジョブ、確認待ち、未判定、操作履歴をすべて削除します。商品マスターとカード定義は残します。この操作は取り消せません。</p>
@@ -92,6 +124,5 @@
   <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
 <script src="/app.js"></script>
-<script src="/ledger-ui.js"></script>
 </body>
 </html>

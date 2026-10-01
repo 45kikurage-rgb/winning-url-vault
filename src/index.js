@@ -2,8 +2,12 @@ import {
   classifyValue, codeCard, extractInputValues, isGenericName, normalizeAnalysis,
   normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson
 } from "./core.js";
+import {
+  VaultLedgerError, assignCardToCampaign, assignmentPreview, closeCampaign, closePreview,
+  enrichCards, outboxStatus, processOutbox, refreshCampaigns, retryOutbox, startCorrection
+} from "./ledger.js";
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -732,7 +736,7 @@ async function listCards(env) {
     LEFT JOIN items i ON i.card_id=c.id AND i.status='active'
     GROUP BY c.id HAVING COUNT(i.id)>0
     ORDER BY CASE WHEN c.expires_on='' THEN 1 ELSE 0 END,c.expires_on ASC,c.created_at DESC`).all();
-  return json({ ok: true, cards: rows.results || [] });
+  return json({ ok: true, cards: await enrichCards(env, rows.results || []) });
 }
 
 async function listPending(env) {
@@ -786,6 +790,10 @@ async function resetTrialData(request, env) {
   if (body.confirmation !== "完全削除") {
     return json({ ok: false, error: "確認欄に「完全削除」と入力してください" }, 400);
   }
+  const assigned = await env.DB.prepare("SELECT COUNT(*) count FROM item_campaign_assignments").first();
+  if (Number(assigned?.count || 0) > 0) {
+    return json({ ok: false, error: "中央台帳へ仕分け済みのURLがあるため削除できません。訂正フローで処理してください" }, 409);
+  }
   const row = await env.DB.prepare("SELECT COUNT(*) count FROM items").first();
   const deleted = Number(row?.count || 0);
   await env.DB.batch([
@@ -827,7 +835,7 @@ async function listCardItems(url, env, cardId) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     try {
       if (url.pathname === "/api/auth/status" && request.method === "GET") {
@@ -852,6 +860,45 @@ export default {
       const jobStatus = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
       if (jobStatus && request.method === "GET") return getJob(env, jobStatus[1]);
       if (url.pathname === "/api/cards" && request.method === "GET") return listCards(env);
+      if (url.pathname === "/api/ledger/campaigns" && request.method === "GET") {
+        return json({ ok: true, ...await refreshCampaigns(env) });
+      }
+      if (url.pathname === "/api/ledger/outbox" && request.method === "GET") {
+        return json({ ok: true, ...await outboxStatus(env) });
+      }
+      if (url.pathname === "/api/ledger/outbox/retry" && request.method === "POST") {
+        return json({ ok: true, ...await retryOutbox(env) });
+      }
+      const assignmentPreviewRoute = url.pathname.match(/^\/api\/cards\/([0-9a-f-]+)\/assignment-preview$/i);
+      if (assignmentPreviewRoute && request.method === "GET") {
+        return json({ ok: true, ...await assignmentPreview(env, assignmentPreviewRoute[1], url.searchParams.get("campaign_id") || "") });
+      }
+      const assignmentRoute = url.pathname.match(/^\/api\/cards\/([0-9a-f-]+)\/assign$/i);
+      if (assignmentRoute && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const result = await assignCardToCampaign(env, assignmentRoute[1], String(body.campaign_id || ""), {
+          product_id: body.product_id ? String(body.product_id) : "",
+          create_separate: body.create_separate === true
+        });
+        // The source mutation is already committed. Delivery errors are captured in
+        // the durable outbox and therefore must never roll back the Vault result.
+        await processOutbox(env);
+        return json({ ok: true, ...result }, 201);
+      }
+      const closePreviewRoute = url.pathname.match(/^\/api\/ledger\/campaigns\/([A-Za-z0-9_-]+)\/close-preview$/);
+      if (closePreviewRoute && request.method === "GET") {
+        return json({ ok: true, ...await closePreview(env, closePreviewRoute[1]) });
+      }
+      const closeRoute = url.pathname.match(/^\/api\/ledger\/campaigns\/([A-Za-z0-9_-]+)\/close$/);
+      if (closeRoute && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        return json({ ok: true, ...await closeCampaign(env, closeRoute[1], body.accept_mismatch === true) });
+      }
+      const correctionRoute = url.pathname.match(/^\/api\/ledger\/campaigns\/([A-Za-z0-9_-]+)\/corrections$/);
+      if (correctionRoute && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        return json({ ok: true, ...await startCorrection(env, correctionRoute[1], body.reason) });
+      }
       if (url.pathname === "/api/pending" && request.method === "GET") return listPending(env);
       if (url.pathname === "/api/unresolved" && request.method === "GET") return listUnresolved(env);
       if (url.pathname === "/api/unresolved/retry" && request.method === "POST") return retryUnresolved(env);
@@ -864,6 +911,9 @@ export default {
       if (url.pathname.startsWith("/api/")) return json({ ok: false, error: "Not found" }, 404);
       return protectedAsset(await env.ASSETS.fetch(request));
     } catch (error) {
+      if (error instanceof VaultLedgerError) {
+        return json({ ok: false, error: error.message, code: error.code, details: error.details }, error.status);
+      }
       console.error(error);
       return json({ ok: false, error: error instanceof Error ? error.message : "Internal error" }, 500);
     }
@@ -886,5 +936,8 @@ export default {
         message.retry();
       }
     }
+  },
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(processOutbox(env, { limit: 50 }));
   }
 };

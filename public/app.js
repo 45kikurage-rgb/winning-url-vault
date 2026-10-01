@@ -1,12 +1,20 @@
 const $ = id => document.getElementById(id);
 const state = { cursor: null, cardId: null, authenticated: false, pendingItems: new Map(),
-  activeJobId: null, pollTimer: null, refreshing: false, dialogPendingId: null };
+  activeJobId: null, pollTimer: null, refreshing: false, dialogPendingId: null,
+  campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
+  correctionCampaignId: null };
 
 async function api(path, options) {
   const response = await fetch(path, options);
   const payload = await response.json().catch(() => ({}));
   if (response.status === 401 && path !== "/api/auth/login") showLogin(payload.error || "ログインが必要です");
-  if (!response.ok || payload.ok === false) throw new Error(payload.error || `API error ${response.status}`);
+  if (!response.ok || payload.ok === false) {
+    const error = new Error(payload.error || `API error ${response.status}`);
+    error.code = payload.code || "API_ERROR";
+    error.details = payload.details || {};
+    error.status = response.status;
+    throw error;
+  }
   return payload;
 }
 
@@ -41,7 +49,7 @@ async function login(event) {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password })
     });
     showApp(result.mode);
-    await load();
+    await Promise.all([load(), loadCampaigns()]);
     await resumeLatestJob();
     startPolling();
   } catch (error) {
@@ -81,7 +89,7 @@ async function resetTrialData() {
     $("receiveResult").textContent = `${Number(result.deleted || 0).toLocaleString()}件のURLデータを削除しました。`;
     if ($("pendingDialog").open) $("pendingDialog").close();
     $("trialResetDialog").close();
-    await load();
+    await Promise.all([load(), loadCampaigns()]);
   } catch (error) {
     $("trialResetMessage").textContent = error.message;
   } finally {
@@ -171,10 +179,17 @@ function pendingCard(item) {
 }
 
 function cardHtml(card) {
+  const assignments = (card.assignments || []).map(item => `<div class="assignment-row">
+    <span>${esc(item.campaign_name || item.campaign_id)}　${esc(item.lottery_start_date || "")}</span>
+    <strong>${Number(item.current_winner_count || 0).toLocaleString()}件</strong>
+    <small class="sync-${esc(item.sync_status || "pending")}">${item.sync_status === "sent" ? "同期済み" : item.sync_status === "failed" ? "同期失敗" : "同期待ち"}</small>
+  </div>`).join("");
   return `<article class="coupon">
     <div><h3>${esc(card.display_name)}</h3><div class="meta">${esc(card.redeem_place)}${card.specification ? ` / ${esc(card.specification)}` : ""}</div>
-    <div class="meta">期限 ${esc(card.expires_on || "期限なし")}</div></div>
-    <div class="coupon-foot"><strong>${Number(card.count || 0).toLocaleString()}件</strong><button class="secondary" data-card="${esc(card.id)}" data-title="${esc(card.display_name)}">内容</button></div>
+    <div class="meta">期限 ${esc(card.expires_on || "期限なし")}</div>${assignments ? `<div class="assignment-list">${assignments}</div>` : '<div class="unassigned-label">解析済み・未仕分け</div>'}</div>
+    <div class="coupon-foot"><strong>${Number(card.count || 0).toLocaleString()}件</strong><div class="card-actions">
+      ${Number(card.unassigned_count || 0) > 0 ? `<button data-assign-card="${esc(card.id)}" data-title="${esc(card.display_name)}">振り分け（${Number(card.unassigned_count).toLocaleString()}）</button>` : ""}
+      <button class="secondary" data-card="${esc(card.id)}" data-title="${esc(card.display_name)}">内容</button></div></div>
   </article>`;
 }
 
@@ -199,8 +214,194 @@ async function load() {
   }
 }
 
+function campaignLabel(campaign) {
+  return `${campaign.campaign_name}　${campaign.lottery_start_date}`;
+}
+
+function campaignHtml(campaign) {
+  const labels = { active: "実施中", closing: "終了確認待ち", closed: "終了済み", correcting: "訂正中" };
+  const count = campaign.status === "closed" ? campaign.final_winner_count : campaign.current_winner_count;
+  const action = campaign.status === "closing" || campaign.status === "correcting"
+    ? `<button data-close-campaign="${esc(campaign.campaign_id)}">終了確認</button>`
+    : campaign.status === "closed"
+      ? `<button class="secondary" data-correct-campaign="${esc(campaign.campaign_id)}">訂正</button>` : "";
+  return `<article class="campaign-row status-${esc(campaign.status)}">
+    <div><strong>${esc(campaignLabel(campaign))}</strong><small>${esc(labels[campaign.status] || campaign.status)} / ${Number(count || 0).toLocaleString()}件</small></div>${action}
+  </article>`;
+}
+
+async function loadOutbox() {
+  try {
+    const status = await api("/api/ledger/outbox");
+    const message = `中央台帳同期：済 ${status.sent.toLocaleString()} / 待ち ${status.pending.toLocaleString()} / 失敗 ${status.failed.toLocaleString()}`;
+    $("ledgerSyncStatus").className = status.failed ? "sync-summary sync-error" : "sync-summary";
+    $("ledgerSyncStatus").textContent = message;
+    if (status.failed) {
+      $("ledgerSyncStatus").insertAdjacentHTML("beforeend", ' <button id="retryLedgerSync" class="secondary mini">再送</button>');
+      $("retryLedgerSync").onclick = async () => { await api("/api/ledger/outbox/retry", { method: "POST" }); await Promise.all([load(), loadOutbox()]); };
+    }
+  } catch (error) {
+    $("ledgerSyncStatus").className = "sync-summary sync-error";
+    $("ledgerSyncStatus").textContent = error.message;
+  }
+}
+
+async function loadCampaigns() {
+  $("refreshCampaigns").disabled = true;
+  try {
+    const result = await api("/api/ledger/campaigns");
+    state.campaigns = result.campaigns || [];
+    $("campaigns").innerHTML = state.campaigns.length
+      ? state.campaigns.map(campaignHtml).join("")
+      : '<div class="empty">中央管理台帳にキャンペーンがありません</div>';
+    if (result.stale) $("ledgerSyncStatus").textContent = `キャッシュ表示中：${result.warning}`;
+    bindCampaignControls();
+    await loadOutbox();
+  } catch (error) {
+    $("campaigns").innerHTML = `<div class="empty error">${esc(error.message)}</div>`;
+    await loadOutbox();
+  } finally { $("refreshCampaigns").disabled = false; }
+}
+
+function bindCampaignControls() {
+  document.querySelectorAll("[data-close-campaign]").forEach(button => button.onclick = () => openClose(button.dataset.closeCampaign));
+  document.querySelectorAll("[data-correct-campaign]").forEach(button => button.onclick = () => openCorrection(button.dataset.correctCampaign));
+}
+
+async function openAssignment(cardId, title) {
+  state.assignmentCardId = cardId;
+  state.assignmentPreview = null;
+  $("assignmentTitle").textContent = `${title} を振り分け`;
+  const available = state.campaigns.filter(campaign => !campaign.is_archived && ["active", "closing", "correcting"].includes(campaign.status));
+  $("assignmentCampaign").innerHTML = available.map(campaign =>
+    `<option value="${esc(campaign.campaign_id)}">${esc(campaignLabel(campaign))}${campaign.status === "closing" ? "（終了確認待ち）" : campaign.status === "correcting" ? "（訂正中）" : ""}</option>`).join("");
+  $("assignmentDecision").innerHTML = available.length ? "" : '<div class="empty">仕分け可能なキャンペーンがありません</div>';
+  $("assignmentMessage").textContent = "";
+  $("assignmentConfirm").disabled = !available.length;
+  $("assignmentDialog").showModal();
+  if (available.length) await loadAssignmentPreview();
+}
+
+async function loadAssignmentPreview() {
+  const campaignId = $("assignmentCampaign").value;
+  if (!campaignId || !state.assignmentCardId) return;
+  $("assignmentConfirm").disabled = true;
+  $("assignmentMessage").textContent = "商品重複を確認中…";
+  try {
+    const preview = await api(`/api/cards/${state.assignmentCardId}/assignment-preview?campaign_id=${encodeURIComponent(campaignId)}`);
+    state.assignmentPreview = preview;
+    let html = `<p><strong>${Number(preview.card.unassigned_count).toLocaleString()}件</strong>を仕分けます。</p>`;
+    if (preview.exact_product) {
+      html += `<label class="choice"><input type="radio" name="productChoice" value="${esc(preview.exact_product.product_id)}" checked>完全一致の既存商品「${esc(preview.exact_product.product_name)}」へ追加</label>`;
+    } else if (preview.possible_products.length) {
+      html += '<p class="warning">似ている商品があります。同一商品か別商品かを選んでください。</p>';
+      html += preview.possible_products.map(product => `<label class="choice"><input type="radio" name="productChoice" value="${esc(product.product_id)}">既存「${esc(product.product_name)} / ${esc(product.product_spec || "規格なし")} / ${esc(product.valid_until || "期限なし")}"へ追加</label>`).join("");
+      html += '<label class="choice"><input type="radio" name="productChoice" value="separate">別商品として登録</label>';
+    } else {
+      html += '<p>同一商品はありません。キャンペーン内の新しい正式商品として登録します。</p>';
+    }
+    $("assignmentDecision").innerHTML = html;
+    $("assignmentMessage").textContent = preview.campaign.status === "closing" ? "終了確認待ちです。遅れて回収したURLとして仕分けできます。" : "";
+    $("assignmentConfirm").disabled = false;
+  } catch (error) {
+    state.assignmentPreview = null;
+    $("assignmentDecision").innerHTML = "";
+    $("assignmentMessage").textContent = error.message;
+  }
+}
+
+async function confirmAssignment() {
+  if (!state.assignmentPreview) return;
+  const selected = document.querySelector('input[name="productChoice"]:checked')?.value || "";
+  if (state.assignmentPreview.possible_products.length && !selected) {
+    $("assignmentMessage").textContent = "同一商品か別商品かを選択してください。";
+    return;
+  }
+  $("assignmentConfirm").disabled = true;
+  $("assignmentMessage").textContent = "仕分け・同期登録中…";
+  try {
+    const body = { campaign_id: $("assignmentCampaign").value };
+    if (selected === "separate") body.create_separate = true;
+    else if (selected) body.product_id = selected;
+    const result = await api(`/api/cards/${state.assignmentCardId}/assign`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+    });
+    $("assignmentDialog").close();
+    await Promise.all([load(), loadCampaigns()]);
+    alert(`${result.assigned_count.toLocaleString()}件を仕分けました。`);
+  } catch (error) {
+    $("assignmentMessage").textContent = error.message;
+    $("assignmentConfirm").disabled = false;
+  }
+}
+
+async function openClose(campaignId) {
+  state.closeCampaignId = campaignId;
+  const campaign = state.campaigns.find(item => item.campaign_id === campaignId);
+  $("closeTitle").textContent = `${campaign ? campaignLabel(campaign) : campaignId} を終了`;
+  $("closePreview").innerHTML = '<div class="empty">終了前の数値を確認中…</div>';
+  $("closeMessage").textContent = "";
+  $("closeConfirm").disabled = true;
+  $("closeDialog").showModal();
+  try {
+    const preview = await api(`/api/ledger/campaigns/${campaignId}/close-preview`);
+    state.closePreview = preview;
+    $("closePreview").innerHTML = `<div class="close-totals">
+      <span>キャンペーン総当選数<strong>${Number(preview.final_winner_count).toLocaleString()}</strong></span>
+      <span>商品別合計<strong>${Number(preview.final_product_winner_count).toLocaleString()}</strong></span>
+      <span>差分<strong>${Number(preview.winner_count_difference).toLocaleString()}</strong></span></div>
+      ${preview.has_mismatch ? '<p class="warning">不一致があります。数値は自動補正せず、この差分を承認した場合だけ終了できます。</p>' : '<p class="success">総数と商品別合計は一致しています。</p>'}
+      <div class="preview-products">${(preview.products || []).map(product => `<div><span>${esc(product.product_name)}</span><strong>${Number(product.final_winner_count).toLocaleString()}件</strong></div>`).join("")}</div>`;
+    $("closeConfirm").textContent = preview.has_mismatch ? "差分を承認して終了" : "終了を確定";
+    $("closeConfirm").disabled = false;
+  } catch (error) { $("closeMessage").textContent = error.message; }
+}
+
+async function confirmClose() {
+  $("closeConfirm").disabled = true;
+  $("closeMessage").textContent = "最終値を確定中…";
+  try {
+    const result = await api(`/api/ledger/campaigns/${state.closeCampaignId}/close`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ accept_mismatch: state.closePreview?.has_mismatch === true })
+    });
+    if (!result.delivery?.ok) throw new Error("終了要求は保存されましたが中央台帳への送信に失敗しました。自動再送します。");
+    $("closeDialog").close();
+    await loadCampaigns();
+  } catch (error) {
+    $("closeMessage").textContent = error.message;
+    $("closeConfirm").disabled = false;
+  }
+}
+
+function openCorrection(campaignId) {
+  state.correctionCampaignId = campaignId;
+  const campaign = state.campaigns.find(item => item.campaign_id === campaignId);
+  $("correctionTitle").textContent = `${campaign ? campaignLabel(campaign) : campaignId} の訂正`;
+  $("correctionReason").value = "";
+  $("correctionMessage").textContent = "";
+  $("correctionDialog").showModal();
+}
+
+async function confirmCorrection() {
+  $("correctionConfirm").disabled = true;
+  $("correctionMessage").textContent = "訂正開始を送信中…";
+  try {
+    const result = await api(`/api/ledger/campaigns/${state.correctionCampaignId}/corrections`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ reason: $("correctionReason").value })
+    });
+    if (!result.delivery?.ok) throw new Error("訂正要求は保存されましたが中央台帳への送信に失敗しました。自動再送します。");
+    $("correctionDialog").close();
+    await loadCampaigns();
+  } catch (error) {
+    $("correctionMessage").textContent = error.message;
+  } finally { $("correctionConfirm").disabled = false; }
+}
+
 function bindDynamic() {
   document.querySelectorAll("[data-card]").forEach(button => button.onclick = () => openItems(button.dataset.card, button.dataset.title));
+  document.querySelectorAll("[data-assign-card]").forEach(button => button.onclick = () => openAssignment(button.dataset.assignCard, button.dataset.title));
   document.querySelectorAll("[data-pending]").forEach(bindPendingControls);
 }
 
@@ -407,6 +608,14 @@ $("loadMore").onclick = loadItems;
 $("loginForm").onsubmit = login;
 $("logout").onclick = logout;
 $("openTrialReset").onclick = openTrialReset;
+$("refreshCampaigns").onclick = loadCampaigns;
+$("assignmentCampaign").onchange = loadAssignmentPreview;
+$("assignmentConfirm").onclick = confirmAssignment;
+$("assignmentClose").onclick = () => $("assignmentDialog").close();
+$("closeConfirm").onclick = confirmClose;
+$("closeDialogClose").onclick = () => $("closeDialog").close();
+$("correctionConfirm").onclick = confirmCorrection;
+$("correctionDialogClose").onclick = () => $("correctionDialog").close();
 $("cancelTrialReset").onclick = () => $("trialResetDialog").close();
 $("trialResetConfirmation").oninput = event => {
   $("confirmTrialReset").disabled = event.currentTarget.value !== "完全削除";

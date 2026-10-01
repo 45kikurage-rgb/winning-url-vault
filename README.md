@@ -53,3 +53,19 @@ npm run deploy
 - `POST /api/pending/:id/confirm` `{ "action": "ok|edit|cancel" }`
 - `GET /api/unresolved`
 - `POST /api/unresolved/retry`
+
+## 中央管理台帳連携
+
+- `LEDGER_READER` は `aruno-consolidated-ledger-api#ReaderAPI`、`LEDGER_VAULT` は同Workerの `VaultAPI` へ接続します。ブラウザーは中央台帳へ直接アクセスしません。
+- UIはキャンペーン名と抽選開始日を表示し、内部では不変の `campaign_id` を使用します。
+- `product_master.id` は解析用の内部IDのままです。正式 `product_id` はカードをキャンペーンへ初めて割り当てた時だけ `ledger_products` に発行します。
+- 商品・キャンペーン総数の現在値は、元データ変更と同じD1 batchで `ledger_outbox` に凍結します。送信失敗後もURLデータと仕分けは残り、毎分cronが60 / 120 / 300 / 900 / 3600秒、以後1時間間隔で再送します。
+- URL、コード、`canonical_value` は中央台帳payloadへ含めません。
+- `closing` は遅着URLを仕分け可能、`closed` は新規仕分け禁止、`correcting` は訂正中の更新を許可します。
+- 仕分け済みURLがある場合、試用データ完全削除は拒否し、終了後訂正フローで処理します。
+
+既存本番DBへの追加migrationは次を使用します。
+
+```sh
+npm run db:migrate:ledger
+```
