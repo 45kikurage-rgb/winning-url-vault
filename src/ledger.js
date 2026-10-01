@@ -198,9 +198,23 @@ export async function processOutbox(env, limit = 20) {
     if (!rows.length) break;
     attempted += 1;
     if (await deliverOutbox(env,rows[0])) sent += 1;
-    else break;
   }
   return { attempted,sent,...await outboxSummary(env) };
+}
+async function ensureTotalsInitialized(env,campaignId) {
+  const state = await syncState(env,campaignId);
+  if (Number(state?.totals_revision || 0) > 0) return;
+  const revision = 1;
+  const sequence = Number(state?.outbox_sequence || 0) + 1;
+  const occurredAt = now();
+  const count = await campaignAssignedCount(env,campaignId);
+  const envelope = buildTotalsEnvelope({ campaignId,count,revision,occurredAt });
+  await env.DB.batch([
+    env.DB.prepare(`INSERT INTO vault_campaign_sync_state(campaign_id,totals_revision,lifecycle_revision,outbox_sequence,updated_at)
+      VALUES (?,?,0,?,?) ON CONFLICT(campaign_id) DO UPDATE SET totals_revision=excluded.totals_revision,
+      outbox_sequence=excluded.outbox_sequence,updated_at=excluded.updated_at`).bind(campaignId,revision,sequence,occurredAt),
+    outboxInsert(env,{id:uuid(),campaignId,sequence,path:"/api/v1/totals/sync",envelope,occurredAt})
+  ]);
 }
 async function ensureCampaignOutboxDrained(env,campaignId) {
   await processOutbox(env,50);
@@ -231,6 +245,7 @@ async function queueLifecycle(env,campaignId,path,data) {
 }
 async function closePreview(env,campaignId) {
   if (!validId(campaignId)) throw Object.assign(new Error("campaign_idが不正です"),{status:400});
+  await ensureTotalsInitialized(env,campaignId);
   await ensureCampaignOutboxDrained(env,campaignId);
   return bindingJson(env.LEDGER_VAULT,`/api/v1/campaigns/${encodeURIComponent(campaignId)}/close-preview`,{method:"GET"});
 }
