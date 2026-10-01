@@ -18,7 +18,7 @@
   <form id="loginForm" class="login-card">
     <p>WINNING URL VAULT</p>
     <h1>当選URL管理</h1>
-    <span class="mode-badge">試用運用中</span>
+    <span class="mode-badge">正式運用中</span>
     <label>アクセスパスワード
       <input id="loginPassword" type="password" autocomplete="current-password" required>
     </label>
@@ -30,8 +30,14 @@
 <main id="app" class="hidden">
   <header>
     <div><p>WINNING URL VAULT</p><h1>当選URL管理</h1></div>
-    <div class="header-actions"><span id="modeBadge" class="mode-badge">試用運用中</span><button id="logout" class="secondary">ログアウト</button></div>
+    <div class="header-actions"><span id="modeBadge" class="mode-badge">正式運用中</span><button id="logout" class="secondary">ログアウト</button></div>
   </header>
+
+  <nav class="main-tabs" aria-label="当選URL管理メニュー">
+    <button class="tab-button active" data-tab="receive" type="button">URL受信</button>
+    <button class="tab-button" data-tab="sorting" type="button">仕分け待ち <span id="sortingTabCount" class="tab-count">0</span></button>
+    <button class="tab-button" data-tab="winning" type="button">当選リスト <span id="winningTabCount" class="tab-count">0</span></button>
+  </nav>
 
   <section class="trial-notice">
     <div><strong>試用運用中</strong>
@@ -39,6 +45,7 @@
     <button id="openTrialReset" class="danger">URLデータ完全削除</button>
   </section>
 
+  <section id="tabReceive" class="tab-page">
   <section class="receive panel">
     <div><h2>URL・コード受信</h2><p>全件を先に受け付け、貼付内重複と既登録を分けてからバックグラウンド解析します。</p></div>
     <textarea id="receiveInput" rows="4" placeholder="クーポンURL / QUOカードPay URL / Coke ONコード / PayPayコード"></textarea>
@@ -57,7 +64,9 @@
     <article><span>確認待ち</span><strong id="pendingCount">—</strong></article>
     <article><span>未判定</span><strong id="unknown">—</strong></article>
   </section>
+  </section>
 
+  <section id="tabSorting" class="tab-page hidden">
   <section class="panel ledger-panel">
     <div class="row"><div><h2>キャンペーン連携</h2><p>中央管理台帳のキャンペーンと同期します。表示はキャンペーン名＋抽選開始日、関連付けはcampaign_idです。</p></div>
       <button id="refreshCampaigns" class="secondary">再読込</button></div>
@@ -81,6 +90,14 @@
     <div class="row"><div><h2>未判定URL</h2><p>ルール更新後、ここだけ手動で再解析できます。</p></div><button id="retry">再解析</button></div>
     <strong id="unknownBottom">—件</strong><div id="unknownList"></div>
   </section>
+  </section>
+
+  <section id="tabWinning" class="tab-page hidden">
+    <section class="panel winning-panel">
+      <div class="row"><div><h2>当選リスト</h2><p>キャンペーンへ振り分けた商品を、カードごとの抽出方法で管理します。</p></div><div class="winning-head-actions"><button id="undoLastExport" class="secondary hidden">直前の抽出を取消</button><button id="refreshWinningLists" class="secondary">再読込</button></div></div>
+      <div id="winningLists" class="winning-list"><div class="empty">当選リスト読み込み待ち</div></div>
+    </section>
+  </section>
 </main>
 
 <dialog id="pendingDialog" class="pending-dialog">
@@ -93,6 +110,46 @@
   <div class="dialog-head"><div><small>カード内容</small><h2 id="dialogTitle"></h2></div><button id="dialogClose" class="secondary">閉じる</button></div>
   <div id="itemList" class="item-list"></div>
   <button id="loadMore" class="secondary hidden">続きを表示</button>
+</dialog>
+
+<dialog id="outputMethodDialog">
+  <div class="dialog-head"><div><small>カード設定</small><h2 id="outputMethodTitle">抽出方法を選択</h2></div><button id="outputMethodClose" class="secondary">閉じる</button></div>
+  <p>抽出済みの記録は、方法を変更しても未抽出には戻りません。</p>
+  <div class="method-grid">
+    <button data-output-method="normal">通常URL</button>
+    <button data-output-method="cokeon">コークオン</button>
+    <button data-output-method="wallet">えらべるPay</button>
+    <button data-output-method="paypay">PayPay</button>
+    <button data-output-method="text_single">文字列</button>
+  </div>
+  <p id="outputMethodMessage" class="result" aria-live="polite"></p>
+</dialog>
+
+<dialog id="exportActionDialog">
+  <div class="dialog-head"><div><small>データ抽出</small><h2 id="exportActionTitle">抽出方法</h2></div><button id="exportActionClose" class="secondary">閉じる</button></div>
+  <div id="exportActionSummary" class="export-summary"></div>
+  <div class="export-action-grid">
+    <button id="exportOneByOne">1件ずつ</button>
+    <button id="exportBulk">未抽出を一括コピー</button>
+    <button id="exportBulkAsc" class="secondary">昇順で一括コピー</button>
+  </div>
+</dialog>
+
+<dialog id="exportItemDialog">
+  <div class="dialog-head"><div><small>1件ずつ抽出</small><h2 id="exportItemTitle">データ抽出</h2></div></div>
+  <div id="exportItemRemaining" class="export-summary">確認中…</div>
+  <div id="exportItemValue" class="export-value">データを確認しています…</div>
+  <button id="exportItemOpen" class="export-main" disabled>開く</button>
+  <div class="export-item-actions"><button id="exportItemStop" class="secondary">中断</button><button id="exportItemComplete" disabled>抽出済み・次へ</button></div>
+  <p id="exportItemMessage" class="result" aria-live="polite"></p>
+</dialog>
+
+<dialog id="exportBatchDialog">
+  <div class="dialog-head"><div><small>一括抽出</small><h2>データをコピーしました</h2></div></div>
+  <div id="exportBatchSummary" class="export-summary"></div>
+  <p>スプレッドシートなどへの貼り付け完了後に「抽出済みにする」を押してください。キャンセルすると未抽出のまま残ります。</p>
+  <div class="batch-actions"><button id="exportBatchAgain" class="secondary">もう一度コピー</button><button id="exportBatchCancel" class="secondary">キャンセル</button><button id="exportBatchComplete">抽出済みにする</button></div>
+  <p id="exportBatchMessage" class="result" aria-live="polite"></p>
 </dialog>
 
 <dialog id="assignmentDialog">

@@ -1,9 +1,13 @@
 const $ = id => document.getElementById(id);
 const PENDING_SHARE_KEY = "winning-url-vault:pending-share";
+const LAST_EXPORT_BATCH_KEY = "winning-url-vault:last-export-batch";
+const OUTPUT_METHOD_LABELS = { unset:"未設定", normal:"通常URL", cokeon:"コークオン",
+  wallet:"えらべるPay", paypay:"PayPay", text_single:"文字列" };
 const state = { cursor: null, cardId: null, authenticated: false, pendingItems: new Map(),
   activeJobId: null, pollTimer: null, refreshing: false, dialogPendingId: null,
   campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
-  correctionCampaignId: null };
+  correctionCampaignId: null, winningLists: [], outputProductId: null, exportProductId: null,
+  exportItem: null, exportBatch: null };
 
 async function api(path, options) {
   const response = await fetch(path, options);
@@ -23,6 +27,17 @@ function setMode(mode) {
   const trial = mode !== "production";
   document.querySelectorAll(".mode-badge").forEach(element => { element.textContent = trial ? "試用運用中" : "正式運用中"; });
   document.querySelector(".trial-notice")?.classList.toggle("hidden", !trial);
+}
+
+function switchTab(name) {
+  const names = ["receive", "sorting", "winning"];
+  const selected = names.includes(name) ? name : "receive";
+  for (const item of names) {
+    $(`tab${item[0].toUpperCase()}${item.slice(1)}`).classList.toggle("hidden", item !== selected);
+  }
+  document.querySelectorAll("[data-tab]").forEach(button => button.classList.toggle("active", button.dataset.tab === selected));
+  try { localStorage.setItem("winning-url-vault:tab", selected); } catch {}
+  if (selected === "winning") loadWinningLists();
 }
 
 function showLogin(message = "") {
@@ -50,9 +65,11 @@ async function login(event) {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password })
     });
     showApp(result.mode);
-    await Promise.all([load(), loadCampaigns()]);
+    await Promise.all([load(), loadCampaigns(), loadWinningLists()]);
     await resumeLatestJob();
     await resumePendingShare();
+    await restorePendingExport();
+    try { switchTab(localStorage.getItem("winning-url-vault:tab") || "receive"); } catch { switchTab("receive"); }
     startPolling();
   } catch (error) {
     showLogin(error.message);
@@ -107,9 +124,11 @@ async function boot() {
     if (!result.configured) return showLogin("ログイン設定が未完了です");
     if (!result.authenticated) return showLogin();
     showApp(result.mode);
-    await load();
+    await Promise.all([load(), loadCampaigns(), loadWinningLists()]);
     await resumeLatestJob();
     await resumePendingShare();
+    await restorePendingExport();
+    try { switchTab(localStorage.getItem("winning-url-vault:tab") || "receive"); } catch { switchTab("receive"); }
     startPolling();
   } catch (error) {
     showLogin(error.message);
@@ -204,7 +223,10 @@ async function load() {
     $("pendingCount").textContent = `${pending.items.length.toLocaleString()}件`;
     $("unknown").textContent = `${unresolved.items.length.toLocaleString()}件`;
     $("unknownBottom").textContent = `${unresolved.items.length.toLocaleString()}件`;
-    $("cards").innerHTML = cards.cards.length ? cards.cards.map(cardHtml).join("") : '<div class="empty">まだカードはありません</div>';
+    const sortingCards = cards.cards.filter(card => Number(card.unassigned_count || 0) > 0);
+    const sortingCount = sortingCards.reduce((sum, card) => sum + Number(card.unassigned_count || 0), 0);
+    $("sortingTabCount").textContent = sortingCount.toLocaleString();
+    $("cards").innerHTML = sortingCards.length ? sortingCards.map(cardHtml).join("") : '<div class="empty">仕分け待ちのカードはありません</div>';
     $("pendingSection").classList.toggle("hidden", pending.items.length === 0);
     state.pendingItems = new Map(pending.items.map(item => [item.id, item]));
     $("pendingList").innerHTML = pending.items.map(pendingCard).join("");
@@ -215,6 +237,217 @@ async function load() {
   } catch (error) {
     $("cards").innerHTML = `<div class="empty error">${esc(error.message)}</div>`;
   }
+}
+
+function methodLabel(method) {
+  return OUTPUT_METHOD_LABELS[method] || method || "未設定";
+}
+
+function winningCardHtml(item) {
+  const total = Number(item.total_count || 0);
+  const remaining = Number(item.unexported_count || 0);
+  const exported = Number(item.exported_count || 0);
+  const unmatched = Number(item.unmatched_count || 0);
+  const unset = item.output_method === "unset";
+  const statusLabels = { active:"実施中", closing:"終了確認待ち", correcting:"訂正中", closed:"終了済み" };
+  return `<article class="winning-card" data-product-id="${esc(item.product_id)}">
+    <div class="winning-campaign"><span>${esc(item.campaign_name || item.campaign_id)}　${esc(item.lottery_start_date || "")}</span><span>${esc(statusLabels[item.campaign_status] || item.campaign_status || "")}</span></div>
+    <h3>${esc(item.product_name)}</h3>
+    <div class="meta">${esc(item.redemption_place || "利用先未設定")}${item.product_spec ? ` / ${esc(item.product_spec)}` : ""}</div>
+    <div class="meta">期限 ${esc(item.valid_until || "期限なし")}</div>
+    <span class="method-label">抽出方法：${esc(methodLabel(item.output_method))}</span>
+    <div class="winning-stats"><span>登録<strong>${total.toLocaleString()}件</strong></span><span class="remaining">未抽出<strong>${remaining.toLocaleString()}件</strong></span><span>抽出済み<strong>${exported.toLocaleString()}件</strong></span></div>
+    ${unmatched ? `<div class="unmatched-note">現在の抽出方法では対象外 ${unmatched.toLocaleString()}件</div>` : ""}
+    <div class="winning-actions">
+      <button class="extract-button" data-export-product="${esc(item.product_id)}" ${!unset && remaining === 0 ? "disabled" : ""}><span>${unset ? "抽出方法を設定" : "抽出"}</span><strong>${remaining.toLocaleString()}件</strong></button>
+      <button class="method-button" data-method-product="${esc(item.product_id)}">設定</button>
+    </div>
+  </article>`;
+}
+
+async function loadWinningLists() {
+  try {
+    const result = await api("/api/winning-lists");
+    state.winningLists = result.products || [];
+    $("winningTabCount").textContent = state.winningLists.length.toLocaleString();
+    $("winningLists").innerHTML = state.winningLists.length
+      ? state.winningLists.map(winningCardHtml).join("")
+      : '<div class="empty">振り分け済みの当選カードはありません</div>';
+    bindWinningControls();
+    try { $("undoLastExport").classList.toggle("hidden", !localStorage.getItem(LAST_EXPORT_BATCH_KEY)); } catch {}
+  } catch (error) {
+    $("winningLists").innerHTML = `<div class="empty error">${esc(error.message)}</div>`;
+  }
+}
+
+function winningProduct(productId) {
+  return state.winningLists.find(item => item.product_id === productId);
+}
+
+function bindWinningControls() {
+  document.querySelectorAll("[data-method-product]").forEach(button => button.onclick = () => openOutputMethod(button.dataset.methodProduct));
+  document.querySelectorAll("[data-export-product]").forEach(button => button.onclick = () => openExportAction(button.dataset.exportProduct));
+}
+
+function openOutputMethod(productId) {
+  const item = winningProduct(productId);
+  state.outputProductId = productId;
+  $("outputMethodTitle").textContent = `${item?.product_name || "当選カード"} の抽出方法`;
+  $("outputMethodMessage").textContent = "";
+  $("outputMethodDialog").showModal();
+}
+
+async function saveOutputMethod(method) {
+  if (!state.outputProductId) return;
+  $("outputMethodMessage").textContent = "保存中…";
+  try {
+    await api(`/api/products/${state.outputProductId}/output-method`, {
+      method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify({ output_method:method })
+    });
+    $("outputMethodDialog").close();
+    await loadWinningLists();
+  } catch (error) { $("outputMethodMessage").textContent = error.message; }
+}
+
+function openExportAction(productId) {
+  const item = winningProduct(productId);
+  if (!item) return;
+  if (item.output_method === "unset") return openOutputMethod(productId);
+  state.exportProductId = productId;
+  $("exportActionTitle").textContent = `${item.product_name} を抽出`;
+  $("exportActionSummary").innerHTML = `未抽出<strong>${Number(item.unexported_count || 0).toLocaleString()}件</strong><small>${esc(methodLabel(item.output_method))}</small>`;
+  $("exportActionDialog").showModal();
+}
+
+async function writeClipboard(text) {
+  try { await navigator.clipboard.writeText(text); return; } catch {}
+  const area = document.createElement("textarea");
+  area.value = text; area.style.position = "fixed"; area.style.opacity = "0";
+  document.body.appendChild(area); area.select();
+  const copied = document.execCommand("copy"); area.remove();
+  if (!copied) throw new Error("コピーできませんでした");
+}
+
+function batchText(batch) {
+  return (batch?.items || []).map(item => String(item.value || "").trim()).filter(Boolean).join("\n");
+}
+
+function showExportBatch(batch) {
+  state.exportBatch = batch;
+  $("exportBatchSummary").innerHTML = `${esc(batch.product_name || "当選カード")}<strong>${Number(batch.count || 0).toLocaleString()}件</strong>`;
+  $("exportBatchMessage").textContent = "";
+  if (!$("exportBatchDialog").open) $("exportBatchDialog").showModal();
+}
+
+async function startBulkExport(order = "received") {
+  const productId = state.exportProductId;
+  if (!productId) return;
+  $("exportActionDialog").close();
+  let result;
+  try {
+    result = await api(`/api/products/${productId}/export-batches`, {
+      method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify({ copy_order:order })
+    });
+    await writeClipboard(batchText(result.batch));
+    showExportBatch(result.batch);
+  } catch (error) {
+    if (result?.batch?.id && !result.restored) {
+      try { await api(`/api/export-batches/${result.batch.id}`, { method:"DELETE" }); } catch {}
+    }
+    alert(`一括コピーに失敗しました：${error.message}`);
+  }
+}
+
+async function restorePendingExport() {
+  try {
+    const result = await api("/api/export-batches/pending");
+    if (result.batch) showExportBatch(result.batch);
+  } catch {}
+}
+
+async function cancelExportBatch() {
+  if (!state.exportBatch) return;
+  $("exportBatchMessage").textContent = "キャンセル中…";
+  try {
+    await api(`/api/export-batches/${state.exportBatch.id}`, { method:"DELETE" });
+    state.exportBatch = null; $("exportBatchDialog").close(); await loadWinningLists();
+  } catch (error) { $("exportBatchMessage").textContent = error.message; }
+}
+
+async function completeExportBatch() {
+  if (!state.exportBatch) return;
+  const batchId = state.exportBatch.id;
+  $("exportBatchComplete").disabled = true;
+  $("exportBatchMessage").textContent = "抽出済みを記録中…";
+  try {
+    const result = await api(`/api/export-batches/${batchId}/complete`, { method:"POST" });
+    try { localStorage.setItem(LAST_EXPORT_BATCH_KEY, batchId); } catch {}
+    state.exportBatch = null; $("exportBatchDialog").close(); await loadWinningLists();
+    alert(`${Number(result.changed_count || 0).toLocaleString()}件を抽出済みにしました。`);
+  } catch (error) { $("exportBatchMessage").textContent = error.message; }
+  finally { $("exportBatchComplete").disabled = false; }
+}
+
+async function undoLastExport() {
+  let batchId = ""; try { batchId = localStorage.getItem(LAST_EXPORT_BATCH_KEY) || ""; } catch {}
+  if (!batchId) return;
+  try {
+    const result = await api(`/api/export-batches/${batchId}/undo`, { method:"POST" });
+    try { localStorage.removeItem(LAST_EXPORT_BATCH_KEY); } catch {}
+    await loadWinningLists();
+    alert(`${Number(result.undone_count || 0).toLocaleString()}件を未抽出へ戻しました。`);
+  } catch (error) { alert(error.message); }
+}
+
+async function openSingleExport() {
+  const productId = state.exportProductId;
+  if (!productId) return;
+  $("exportActionDialog").close();
+  state.exportItem = null;
+  if (!$("exportItemDialog").open) $("exportItemDialog").showModal();
+  await loadNextExportItem(productId);
+}
+
+async function loadNextExportItem(productId) {
+  $("exportItemRemaining").textContent = "確認中…";
+  $("exportItemValue").textContent = "データを確認しています…";
+  $("exportItemOpen").disabled = true; $("exportItemComplete").disabled = true;
+  $("exportItemMessage").textContent = "";
+  try {
+    const result = await api(`/api/products/${productId}/export-next`);
+    state.exportItem = result.item || null;
+    $("exportItemTitle").textContent = `${result.product_name}・1件ずつ`;
+    $("exportItemRemaining").innerHTML = `未抽出<strong>${Number(result.remaining_count || 0).toLocaleString()}件</strong>`;
+    if (!result.item) {
+      $("exportItemValue").textContent = "すべて抽出済みです";
+      $("exportItemOpen").textContent = "抽出対象なし";
+      await loadWinningLists();
+      return;
+    }
+    $("exportItemValue").textContent = result.item.value;
+    $("exportItemOpen").textContent = /^https:\/\//i.test(result.item.value) ? "URLを開く" : "文字列をコピー";
+    $("exportItemOpen").disabled = false;
+  } catch (error) { $("exportItemMessage").textContent = error.message; }
+}
+
+async function useCurrentExportItem() {
+  if (!state.exportItem) return;
+  try {
+    if (/^https:\/\//i.test(state.exportItem.value)) {
+      const opened = window.open(state.exportItem.value, "_blank", "noopener");
+      if (!opened) throw new Error("URLを開けませんでした");
+    } else await writeClipboard(state.exportItem.value);
+    $("exportItemComplete").disabled = false;
+  } catch (error) { $("exportItemMessage").textContent = error.message; }
+}
+
+async function completeCurrentExportItem() {
+  if (!state.exportItem || !state.exportProductId) return;
+  $("exportItemComplete").disabled = true;
+  try {
+    await api(`/api/products/${state.exportProductId}/items/${state.exportItem.id}/export-complete`, { method:"POST" });
+    await Promise.all([loadWinningLists(), loadNextExportItem(state.exportProductId)]);
+  } catch (error) { $("exportItemMessage").textContent = error.message; }
 }
 
 function campaignLabel(campaign) {
@@ -330,7 +563,8 @@ async function confirmAssignment() {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
     });
     $("assignmentDialog").close();
-    await Promise.all([load(), loadCampaigns()]);
+    await Promise.all([load(), loadCampaigns(), loadWinningLists()]);
+    switchTab("winning");
     alert(`${result.assigned_count.toLocaleString()}件を仕分けました。`);
   } catch (error) {
     $("assignmentMessage").textContent = error.message;
@@ -641,6 +875,28 @@ $("trialResetConfirmation").oninput = event => {
   $("confirmTrialReset").disabled = event.currentTarget.value !== "完全削除";
 };
 $("confirmTrialReset").onclick = resetTrialData;
+document.querySelectorAll("[data-tab]").forEach(button => button.onclick = () => switchTab(button.dataset.tab));
+$("refreshWinningLists").onclick = loadWinningLists;
+$("undoLastExport").onclick = undoLastExport;
+$("outputMethodClose").onclick = () => $("outputMethodDialog").close();
+$("outputMethodDialog").addEventListener("click", event => {
+  const button = event.target.closest("[data-output-method]");
+  if (button) saveOutputMethod(button.dataset.outputMethod);
+});
+$("exportActionClose").onclick = () => $("exportActionDialog").close();
+$("exportOneByOne").onclick = openSingleExport;
+$("exportBulk").onclick = () => startBulkExport("received");
+$("exportBulkAsc").onclick = () => startBulkExport("asc");
+$("exportBatchAgain").onclick = async () => {
+  if (!state.exportBatch) return;
+  try { await writeClipboard(batchText(state.exportBatch)); $("exportBatchMessage").textContent = "もう一度コピーしました。"; }
+  catch (error) { $("exportBatchMessage").textContent = error.message; }
+};
+$("exportBatchCancel").onclick = cancelExportBatch;
+$("exportBatchComplete").onclick = completeExportBatch;
+$("exportItemOpen").onclick = useCurrentExportItem;
+$("exportItemStop").onclick = () => $("exportItemDialog").close();
+$("exportItemComplete").onclick = completeCurrentExportItem;
 $("pendingDialog").addEventListener("cancel", event => event.preventDefault());
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(error => console.warn("service worker", error));
