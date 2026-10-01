@@ -1,4 +1,5 @@
 const $ = id => document.getElementById(id);
+const PENDING_SHARE_KEY = "winning-url-vault:pending-share";
 const state = { cursor: null, cardId: null, authenticated: false, pendingItems: new Map(),
   activeJobId: null, pollTimer: null, refreshing: false, dialogPendingId: null,
   campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
@@ -51,6 +52,7 @@ async function login(event) {
     showApp(result.mode);
     await Promise.all([load(), loadCampaigns()]);
     await resumeLatestJob();
+    await resumePendingShare();
     startPolling();
   } catch (error) {
     showLogin(error.message);
@@ -107,6 +109,7 @@ async function boot() {
     showApp(result.mode);
     await load();
     await resumeLatestJob();
+    await resumePendingShare();
     startPolling();
   } catch (error) {
     showLogin(error.message);
@@ -512,7 +515,7 @@ async function submitConfirmation(card, action) {
 
 async function receive() {
   const values = parseReceiveValues($("receiveInput").value);
-  if (!values.length) return;
+  if (!values.length) return false;
   const controls = [$("receive"), $("paste"), $("clear")];
   controls.forEach(button => button.disabled = true);
   $("receiveProgress").classList.remove("hidden");
@@ -528,10 +531,27 @@ async function receive() {
     showJobProgress(result.job);
     await load();
     await loadJob();
+    return true;
   } catch (error) {
     $("progressStatus").textContent = "受付失敗";
     $("receiveResult").textContent = error.message;
+    return false;
   } finally { controls.forEach(button => button.disabled = false); }
+}
+
+async function resumePendingShare() {
+  let pending;
+  try { pending = JSON.parse(localStorage.getItem(PENDING_SHARE_KEY) || "null"); }
+  catch { localStorage.removeItem(PENDING_SHARE_KEY); return; }
+  if (!pending?.text) return;
+  if (Date.now() - Number(pending.createdAt || 0) > 24 * 60 * 60 * 1000) {
+    localStorage.removeItem(PENDING_SHARE_KEY);
+    return;
+  }
+  $("receiveInput").value = pending.text;
+  $("receiveResult").textContent = "共有されたURLを自動受付します…";
+  document.querySelector(".receive")?.scrollIntoView({ block: "start" });
+  if (await receive()) localStorage.removeItem(PENDING_SHARE_KEY);
 }
 
 async function loadJob() {
@@ -622,4 +642,7 @@ $("trialResetConfirmation").oninput = event => {
 };
 $("confirmTrialReset").onclick = resetTrialData;
 $("pendingDialog").addEventListener("cancel", event => event.preventDefault());
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js").catch(error => console.warn("service worker", error));
+}
 boot();

@@ -102,3 +102,19 @@ dialog::backdrop{background:#000b}
 .danger-confirm{display:grid;gap:7px;color:var(--muted);font-size:13px}
 .danger-confirm input{width:100%;min-height:46px;border:2px solid #9b5960;background:#020713;color:#fff;padding:10px}
 @media(max-width:480px){.trial-notice{align-items:stretch;flex-direction:column}.trial-notice button{width:100%}}
+.share-page{min-height:100svh;background:#fff;color:#111;color-scheme:light}
+.share-shell{min-height:100svh;display:grid;place-items:center;padding:18px}
+.share-card{width:min(560px,100%);border:3px solid #111;background:#fff;padding:24px;text-align:center}
+.share-icon{display:block;width:132px;height:132px;object-fit:contain;margin:0 auto 8px}
+.share-kicker{margin:0;color:#596273;font-size:12px;letter-spacing:.15em}
+.share-card h1{margin:3px 0 18px;font-size:30px}
+.share-state{padding:18px 12px;border:2px solid #9bb9ef;background:#e9f1ff;color:#16498f;font-size:24px;font-weight:900}
+.share-state.ok{border-color:#79c596;background:#e5f8eb;color:#176438}
+.share-state.waiting{border-color:#e4bd55;background:#fff6d9;color:#7b5700}
+.share-state.error{border-color:#dc9292;background:#fff0f0;color:#8d2424}
+.share-count{margin-top:12px;font-size:20px;font-weight:900}
+.share-values{max-height:120px;overflow:auto;margin:10px 0 0;padding:10px;border:1px solid #ccd2dc;background:#f5f7fa;text-align:left;white-space:pre-wrap;word-break:break-all;font:12px/1.5 sans-serif}
+.share-message{min-height:1.5em;color:#3f4858;font-size:14px}
+.share-button{display:block;width:100%;min-height:48px;padding:11px 14px;border:2px solid #111;background:#0a53c8;color:#fff;text-decoration:none;font-size:17px}
+.share-card button{width:100%;margin-top:9px}
+.share-note{margin:16px 0 0;color:#667085;font-size:12px}

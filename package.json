@@ -13,7 +13,7 @@
     "test": "node --test",
     "db:migrate:local": "wrangler d1 migrations apply winning-url-vault --local",
     "db:migrate:remote": "wrangler d1 migrations apply winning-url-vault --remote",
-    "check": "node --check src/index.js && node --check src/ledger.js && node --check public/app.js"
+    "check": "node --check src/index.js && node --check src/ledger.js && node --check public/app.js && node --check public/share.js && node --check public/sw.js"
   },
   "devDependencies": {
     "miniflare": "^3.20250718.3",
