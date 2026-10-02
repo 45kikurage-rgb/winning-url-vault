@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS ledger_products (
   identity_key TEXT NOT NULL,
   assigned_at TEXT NOT NULL,
   output_method TEXT NOT NULL DEFAULT 'unset' CHECK(output_method IN ('unset','normal','cokeon','wallet','paypay','text_single')),
+  unit_price INTEGER CHECK(unit_price IS NULL OR (typeof(unit_price)='integer' AND unit_price BETWEEN 0 AND 9007199254740991)),
   is_archived INTEGER NOT NULL DEFAULT 0 CHECK(is_archived IN (0,1)),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -221,3 +222,25 @@ CREATE TABLE IF NOT EXISTS ledger_outbox (
   UNIQUE(source_record_id,source_revision)
 );
 CREATE INDEX IF NOT EXISTS idx_ledger_outbox_due ON ledger_outbox(status,next_attempt_at,created_at);
+
+CREATE TABLE IF NOT EXISTS product_monthly_revenue (
+  month TEXT NOT NULL CHECK(month >= '2026-10' AND month GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]'),
+  campaign_id TEXT NOT NULL,
+  product_id TEXT NOT NULL,
+  winner_count INTEGER NOT NULL CHECK(winner_count BETWEEN 0 AND 9007199254740991),
+  unit_price INTEGER CHECK(unit_price IS NULL OR unit_price BETWEEN 0 AND 9007199254740991),
+  amount INTEGER CHECK((unit_price IS NULL AND amount IS NULL) OR
+    (unit_price IS NOT NULL AND typeof(amount)='integer' AND amount BETWEEN 0 AND 9007199254740991 AND amount=winner_count*unit_price)),
+  source_revision INTEGER NOT NULL DEFAULT 0 CHECK(source_revision BETWEEN 0 AND 9007199254740991),
+  sync_status TEXT NOT NULL DEFAULT 'unset' CHECK(sync_status IN ('unset','pending','sent','failed')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+  next_attempt_at TEXT,
+  last_error TEXT,
+  finalized_at TEXT,
+  updated_at TEXT NOT NULL,
+  last_synced_at TEXT,
+  PRIMARY KEY(month,product_id),
+  FOREIGN KEY(product_id) REFERENCES ledger_products(product_id)
+);
+CREATE INDEX IF NOT EXISTS idx_product_month_revenue_due ON product_monthly_revenue(sync_status,next_attempt_at,updated_at);
+CREATE INDEX IF NOT EXISTS idx_product_month_revenue_campaign ON product_monthly_revenue(campaign_id,month,product_id);
