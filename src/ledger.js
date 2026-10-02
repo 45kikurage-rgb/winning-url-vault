@@ -252,16 +252,17 @@ export async function assignCardToCampaign(env, cardId, campaignId, choice = {})
       model.redeem_place || null, model.specification || null, model.expires_on || null, identityKey(model), occurredAt, occurredAt, occurredAt));
     product = { product_id: productId };
   }
+  const assignmentStatementIndex = statements.length;
   statements.push(env.DB.prepare(`INSERT OR IGNORE INTO item_campaign_assignments(item_id,campaign_id,product_id,assigned_at)
     SELECT i.id,?,?,? FROM items i WHERE i.card_id=? AND i.status='active'
     AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)`)
     .bind(campaignId, product.product_id, occurredAt, cardId));
   statements.push(...enqueueProductAndTotals(env.DB, product.product_id, campaignId, occurredAt));
   statements.push(refreshProductRevenueStatement(env.DB, product.product_id, occurredAt));
-  await env.DB.batch(statements);
-  const assigned = await env.DB.prepare("SELECT COUNT(*) count FROM item_campaign_assignments WHERE product_id=?")
-    .bind(product.product_id).first();
-  return { product_id: product.product_id, campaign_id: campaignId, assigned_count: Number(assigned?.count || 0),
+  const results = await env.DB.batch(statements);
+  // Report rows added by this request, not the destination's lifetime total.
+  const assignedCount = Number(results[assignmentStatementIndex].meta.changes || 0);
+  return { product_id: product.product_id, campaign_id: campaignId, assigned_count: assignedCount,
     reused: Boolean(preview.exact_product || choice.product_id) };
 }
 

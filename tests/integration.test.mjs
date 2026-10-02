@@ -374,6 +374,8 @@ test("Readerの同名キャンペーンを開始日で区別し、割当時だ�
     body: JSON.stringify({ campaign_id: "campaign-active-a" })
   });
   assert.equal(second.product_id, first.product_id);
+  assert.equal(first.assigned_count, 1);
+  assert.equal(second.assigned_count, 1);
 
   await createConfirmedCard(worker, "third");
   card = (await request(worker, "/api/cards")).cards[0];
