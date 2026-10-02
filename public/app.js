@@ -25,6 +25,7 @@ async function api(path, options) {
 
 function setMode(mode) {
   const trial = mode !== "production";
+  document.body.dataset.operationMode = trial ? "trial" : "production";
   document.querySelectorAll(".mode-badge").forEach(element => { element.textContent = trial ? "試用運用中" : "正式運用中"; });
   document.querySelector(".trial-notice")?.classList.toggle("hidden", !trial);
 }
@@ -32,12 +33,31 @@ function setMode(mode) {
 function switchTab(name) {
   const names = ["receive", "sorting", "winning"];
   const selected = names.includes(name) ? name : "receive";
+  document.body.dataset.activeTab = selected;
   for (const item of names) {
     $(`tab${item[0].toUpperCase()}${item.slice(1)}`).classList.toggle("hidden", item !== selected);
   }
   document.querySelectorAll("[data-tab]").forEach(button => button.classList.toggle("active", button.dataset.tab === selected));
   try { localStorage.setItem("winning-url-vault:tab", selected); } catch {}
   if (selected === "winning") loadWinningLists();
+}
+
+async function loadRevenueSummary() {
+  const panel = $("headerRevenue");
+  try {
+    const result = await api("/api/revenue/summary");
+    panel.classList.remove("is-error");
+    $("headerMonthlyRevenue").textContent = `${Number(result.monthly_revenue || 0).toLocaleString()}円`;
+    $("headerDailyRevenue").textContent = `${Number(result.daily_revenue || 0).toLocaleString()}円`;
+    const unpriced = Number(result.unpriced_month_count || 0);
+    panel.classList.toggle("has-unpriced", unpriced > 0);
+    panel.title = unpriced > 0 ? `単価未設定 ${unpriced.toLocaleString()}件は収益に含まれていません` : `${result.month} / ${result.date}（JST）`;
+  } catch (error) {
+    $("headerMonthlyRevenue").textContent = "—";
+    $("headerDailyRevenue").textContent = "—";
+    panel.classList.add("is-error");
+    panel.title = error.message;
+  }
 }
 
 function showLogin(message = "") {
@@ -65,7 +85,7 @@ async function login(event) {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password })
     });
     showApp(result.mode);
-    await Promise.all([load(), loadCampaigns(), loadWinningLists()]);
+    await Promise.all([load(), loadCampaigns(), loadWinningLists(), loadRevenueSummary()]);
     await resumeLatestJob();
     await resumePendingShare();
     await restorePendingExport();
@@ -124,7 +144,7 @@ async function boot() {
     if (!result.configured) return showLogin("ログイン設定が未完了です");
     if (!result.authenticated) return showLogin();
     showApp(result.mode);
-    await Promise.all([load(), loadCampaigns(), loadWinningLists()]);
+    await Promise.all([load(), loadCampaigns(), loadWinningLists(), loadRevenueSummary()]);
     await resumeLatestJob();
     await resumePendingShare();
     await restorePendingExport();
@@ -325,7 +345,7 @@ async function saveUnitPrice() {
       method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({unit_price:Number(value)})
     });
     $("outputMethodMessage").textContent = "単価を保存しました";
-    await loadWinningLists();
+    await Promise.all([loadWinningLists(), loadRevenueSummary()]);
   } catch (error) { $("outputMethodMessage").textContent = error.message; }
   finally { $("saveUnitPrice").disabled = false; }
 }
@@ -645,7 +665,7 @@ async function confirmAssignment() {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
     });
     $("assignmentDialog").close();
-    await Promise.all([load(), loadCampaigns(), loadWinningLists()]);
+    await Promise.all([load(), loadCampaigns(), loadWinningLists(), loadRevenueSummary()]);
     switchTab("winning");
     alert(`${result.assigned_count.toLocaleString()}件を仕分けました。`);
   } catch (error) {

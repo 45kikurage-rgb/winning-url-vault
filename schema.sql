@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS items (
 );
 CREATE INDEX IF NOT EXISTS idx_items_card ON items(card_id, status, received_at, id);
 CREATE INDEX IF NOT EXISTS idx_items_pending ON items(pending_id, status);
+CREATE INDEX IF NOT EXISTS idx_items_received_status ON items(datetime(received_at),status,id);
 
 CREATE TABLE IF NOT EXISTS analysis_jobs (
   id TEXT PRIMARY KEY,

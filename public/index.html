@@ -29,8 +29,14 @@
 
 <main id="app" class="hidden">
   <header>
-    <div><p>WINNING URL VAULT</p><h1>当選URL管理</h1></div>
-    <div class="header-actions"><span id="modeBadge" class="mode-badge">正式運用中</span><button id="logout" class="secondary">ログアウト</button></div>
+    <div class="header-brand"><p>WINNING URL VAULT</p><h1>当選URL管理</h1></div>
+    <div class="header-side">
+      <section id="headerRevenue" class="header-revenue" aria-label="収益">
+        <div><span>当月収益</span><strong id="headerMonthlyRevenue">—</strong></div>
+        <div><span>当日収益</span><strong id="headerDailyRevenue">—</strong></div>
+      </section>
+      <div class="header-actions"><span id="modeBadge" class="mode-badge">正式運用中</span><button id="logout" class="secondary">ログアウト</button></div>
+    </div>
   </header>
 
   <nav class="main-tabs" aria-label="当選URL管理メニュー">

@@ -4,7 +4,7 @@ import {
 } from "./core.js";
 import {
   VaultLedgerError, assignCardToCampaign, assignmentPreview, closeCampaign, closePreview,
-  enrichCards, outboxStatus, processOutbox, processRevenueOutbox, refreshCampaigns, retryOutbox,
+  enrichCards, getRevenueSummary, outboxStatus, processOutbox, processRevenueOutbox, refreshCampaigns, retryOutbox,
   setUnitPrice, startCorrection
 } from "./ledger.js";
 import {
@@ -13,7 +13,7 @@ import {
   startExportBatch, undoExportBatch
 } from "./extraction.js";
 
-const VERSION = "0.8.0";
+const VERSION = "0.8.1";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -866,6 +866,9 @@ export default {
       const jobStatus = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
       if (jobStatus && request.method === "GET") return getJob(env, jobStatus[1]);
       if (url.pathname === "/api/cards" && request.method === "GET") return listCards(env);
+      if (url.pathname === "/api/revenue/summary" && request.method === "GET") {
+        return json({ ok: true, ...await getRevenueSummary(env) });
+      }
       if (url.pathname === "/api/winning-lists" && request.method === "GET") {
         return json({ ok: true, products: await listWinningLists(env) });
       }

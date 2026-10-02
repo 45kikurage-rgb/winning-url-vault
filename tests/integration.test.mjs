@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Miniflare } from "miniflare";
+import { getRevenueSummary } from "../src/ledger.js";
 
 const authCookies = new WeakMap();
 
@@ -501,6 +502,8 @@ test("JSTの2026-10以降だけを商品月収益へ集約し、抽出状態と�
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ campaign_id: "campaign-active-a" })
   });
+  await DB.prepare("UPDATE items SET received_at=? WHERE card_id=?")
+    .bind("2026-10-02T01:00:00.000Z", card.id).run();
   assert.equal(analyzer.ledgerRequests.filter(item => item.path === "/api/v1/revenue/products/sync").length, 0);
 
   const records = [
@@ -528,6 +531,12 @@ test("JSTの2026-10以降だけを商品月収益へ集約し、抽出状態と�
     {winner_count:100,unit_price:150,amount:15000});
   let list=(await request(worker,"/api/winning-lists")).products[0];
   assert.equal(Number(list.unit_price),150);assert.equal(Number(list.current_month_revenue),15000);
+  let summary = await getRevenueSummary({ DB }, Date.parse("2026-10-02T10:00:00.000Z"));
+  assert.deepEqual({ monthly:summary.monthly_revenue, daily:summary.daily_revenue }, { monthly:15000, daily:14850 });
+  const liveSummary = await request(worker, "/api/revenue/summary");
+  assert.equal(typeof liveSummary.monthly_revenue, "number");
+  assert.equal(typeof liveSummary.daily_revenue, "number");
+  assert.doesNotMatch(JSON.stringify(liveSummary), /coupon\.example\.test|canonical_value|"value"/i);
 
   await request(worker, `/api/products/${assigned.product_id}/output-method`, {
     method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({output_method:"normal"})
@@ -544,6 +553,8 @@ test("JSTの2026-10以降だけを商品月収益へ集約し、抽出状態と�
   });
   revenue=analyzer.revenues.get(`2026-10:${assigned.product_id}`);
   assert.equal(revenue.amount,20000);
+  summary = await getRevenueSummary({ DB }, Date.parse("2026-10-02T10:00:00.000Z"));
+  assert.deepEqual({ monthly:summary.monthly_revenue, daily:summary.daily_revenue }, { monthly:20000, daily:19800 });
   const revenueRequests=analyzer.ledgerRequests.filter(item => item.path === "/api/v1/revenue/products/sync");
   assert.equal(revenueRequests.length,2);
   assert.equal(revenueRequests[1].body.source_revision,2);

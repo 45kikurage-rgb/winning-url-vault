@@ -5,11 +5,51 @@ const uuid = () => crypto.randomUUID();
 export const REVENUE_START_MONTH = "2026-10";
 const REVENUE_START_UTC = "2026-09-30T15:00:00Z";
 
+function jstPeriod(value = Date.now()) {
+  const shifted = new Date(Number(value) + 9 * 60 * 60 * 1000);
+  const year = shifted.getUTCFullYear();
+  const monthNumber = shifted.getUTCMonth() + 1;
+  const dayNumber = shifted.getUTCDate();
+  const month = `${year}-${String(monthNumber).padStart(2, "0")}`;
+  const date = `${month}-${String(dayNumber).padStart(2, "0")}`;
+  const start = Date.UTC(year, monthNumber - 1, dayNumber) - 9 * 60 * 60 * 1000;
+  const end = start + 24 * 60 * 60 * 1000;
+  const sqlUtc = timestamp => new Date(timestamp).toISOString().replace("T", " ").replace(/\.000Z$/, "");
+  return { month, date, start: sqlUtc(start), end: sqlUtc(end) };
+}
+
 export class VaultLedgerError extends Error {
   constructor(message, status = 400, code = "VAULT_LEDGER_ERROR", details = {}) {
     super(message);
     Object.assign(this, { status, code, details });
   }
+}
+
+export async function getRevenueSummary(env, at = Date.now()) {
+  const period = jstPeriod(at);
+  if (period.month < REVENUE_START_MONTH) {
+    return { month: period.month, date: period.date, monthly_revenue: 0, daily_revenue: 0,
+      unpriced_month_count: 0, unpriced_day_count: 0 };
+  }
+  const [monthly, daily] = await Promise.all([
+    env.DB.prepare(`SELECT COALESCE(SUM(amount),0) amount,
+      COALESCE(SUM(CASE WHEN unit_price IS NULL THEN winner_count ELSE 0 END),0) unpriced_count
+      FROM product_monthly_revenue WHERE month=?`).bind(period.month).first(),
+    env.DB.prepare(`SELECT COALESCE(SUM(CASE WHEN p.unit_price IS NULL THEN 0 ELSE p.unit_price END),0) amount,
+      COALESCE(SUM(CASE WHEN p.unit_price IS NULL THEN 1 ELSE 0 END),0) unpriced_count
+      FROM items i JOIN item_campaign_assignments a ON a.item_id=i.id
+      JOIN ledger_products p ON p.product_id=a.product_id
+      WHERE i.status='active' AND datetime(i.received_at)>=datetime(?) AND datetime(i.received_at)<datetime(?)`)
+      .bind(period.start, period.end).first()
+  ]);
+  return {
+    month: period.month,
+    date: period.date,
+    monthly_revenue: Number(monthly?.amount || 0),
+    daily_revenue: Number(daily?.amount || 0),
+    unpriced_month_count: Number(monthly?.unpriced_count || 0),
+    unpriced_day_count: Number(daily?.unpriced_count || 0)
+  };
 }
 
 function binding(env, kind) {

@@ -75,3 +75,16 @@ test("当選リストは未設定・処理中・完了を分離し、固定下�
   assert.match(styles, /\.winning-actions\{display:grid;grid-template-columns:1fr auto/);
   assert.match(styles, /\.winning-card\.is-complete\{opacity:/);
 });
+
+test("上部収益とURL受信画面のモバイル1画面表示を備える", async () => {
+  const index = await text("index.html");
+  const app = await text("app.js");
+  const styles = await text("styles.css");
+  assert.match(index, /id="headerMonthlyRevenue"/);
+  assert.match(index, /id="headerDailyRevenue"/);
+  assert.match(app, /api\("\/api\/revenue\/summary"\)/);
+  assert.match(app, /document\.body\.dataset\.activeTab = selected/);
+  assert.match(styles, /data-operation-mode="production"\]\[data-active-tab="receive"\]\{height:100dvh;overflow:hidden/);
+  assert.match(styles, /env\(safe-area-inset-top/);
+  assert.match(styles, /#tabReceive\{height:calc\(100% - 70px\)/);
+});
