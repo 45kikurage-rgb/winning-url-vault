@@ -1,3 +1,5 @@
+import {IntakeError,sendingIdentity,limitSending,listSendingTokens,issueSendingToken,revokeSendingToken} from './sending-auth.js';
+import {readIntake,beginIntake,materializeIntake,dispatchIntake,recoverIntakes} from './intake.js';
 import {
   classifyValue, codeCard, extractInputValues, isGenericName, normalizeAnalysis,
   normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson
@@ -13,7 +15,7 @@ import {
   startExportBatch, undoExportBatch
 } from "./extraction.js";
 
-const VERSION = "0.8.1";
+const VERSION = "0.9.0";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -309,12 +311,14 @@ async function jobSummary(env, jobId) {
   const processed = Number(counts?.processed || 0);
   const pending = Number(counts?.pending_confirmation || 0);
   let status = job.status;
-  if (job.status === "finalizing") status = "finalizing";
+  if (job.status === "receiving") status = "receiving";
+  else if (job.status === "finalizing") status = "finalizing";
   else if (processed >= accepted) status = pending ? "awaiting_confirmation" : "completed";
   else if (Number(counts?.processing || 0) > 0) status = "processing";
   else if (accepted > 0) status = "queued";
+  const receipt=await env.DB.prepare("SELECT client_request_id FROM intake_receipts WHERE job_id=?").bind(jobId).first();
   return {
-    id: job.id, clientRequestId: job.client_request_id, status,
+    id: job.id, clientRequestId: receipt?.client_request_id || job.client_request_id, status,
     inputTotal: Number(job.input_total || 0), inputDuplicates: Number(job.input_duplicates || 0),
     existing: Number(job.existing_count || 0), accepted,
     queued: Number(counts?.queued || 0), processing: Number(counts?.processing || 0),
@@ -578,75 +582,25 @@ async function processJobFully(env, jobId, acceptedCount) {
   await finalizeJob(env, jobId);
 }
 
-async function receive(request, env) {
-  const body = await request.json().catch(() => ({}));
-  const values = extractInputValues(body);
-  if (!values.length) return json({ ok: false, error: "URLまたはコードを入力してください" }, 400);
-  if (values.length >= 5000) return json({ ok: false, error: "1回に送信できる上限は4,999件です" }, 413);
-  const clientRequestId = /^[0-9a-f-]{16,64}$/i.test(String(body.clientRequestId || ""))
-    ? String(body.clientRequestId) : id();
-  const previous = await env.DB.prepare("SELECT id,status FROM analysis_jobs WHERE client_request_id=?")
-    .bind(clientRequestId).first();
-  if (previous) return json({ ok: true, resumed: true, job: await jobSummary(env, previous.id) });
-
-  const unique = [];
-  const seen = new Set();
-  let inputDuplicates = 0;
-  for (const raw of values) {
-    const classified = classifyValue(raw, env.COKEON_REDEEM_BASE_URL);
-    if (!classified) continue;
-    if (seen.has(classified.canonicalValue)) { inputDuplicates += 1; continue; }
-    seen.add(classified.canonicalValue);
-    unique.push(classified);
+async function receive(request, env, identity = {ownerKey:'admin'}) {
+  try {
+    const input=await readIntake(request,Boolean(identity.deviceId));
+    const {receipt,resumed}=await beginIntake(env,input,identity.ownerKey);
+    const stored=await materializeIntake(env,receipt);
+    // Analysis queue failure does not invalidate saved input; cron retries dispatch.
+    try { await dispatchIntake(env,stored,processJobFully); }
+    catch { console.error('Saved intake awaiting dispatch',stored.job_id); }
+    const summary=await jobSummary(env,stored.job_id);
+    return json({ok:true,stored:true,clientRequestId:input.clientRequestId,resumed,
+      received:summary.accepted,duplicate:summary.inputDuplicates+summary.existing,
+      inputDuplicate:summary.inputDuplicates,existing:summary.existing,
+      counts:{active:summary.active,pending_confirmation:summary.pendingConfirmation,unresolved:summary.unresolved},
+      job:summary},resumed?200:202);
+  } catch(error) {
+    if(error instanceof IntakeError) return json({ok:false,stored:false,code:error.code,error:error.message},error.status);
+    console.error('Intake incomplete');
+    return json({ok:false,stored:false,code:'INTAKE_INCOMPLETE',error:'受付を完了できませんでした。同じ受付IDで再送してください'},503);
   }
-  const existingCanonicals = await findExistingCanonicals(env, unique.map(item => item.canonicalValue));
-  const candidates = unique.filter(item => !existingCanonicals.has(item.canonicalValue))
-    .map(item => ({ ...item, id: id() }));
-  const jobId = id();
-  await env.DB.prepare(`INSERT INTO analysis_jobs
-    (id,client_request_id,input_total,input_duplicates,existing_count,accepted_count,status,updated_at)
-    VALUES (?,?,?,?,?,0,'receiving',?)`).bind(jobId, clientRequestId, values.length, inputDuplicates,
-      existingCanonicals.size, nowSql()).run();
-
-  const accepted = [];
-  for (const chunk of sliceInto(candidates, 40)) {
-    await env.DB.batch(chunk.map(item => env.DB.prepare(
-      `INSERT OR IGNORE INTO items (id,value,canonical_value,value_type,status) VALUES (?,?,?,?, 'queued')`
-    ).bind(item.id, item.storedValue, item.canonicalValue, item.type)));
-    const canonicalValues = chunk.map(item => item.canonicalValue);
-    const rows = await env.DB.prepare(`SELECT id,canonical_value FROM items
-      WHERE canonical_value IN (${bindList(canonicalValues)})`).bind(...canonicalValues).all();
-    const storedIds = new Map((rows.results || []).map(row => [row.canonical_value, row.id]));
-    accepted.push(...chunk.filter(item => storedIds.get(item.canonicalValue) === item.id));
-  }
-  const raceDuplicates = candidates.length - accepted.length;
-  accepted.forEach((item, ordinal) => { item.ordinal = ordinal; });
-  for (const chunk of sliceInto(accepted, 40)) {
-    await env.DB.batch(chunk.map(item => env.DB.prepare(
-      "INSERT INTO analysis_job_items (job_id,item_id,ordinal,state,updated_at) VALUES (?,?,?,'queued',?)"
-    ).bind(jobId, item.id, item.ordinal, nowSql())));
-  }
-  const existingCount = existingCanonicals.size + raceDuplicates;
-  await env.DB.prepare(`UPDATE analysis_jobs SET existing_count=?,accepted_count=?,status=?,updated_at=? WHERE id=?`)
-    .bind(existingCount, accepted.length, accepted.length ? "queued" : "completed", nowSql(), jobId).run();
-  if (!accepted.length) {
-    await env.DB.prepare("UPDATE analysis_jobs SET completed_at=?,updated_at=? WHERE id=?").bind(nowSql(), nowSql(), jobId).run();
-  } else if (env.ANALYSIS_QUEUE?.send) {
-    const messages = Array.from({ length: Math.ceil(accepted.length / ANALYSIS_BATCH_SIZE) },
-      (_, batchNo) => ({ body: { type: "analyze", jobId, batchNo } }));
-    if (env.ANALYSIS_QUEUE.sendBatch) {
-      for (const chunk of sliceInto(messages, 100)) await env.ANALYSIS_QUEUE.sendBatch(chunk);
-    } else {
-      await Promise.all(messages.map(message => env.ANALYSIS_QUEUE.send(message.body)));
-    }
-  } else {
-    await processJobFully(env, jobId, accepted.length);
-  }
-  const summary = await jobSummary(env, jobId);
-  return json({ ok: true, received: accepted.length, duplicate: inputDuplicates + existingCount,
-    inputDuplicate: inputDuplicates, existing: existingCount,
-    counts: { active: summary.active, pending_confirmation: summary.pendingConfirmation, unresolved: summary.unresolved },
-    job: summary }, 202);
 }
 
 async function retryUnresolved(env) {
@@ -843,7 +797,15 @@ async function listCardItems(url, env, cardId) {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    env={...env,DB:env.DB?.withSession?env.DB.withSession('first-primary'):env.DB};
     try {
+      // An explicit bearer token can never fall back to an administrator cookie.
+      if(url.pathname.startsWith('/api/') && request.headers.has('authorization')) {
+        const identity=await sendingIdentity(request,env);
+        if(url.pathname!=='/api/receive'||request.method!=='POST') return json({ok:false,code:'SCOPE_DENIED',error:'このトークンは送信専用です'},403);
+        await limitSending(env,identity.deviceId);
+        return await receive(request,env,identity);
+      }
       if (url.pathname === "/api/auth/status" && request.method === "GET") {
         return json({
           ok: true,
@@ -854,7 +816,20 @@ export default {
       }
       if (url.pathname === "/api/auth/login" && request.method === "POST") return login(request, env);
       if (url.pathname.startsWith("/api/") && !await authenticated(request, env)) {
-        return json({ ok: false, error: "ログインが必要です" }, 401);
+        return json({ ok: false, code: "TOKEN_INVALID", error: "ログインまたは送信専用トークンが必要です" }, 401);
+      }
+      if(url.pathname==='/api/sending-tokens') {
+        if(request.method==='GET') return json({ok:true,tokens:await listSendingTokens(env)});
+        if(request.method==='POST') {
+          if(request.headers.get('origin')!==url.origin) return json({ok:false,code:'SCOPE_DENIED',error:'管理画面から操作してください'},403);
+          const body=await request.json().catch(()=>null);
+          return json({ok:true,...await issueSendingToken(env,body)},201);
+        }
+      }
+      const revokeToken=url.pathname.match(/^\/api\/sending-tokens\/([0-9a-f-]+)\/revoke$/);
+      if(revokeToken&&request.method==='POST') {
+        if(request.headers.get('origin')!==url.origin) return json({ok:false,code:'SCOPE_DENIED',error:'管理画面から操作してください'},403);
+        await revokeSendingToken(env,revokeToken[1]);return json({ok:true});
       }
       if (url.pathname === "/api/auth/logout" && request.method === "POST") return logout(env);
       if (url.pathname === "/api/status" && request.method === "GET") {
@@ -968,10 +943,11 @@ export default {
       if (url.pathname.startsWith("/api/")) return json({ ok: false, error: "Not found" }, 404);
       return protectedAsset(await env.ASSETS.fetch(request));
     } catch (error) {
-      if (error instanceof VaultLedgerError) {
+      if (error instanceof VaultLedgerError || error instanceof IntakeError) {
         return json({ ok: false, error: error.message, code: error.code, details: error.details }, error.status);
       }
       console.error(error);
+      if(request.headers.has('authorization')) return json({ok:false,code:'SERVER_ERROR',error:'処理を完了できませんでした。しばらくしてから再送してください'},500);
       return json({ ok: false, error: error instanceof Error ? error.message : "Internal error" }, 500);
     }
   },
@@ -996,6 +972,7 @@ export default {
   },
   async scheduled(_controller, env, ctx) {
     ctx.waitUntil((async () => {
+      await recoverIntakes(env,processJobFully);
       await processOutbox(env, { limit: 50 });
       await processRevenueOutbox(env, { limit: 20 });
     })());

@@ -1009,3 +1009,39 @@ if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("/sw.js").catch(error => console.warn("service worker", error));
 }
 boot();
+
+
+async function loadSendingTokens() {
+  const result=await api('/api/sending-tokens');
+  const list=$('sendingTokenList');list.replaceChildren();
+  for(const token of result.tokens){
+    const row=document.createElement('div');row.className='row';
+    const label=document.createElement('span');label.textContent=`端末${token.device_id} — ${token.revoked_at?'失効済み':'有効'}`;row.append(label);
+    if(!token.revoked_at){const button=document.createElement('button');button.className='secondary';button.textContent='失効';
+      button.onclick=async()=>{if(!confirm(`端末${token.device_id}の送信トークンを失効しますか？`))return;
+        try{await api(`/api/sending-tokens/${token.id}/revoke`,{method:'POST'});await loadSendingTokens();}
+        catch(error){$('sendingTokenMessage').textContent=error.message;}};row.append(button);}
+    list.append(row);
+  }
+}
+$('openSendingTokens').onclick=async()=>{
+  $('sendingEndpoint').value=location.origin+'/api/receive';$('sendingTokenMessage').textContent='';
+  $('sendingTokensDialog').showModal();
+  try{await loadSendingTokens();}catch(error){$('sendingTokenMessage').textContent=error.message;}
+};
+$('sendingTokensClose').onclick=()=>$('sendingTokensDialog').close();
+$('sendingTokensDialog').addEventListener('close',()=>{$('issuedSendingToken').value='';$('issuedTokenPanel').classList.add('hidden');});
+$('issueSendingToken').onclick=async()=>{
+  const deviceId=$('sendingDeviceId').value.trim();
+  if(!/^\d{2,4}$/.test(deviceId)){$('sendingTokenMessage').textContent='端末番号を2〜4桁で入力してください';return;}
+  if(!confirm(`端末${deviceId}のトークンを発行します。同じ番号の既存トークンは無効になります。続けますか？`))return;
+  $('issueSendingToken').disabled=true;
+  try{const data=await api('/api/sending-tokens',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({deviceId})});
+    $('issuedSendingToken').value=data.token;$('issuedTokenPanel').classList.remove('hidden');
+    $('sendingTokenMessage').textContent='発行しました。閉じる前にコピーしてください。';await loadSendingTokens();
+  }catch(error){$('sendingTokenMessage').textContent=error.message;}finally{$('issueSendingToken').disabled=false;}
+};
+for(const [button,input] of [['copySendingEndpoint','sendingEndpoint'],['copySendingToken','issuedSendingToken']]){
+  $(button).onclick=async()=>{try{await navigator.clipboard.writeText($(input).value);$('sendingTokenMessage').textContent='コピーしました。';}
+    catch{$(input).select();$('sendingTokenMessage').textContent='入力欄を長押ししてコピーしてください。';}};
+}

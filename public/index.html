@@ -63,8 +63,8 @@
       <div id="acceptanceSummary" class="acceptance-summary"></div>
     </div>
     <p id="receiveResult" class="result" aria-live="polite"></p>
+    <button id="openSendingTokens" class="secondary" type="button">ARUNOMATIC 送信端末設定</button>
   </section>
-
   <section class="summary" aria-label="集計">
     <article><span>保有</span><strong id="total">—</strong></article>
     <article><span>確認待ち</span><strong id="pendingCount">—</strong></article>
@@ -105,6 +105,23 @@
     </section>
   </section>
 </main>
+
+<dialog id="sendingTokensDialog">
+  <div class="dialog-head"><h2>送信端末設定</h2><button id="sendingTokensClose" type="button" class="secondary">閉じる</button></div>
+  <p>端末ごとの送信専用トークンです。管理画面の閲覧や削除には使えません。</p>
+  <label>送信先URL<input id="sendingEndpoint" readonly></label>
+  <button id="copySendingEndpoint" type="button" class="secondary">URLをコピー</button>
+  <label>端末番号<input id="sendingDeviceId" inputmode="numeric" maxlength="4" placeholder="03"></label>
+  <button id="issueSendingToken" type="button">発行・更新</button>
+  <p>同じ端末番号で更新すると、その端末の古いトークンは無効になります。保留中の受付IDは引き継げます。</p>
+  <section id="issuedTokenPanel" class="hidden">
+    <p>トークンは今回だけ表示します。ARUNOMATICの「送信専用API設定」へ登録してください。</p>
+    <input id="issuedSendingToken" readonly autocomplete="off" aria-label="発行した送信専用トークン">
+    <button id="copySendingToken" type="button">トークンをコピー</button>
+  </section>
+  <p id="sendingTokenMessage" aria-live="polite"></p>
+  <div id="sendingTokenList"></div>
+</dialog>
 
 <dialog id="pendingDialog" class="pending-dialog">
   <div class="dialog-head"><div><small>残りの解析は継続しています</small><h2>初めてのクーポンを確認</h2></div></div>

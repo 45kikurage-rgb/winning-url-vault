@@ -1,4 +1,4 @@
-const CACHE = "winning-url-vault-pwa-20261002-v5";
+const CACHE = "winning-url-vault-pwa-20261002-v6";
 const ASSETS = [
   "/",
   "/index.html",
@@ -58,3 +58,4 @@ self.addEventListener("fetch", event => {
     }
   })());
 });
+

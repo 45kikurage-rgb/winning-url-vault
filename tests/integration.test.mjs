@@ -154,6 +154,20 @@ async function request(worker, path, options) {
   return payload;
 }
 
+test('ARUNOMATIC sending token saves unknown input in D1 and resumes after token rotation',async t=>{
+  const {mf,analyzer,worker,DB}=await createRuntime();t.after(()=>cleanup(mf,analyzer));
+  async function issue(){return request(worker,'/api/sending-tokens',{method:'POST',headers:{'content-type':'application/json',origin:'https://vault.test'},body:JSON.stringify({deviceId:'03'})});}
+  const firstToken=await issue();
+  const input={values:['未知の当選コードと説明文'],clientRequestId:crypto.randomUUID()};
+  async function send(token){return worker.fetch('https://vault.test/api/receive',{method:'POST',headers:{authorization:'Bearer '+token,'content-type':'application/json; charset=UTF-8'},body:JSON.stringify(input)});}
+  const first=await send(firstToken.token);assert.equal(first.status,202);const stored=await first.json();
+  assert.equal(stored.stored,true);assert.equal(stored.clientRequestId,input.clientRequestId);assert.equal(stored.job.status,'completed');assert.equal(stored.job.unresolved,1);
+  const row=await DB.prepare('SELECT value,status FROM items').first();assert.equal(row.value,input.values[0]);assert.equal(row.status,'unresolved');
+  const secondToken=await issue();assert.equal((await send(firstToken.token)).status,401);
+  const retry=await send(secondToken.token);assert.equal(retry.status,200);assert.equal((await retry.json()).job.id,stored.job.id);
+  const denied=await worker.fetch('https://vault.test/api/cards',{headers:{authorization:'Bearer '+secondToken.token,cookie:authCookies.get(worker)}});assert.equal(denied.status,403);
+});
+
 test("未ログインではAPIを読めず、ログイン状態と試用モードを確認できる", async t => {
   const { mf, analyzer, worker } = await createRuntime();
   t.after(() => cleanup(mf, analyzer));
