@@ -1,10 +1,11 @@
-const CACHE = "winning-url-vault-pwa-20261002-v12";
+const CACHE = "winning-url-vault-pwa-20261002-v13";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
   "/styles.css",
   "/app.js",
+  "/assignment-prediction.js",
   "/winning-folders.js",
   "/share.js",
   "/manifest.json",

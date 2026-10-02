@@ -1,4 +1,5 @@
 import { currentWinningMonth, winningMonth, winningMonthLabel, groupWinningFolders } from './winning-folders.js';
+import { predictAssignmentCampaign } from './assignment-prediction.js';
 
 const $ = id => document.getElementById(id);
 const winningFolderOpen = new Map();
@@ -7,7 +8,7 @@ const PENDING_SHARE_KEY = "winning-url-vault:pending-share";
 const LAST_EXPORT_BATCH_KEY = "winning-url-vault:last-export-batch";
 const OUTPUT_METHOD_LABELS = { unset:"未設定", normal:"通常URL", cokeon:"コークオン",
   wallet:"えらべるPay", paypay:"PayPay", text_single:"文字列" };
-const state = { cursor: null, cardId: null, authenticated: false, pendingItems: new Map(),
+const state = { cursor: null, cardId: null, authenticated: false, cards: new Map(), pendingItems: new Map(),
   activeJobId: null, pollTimer: null, refreshing: false, dialogPendingId: null,
   campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
   correctionCampaignId: null, winningLists: [], outputProductId: null, exportProductId: null,
@@ -248,6 +249,7 @@ async function load() {
     $("unknown").textContent = `${unresolved.items.length.toLocaleString()}件`;
     $("unknownBottom").textContent = `${unresolved.items.length.toLocaleString()}件`;
     const sortingCards = cards.cards.filter(card => Number(card.unassigned_count || 0) > 0);
+    state.cards = new Map(cards.cards.map(card => [card.id, card]));
     const sortingCount = sortingCards.reduce((sum, card) => sum + Number(card.unassigned_count || 0), 0);
     $("sortingTabCount").textContent = sortingCount.toLocaleString();
     $("cards").innerHTML = sortingCards.length ? sortingCards.map(cardHtml).join("") : '<div class="empty">仕分け待ちのカードはありません</div>';
@@ -656,6 +658,15 @@ async function openAssignment(cardId, title) {
   const available = state.campaigns.filter(campaign => !campaign.is_archived && ["active", "closing", "correcting"].includes(campaign.status));
   $("assignmentCampaign").innerHTML = available.map(campaign =>
     `<option value="${esc(campaign.campaign_id)}">${esc(campaignLabel(campaign))}${campaign.status === "closing" ? "（終了確認待ち）" : campaign.status === "correcting" ? "（訂正中）" : ""}</option>`).join("");
+  const predicted = predictAssignmentCampaign(state.cards.get(cardId), available);
+  if (predicted) {
+    $("assignmentCampaign").value = predicted.campaign_id;
+    $("assignmentPrediction").textContent = `前回の仕分け先から予測：${campaignLabel(predicted)}（変更できます）`;
+    $("assignmentPrediction").classList.remove("hidden");
+  } else {
+    $("assignmentPrediction").textContent = "";
+    $("assignmentPrediction").classList.add("hidden");
+  }
   $("assignmentDecision").innerHTML = available.length ? "" : '<div class="empty">仕分け可能なキャンペーンがありません</div>';
   $("assignmentMessage").textContent = "";
   $("assignmentConfirm").disabled = !available.length;

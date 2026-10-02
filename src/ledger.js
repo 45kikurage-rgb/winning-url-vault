@@ -268,6 +268,7 @@ export async function assignCardToCampaign(env, cardId, campaignId, choice = {})
 
 export async function cardAssignments(env) {
   const rows = await env.DB.prepare(`SELECT p.*,i.card_id,c.campaign_name,c.lottery_start_date,c.status campaign_status,
+    MAX(a.assigned_at) last_assigned_at,
     (SELECT COUNT(*) FROM item_campaign_assignments a JOIN items i ON i.id=a.item_id
       WHERE a.product_id=p.product_id AND i.status='active') current_winner_count,
     (SELECT o.status FROM ledger_outbox o WHERE o.source_record_id='product:'||p.product_id
@@ -276,7 +277,7 @@ export async function cardAssignments(env) {
       ORDER BY o.source_revision DESC LIMIT 1) sync_error
     FROM ledger_products p JOIN item_campaign_assignments a ON a.product_id=p.product_id
     JOIN items i ON i.id=a.item_id LEFT JOIN vault_campaigns c ON c.campaign_id=p.campaign_id
-    GROUP BY i.card_id,p.product_id ORDER BY p.assigned_at DESC`).all();
+    GROUP BY i.card_id,p.product_id ORDER BY last_assigned_at DESC`).all();
   const byCard = new Map();
   for (const row of rows.results || []) {
     const list = byCard.get(row.card_id) || [];
