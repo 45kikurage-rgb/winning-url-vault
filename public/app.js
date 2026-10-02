@@ -7,7 +7,7 @@ const state = { cursor: null, cardId: null, authenticated: false, pendingItems: 
   activeJobId: null, pollTimer: null, refreshing: false, dialogPendingId: null,
   campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
   correctionCampaignId: null, winningLists: [], outputProductId: null, exportProductId: null,
-  exportItem: null, exportBatch: null };
+  exportItem: null, exportBatch: null, pendingExportBatch: null, exportPaypayKind: null };
 
 async function api(path, options) {
   const response = await fetch(path, options);
@@ -314,9 +314,44 @@ function openExportAction(productId) {
   if (!item) return;
   if (item.output_method === "unset") return openOutputMethod(productId);
   state.exportProductId = productId;
+  state.exportPaypayKind = null;
   $("exportActionTitle").textContent = `${item.product_name} を抽出`;
   $("exportActionSummary").innerHTML = `未抽出<strong>${Number(item.unexported_count || 0).toLocaleString()}件</strong><small>${esc(methodLabel(item.output_method))}</small>`;
+  $("exportActionMessage").textContent = "";
+  const pending = state.pendingExportBatch;
+  if (pending?.product_id && pending.product_id !== productId) {
+    $("exportActionSummary").innerHTML = `${esc(pending.product_name || "別の商品")}の商品で<br>一括抽出が進行中です`;
+    $("exportActionMessage").textContent = "進行中の一括抽出を完了または中断してから操作してください。";
+    $("paypayKindChooser").classList.add("hidden");
+    $("exportActionGrid").classList.add("hidden");
+  } else if (pending?.product_id === productId && pending.items) {
+    return showExportBatch(pending);
+  } else if (item.output_method === "paypay") {
+    const urlCount = Number(item.paypay_url_unexported_count || 0);
+    const codeCount = Number(item.paypay_code_unexported_count || 0);
+    $("paypayUrlCount").textContent = `${urlCount.toLocaleString()}件`;
+    $("paypayCodeCount").textContent = `${codeCount.toLocaleString()}件`;
+    document.querySelector('[data-paypay-kind="url"]').disabled = urlCount === 0;
+    document.querySelector('[data-paypay-kind="code"]').disabled = codeCount === 0;
+    $("paypayKindChooser").classList.remove("hidden");
+    $("exportActionGrid").classList.add("hidden");
+    $("exportActionMessage").textContent = "URLとコードを分けて抽出します。先に種別を選択してください。";
+  } else {
+    $("paypayKindChooser").classList.add("hidden");
+    $("exportActionGrid").classList.remove("hidden");
+  }
   $("exportActionDialog").showModal();
+}
+
+function selectPaypayKind(kind) {
+  const item = winningProduct(state.exportProductId);
+  if (!item || item.output_method !== "paypay" || !["url", "code"].includes(kind)) return;
+  state.exportPaypayKind = kind;
+  const label = kind === "url" ? "PayPay URL" : "PayPayコード";
+  const count = Number(kind === "url" ? item.paypay_url_unexported_count : item.paypay_code_unexported_count) || 0;
+  $("exportActionSummary").innerHTML = `${esc(label)}<strong>${count.toLocaleString()}件</strong><small>未抽出</small>`;
+  $("exportActionMessage").textContent = "";
+  $("exportActionGrid").classList.remove("hidden");
 }
 
 async function writeClipboard(text) {
@@ -334,8 +369,14 @@ function batchText(batch) {
 
 function showExportBatch(batch) {
   state.exportBatch = batch;
-  $("exportBatchSummary").innerHTML = `${esc(batch.product_name || "当選カード")}<strong>${Number(batch.count || 0).toLocaleString()}件</strong>`;
-  $("exportBatchMessage").textContent = "";
+  if (batch.status === "pending") state.pendingExportBatch = batch;
+  const kind = batch.paypay_kind === "url" ? " / PayPay URL" : batch.paypay_kind === "code" ? " / PayPayコード" : "";
+  $("exportBatchSummary").innerHTML = `${esc(batch.product_name || "当選カード")}<strong>${Number(batch.count || 0).toLocaleString()}件</strong><small>${esc(kind)}</small>`;
+  const mixed = batch.paypay_kind === "mixed";
+  $("exportBatchComplete").classList.toggle("hidden", mixed);
+  $("exportBatchMessage").textContent = mixed
+    ? "URLとコードが混在する旧一括抽出です。中断して種別ごとに抽出し直してください。" : "";
+  if ($("exportActionDialog").open) $("exportActionDialog").close();
   if (!$("exportBatchDialog").open) $("exportBatchDialog").showModal();
 }
 
@@ -346,7 +387,8 @@ async function startBulkExport(order = "received") {
   let result;
   try {
     result = await api(`/api/products/${productId}/export-batches`, {
-      method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify({ copy_order:order })
+      method:"POST", headers:{ "content-type":"application/json" },
+      body:JSON.stringify({ copy_order:order, paypay_kind:state.exportPaypayKind || undefined })
     });
     await writeClipboard(batchText(result.batch));
     showExportBatch(result.batch);
@@ -354,13 +396,18 @@ async function startBulkExport(order = "received") {
     if (result?.batch?.id && !result.restored) {
       try { await api(`/api/export-batches/${result.batch.id}`, { method:"DELETE" }); } catch {}
     }
-    alert(`一括コピーに失敗しました：${error.message}`);
+    if (error.code === "EXPORT_BATCH_OTHER_PRODUCT") {
+      state.pendingExportBatch = { product_id:error.details.product_id, product_name:error.details.product_name,
+        id:error.details.batch_id, count:error.details.item_count, status:"pending" };
+      openExportAction(productId);
+    } else alert(`一括コピーに失敗しました：${error.message}`);
   }
 }
 
 async function restorePendingExport() {
   try {
     const result = await api("/api/export-batches/pending");
+    state.pendingExportBatch = result.batch || null;
     if (result.batch) showExportBatch(result.batch);
   } catch {}
 }
@@ -370,7 +417,7 @@ async function cancelExportBatch() {
   $("exportBatchMessage").textContent = "キャンセル中…";
   try {
     await api(`/api/export-batches/${state.exportBatch.id}`, { method:"DELETE" });
-    state.exportBatch = null; $("exportBatchDialog").close(); await loadWinningLists();
+    state.exportBatch = null; state.pendingExportBatch = null; $("exportBatchDialog").close(); await loadWinningLists();
   } catch (error) { $("exportBatchMessage").textContent = error.message; }
 }
 
@@ -382,7 +429,7 @@ async function completeExportBatch() {
   try {
     const result = await api(`/api/export-batches/${batchId}/complete`, { method:"POST" });
     try { localStorage.setItem(LAST_EXPORT_BATCH_KEY, batchId); } catch {}
-    state.exportBatch = null; $("exportBatchDialog").close(); await loadWinningLists();
+    state.exportBatch = null; state.pendingExportBatch = null; $("exportBatchDialog").close(); await loadWinningLists();
     alert(`${Number(result.changed_count || 0).toLocaleString()}件を抽出済みにしました。`);
   } catch (error) { $("exportBatchMessage").textContent = error.message; }
   finally { $("exportBatchComplete").disabled = false; }
@@ -414,9 +461,11 @@ async function loadNextExportItem(productId) {
   $("exportItemOpen").disabled = true; $("exportItemComplete").disabled = true;
   $("exportItemMessage").textContent = "";
   try {
-    const result = await api(`/api/products/${productId}/export-next`);
+    const query = state.exportPaypayKind ? `?paypay_kind=${encodeURIComponent(state.exportPaypayKind)}` : "";
+    const result = await api(`/api/products/${productId}/export-next${query}`);
     state.exportItem = result.item || null;
-    $("exportItemTitle").textContent = `${result.product_name}・1件ずつ`;
+    const kind = result.paypay_kind === "url" ? "PayPay URL" : result.paypay_kind === "code" ? "PayPayコード" : "1件ずつ";
+    $("exportItemTitle").textContent = `${result.product_name}・${kind}`;
     $("exportItemRemaining").innerHTML = `未抽出<strong>${Number(result.remaining_count || 0).toLocaleString()}件</strong>`;
     if (!result.item) {
       $("exportItemValue").textContent = "すべて抽出済みです";
@@ -884,6 +933,10 @@ $("outputMethodDialog").addEventListener("click", event => {
   if (button) saveOutputMethod(button.dataset.outputMethod);
 });
 $("exportActionClose").onclick = () => $("exportActionDialog").close();
+$("paypayKindChooser").addEventListener("click", event => {
+  const button = event.target.closest("[data-paypay-kind]");
+  if (button) selectPaypayKind(button.dataset.paypayKind);
+});
 $("exportOneByOne").onclick = openSingleExport;
 $("exportBulk").onclick = () => startBulkExport("received");
 $("exportBulkAsc").onclick = () => startBulkExport("asc");

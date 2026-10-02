@@ -1,4 +1,4 @@
-const CACHE = "winning-url-vault-pwa-20261002-v2";
+const CACHE = "winning-url-vault-pwa-20261002-v3";
 const ASSETS = [
   "/",
   "/index.html",

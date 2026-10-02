@@ -128,7 +128,12 @@
 <dialog id="exportActionDialog">
   <div class="dialog-head"><div><small>データ抽出</small><h2 id="exportActionTitle">抽出方法</h2></div><button id="exportActionClose" class="secondary">閉じる</button></div>
   <div id="exportActionSummary" class="export-summary"></div>
-  <div class="export-action-grid">
+  <p id="exportActionMessage" class="result" aria-live="polite"></p>
+  <div id="paypayKindChooser" class="paypay-kind-chooser hidden">
+    <button data-paypay-kind="url">PayPay URL<strong id="paypayUrlCount">0件</strong></button>
+    <button data-paypay-kind="code">PayPayコード<strong id="paypayCodeCount">0件</strong></button>
+  </div>
+  <div id="exportActionGrid" class="export-action-grid">
     <button id="exportOneByOne">1件ずつ</button>
     <button id="exportBulk">未抽出を一括コピー</button>
     <button id="exportBulkAsc" class="secondary">昇順で一括コピー</button>
