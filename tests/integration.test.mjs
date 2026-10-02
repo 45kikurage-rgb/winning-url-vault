@@ -490,6 +490,174 @@ test("当選カードごとに抽出方法を設定し、一括確定・取消�
   assert.equal(Number(lists.products[0].exported_count), 1);
 });
 
+test("別商品の進行中一括を返さず、進行中の商品名を409で通知する", async t => {
+  const { mf, analyzer, worker } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  await request(worker, "/api/ledger/campaigns");
+  let card = await createConfirmedCard(worker, "batch-product-a");
+  const productA = await request(worker, `/api/cards/${card.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ campaign_id: "campaign-active-a" })
+  });
+  await createConfirmedCard(worker, "batch-product-b");
+  card = (await request(worker, "/api/cards")).cards[0];
+  const productB = await request(worker, `/api/cards/${card.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ campaign_id: "campaign-active-b" })
+  });
+  for (const productId of [productA.product_id, productB.product_id]) {
+    await request(worker, `/api/products/${productId}/output-method`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ output_method: "normal" })
+    });
+  }
+  const started = await request(worker, `/api/products/${productA.product_id}/export-batches`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({})
+  });
+  const response = await worker.fetch(`https://vault.test/api/products/${productB.product_id}/export-batches`, {
+    method: "POST", headers: { "content-type": "application/json", cookie: authCookies.get(worker) }, body: JSON.stringify({})
+  });
+  assert.equal(response.status, 409);
+  const payload = await response.json();
+  assert.equal(payload.code, "EXPORT_BATCH_OTHER_PRODUCT");
+  assert.equal(payload.details.product_id, productA.product_id);
+  assert.match(payload.error, /の商品で一括抽出が進行中です$/);
+  assert.equal((await request(worker, "/api/export-batches/pending")).batch.id, started.batch.id);
+  const lists = (await request(worker, "/api/winning-lists")).products;
+  assert.equal(lists.reduce((sum, item) => sum + Number(item.exported_count), 0), 0);
+});
+
+test("一括確定の途中でDB更新が失敗しても全件未抽出を維持し、中断時は部分更新も戻す", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  await request(worker, "/api/ledger/campaigns");
+  const card = await createConfirmedCard(worker, "atomic-base");
+  const assigned = await request(worker, `/api/cards/${card.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ campaign_id: "campaign-active-a" })
+  });
+  const records = Array.from({ length: 90 }, (_, index) => ({
+    id: crypto.randomUUID(), value: `https://coupon.example.test/atomic-${String(index).padStart(3, "0")}`
+  }));
+  for (let start = 0; start < records.length; start += 40) {
+    const group = records.slice(start, start + 40);
+    await DB.batch(group.flatMap((item, offset) => [
+      DB.prepare(`INSERT INTO items(id,value,canonical_value,value_type,card_id,status,received_at)
+        VALUES (?,?,?,?,?,'active',?)`).bind(item.id, item.value, item.value, "url", card.id,
+        new Date(Date.UTC(2026, 9, 2, 0, start + offset)).toISOString()),
+      DB.prepare(`INSERT INTO item_campaign_assignments(item_id,campaign_id,product_id,assigned_at)
+        VALUES (?,?,?,?)`).bind(item.id, "campaign-active-a", assigned.product_id, "2026-10-02T00:00:00.000Z")
+    ]));
+  }
+  await request(worker, `/api/products/${assigned.product_id}/output-method`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ output_method: "normal" })
+  });
+  const batch = await request(worker, `/api/products/${assigned.product_id}/export-batches`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({})
+  });
+  const failingId = batch.batch.items[85].id;
+  await DB.prepare(`CREATE TRIGGER fail_export_update BEFORE UPDATE OF exported_at ON item_campaign_assignments
+    WHEN NEW.exported_at IS NOT NULL AND NEW.item_id='${failingId}'
+    BEGIN SELECT RAISE(ABORT,'forced export failure'); END`).run();
+  const response = await worker.fetch(`https://vault.test/api/export-batches/${batch.batch.id}/complete`, {
+    method: "POST", headers: { cookie: authCookies.get(worker) }
+  });
+  assert.equal(response.status, 500);
+  assert.equal((await DB.prepare("SELECT COUNT(*) count FROM item_campaign_assignments WHERE exported_at IS NOT NULL").first()).count, 0);
+  assert.equal((await DB.prepare("SELECT status FROM export_batches WHERE id=?").bind(batch.batch.id).first()).status, "pending");
+  await DB.prepare("DROP TRIGGER fail_export_update").run();
+  await DB.prepare(`UPDATE item_campaign_assignments SET exported_at=?,export_method='bulk',export_batch_id=? WHERE item_id=?`)
+    .bind("2026-10-02T00:00:00.000Z", batch.batch.id, batch.batch.items[0].id).run();
+  await request(worker, `/api/export-batches/${batch.batch.id}`, { method: "DELETE" });
+  assert.equal((await DB.prepare("SELECT COUNT(*) count FROM item_campaign_assignments WHERE exported_at IS NOT NULL").first()).count, 0);
+});
+
+test("通常URLはvalue_typeがurlまたはquocardpayのデータだけを対象にする", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  await request(worker, "/api/ledger/campaigns");
+  const card = await createConfirmedCard(worker, "normal-types");
+  const assigned = await request(worker, `/api/cards/${card.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ campaign_id: "campaign-active-a" })
+  });
+  const extras = [
+    ["https://br.quocardpay.jp/card/A1B2C3D4E5F6G7H8", "quocardpay"],
+    ["https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=cdAb12Cd34Ef56", "cokeon"],
+    ["https://giftcard.paypay.ne.jp/card/normal-types", "paypay"]
+  ];
+  for (const [value, type] of extras) {
+    const itemId = crypto.randomUUID();
+    await DB.batch([
+      DB.prepare(`INSERT INTO items(id,value,canonical_value,value_type,card_id,status,received_at)
+        VALUES (?,?,?,?,?,'active',?)`).bind(itemId, value, value, type, card.id, new Date().toISOString()),
+      DB.prepare(`INSERT INTO item_campaign_assignments(item_id,campaign_id,product_id,assigned_at)
+        VALUES (?,?,?,?)`).bind(itemId, "campaign-active-a", assigned.product_id, new Date().toISOString())
+    ]);
+  }
+  await request(worker, `/api/products/${assigned.product_id}/output-method`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ output_method: "normal" })
+  });
+  const list = (await request(worker, "/api/winning-lists")).products[0];
+  assert.equal(Number(list.unexported_count), 2);
+  assert.equal(Number(list.unmatched_count), 2);
+  const batch = await request(worker, `/api/products/${assigned.product_id}/export-batches`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({})
+  });
+  assert.deepEqual(new Set(batch.batch.items.map(item => item.value_type)), new Set(["url", "quocardpay"]));
+});
+
+test("PayPayはURLとコードを別々に一括・1件ずつ抽出する", async t => {
+  const { mf, analyzer, worker } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  await request(worker, "/api/ledger/campaigns");
+  await request(worker, "/api/receive", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ values: [
+      "https://giftcard.paypay.ne.jp/card/separate-test", "ABCDEFGHIJKLMNOP", "QRST-UVWX-YZ12-3456"
+    ] })
+  });
+  const paypayCard = (await request(worker, "/api/cards")).cards.find(item => item.display_name === "PayPay");
+  const assigned = await request(worker, `/api/cards/${paypayCard.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ campaign_id: "campaign-active-a" })
+  });
+  await request(worker, `/api/products/${assigned.product_id}/output-method`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ output_method: "paypay" })
+  });
+  const list = (await request(worker, "/api/winning-lists")).products[0];
+  assert.equal(Number(list.paypay_url_unexported_count), 1);
+  assert.equal(Number(list.paypay_code_unexported_count), 2);
+
+  let batch = await request(worker, `/api/products/${assigned.product_id}/export-batches`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ paypay_kind: "url" })
+  });
+  assert.equal(batch.batch.paypay_kind, "url");
+  assert.equal(batch.batch.items.length, 1);
+  assert.ok(batch.batch.items.every(item => /^https:\/\//i.test(item.value)));
+  await request(worker, `/api/export-batches/${batch.batch.id}`, { method: "DELETE" });
+
+  batch = await request(worker, `/api/products/${assigned.product_id}/export-batches`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ paypay_kind: "code" })
+  });
+  assert.equal(batch.batch.paypay_kind, "code");
+  assert.equal(batch.batch.items.length, 2);
+  assert.ok(batch.batch.items.every(item => !/^https:\/\//i.test(item.value)));
+  await request(worker, `/api/export-batches/${batch.batch.id}`, { method: "DELETE" });
+
+  const nextUrl = await request(worker, `/api/products/${assigned.product_id}/export-next?paypay_kind=url`);
+  const nextCode = await request(worker, `/api/products/${assigned.product_id}/export-next?paypay_kind=code`);
+  assert.match(nextUrl.item.value, /^https:\/\//i);
+  assert.doesNotMatch(nextCode.item.value, /^https:\/\//i);
+
+  const legacyBatch = await request(worker, `/api/products/${assigned.product_id}/export-batches`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({})
+  });
+  assert.ok(legacyBatch.batch.items.every(item => /^https:\/\//i.test(item.value)));
+});
+
 test("1000件を超える当選URLを1カードから一括抽出できる", async t => {
   const { mf, analyzer, worker, DB } = await createRuntime();
   t.after(() => cleanup(mf, analyzer));
