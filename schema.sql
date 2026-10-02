@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS ledger_products (
   identity_key TEXT NOT NULL,
   assigned_at TEXT NOT NULL,
   output_method TEXT NOT NULL DEFAULT 'unset' CHECK(output_method IN ('unset','normal','cokeon','wallet','paypay','text_single')),
+  show_in_permanent INTEGER NOT NULL DEFAULT 0 CHECK(show_in_permanent IN (0,1)),
   unit_price INTEGER CHECK(unit_price IS NULL OR (typeof(unit_price)='integer' AND unit_price BETWEEN 0 AND 9007199254740991)),
   is_archived INTEGER NOT NULL DEFAULT 0 CHECK(is_archived IN (0,1)),
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,

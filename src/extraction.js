@@ -47,7 +47,7 @@ export async function listWinningLists(env) {
   const currentMonth = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, "0")}`;
   const rows = await env.DB.prepare(`SELECT p.product_id,p.campaign_id,p.product_name,p.redemption_place,p.product_spec,
     COALESCE(NULLIF(TRIM(pm.display_name),''),p.product_name) display_name,
-    p.valid_until,p.output_method,p.unit_price,p.assigned_at,c.campaign_name,c.lottery_start_date,c.status campaign_status,
+    p.valid_until,p.output_method,p.show_in_permanent,p.unit_price,p.assigned_at,c.campaign_name,c.lottery_start_date,c.status campaign_status,
     r.month revenue_month,r.winner_count revenue_winner_count,r.amount current_month_revenue,r.sync_status revenue_sync_status,
     COUNT(a.item_id) total_count,
     COALESCE(SUM(CASE WHEN a.exported_at IS NOT NULL THEN 1 ELSE 0 END),0) exported_count,
@@ -79,6 +79,14 @@ export async function listWinningLists(env) {
     ORDER BY CASE c.status WHEN 'active' THEN 0 WHEN 'closing' THEN 1 WHEN 'correcting' THEN 2 ELSE 3 END,
       c.lottery_start_date DESC,p.assigned_at DESC`).bind(currentMonth).all();
   return rows.results || [];
+}
+
+export async function setFolderVisibility(env, productId, enabled) {
+  if (typeof enabled !== "boolean") throw new VaultLedgerError("常設フォルダの設定が不正です", 400, "INVALID_FOLDER_VISIBILITY");
+  await product(env, productId);
+  await env.DB.prepare("UPDATE ledger_products SET show_in_permanent=?,updated_at=? WHERE product_id=?")
+    .bind(enabled ? 1 : 0, new Date().toISOString(), productId).run();
+  return { product_id: productId, show_in_permanent: enabled };
 }
 
 export async function setOutputMethod(env, productId, method) {

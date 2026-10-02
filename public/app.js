@@ -1,4 +1,8 @@
+import { currentWinningMonth, winningMonth, winningMonthLabel, groupWinningFolders } from './winning-folders.js';
+
 const $ = id => document.getElementById(id);
+const winningFolderOpen = new Map();
+let winningFolderMonth = currentWinningMonth();
 const PENDING_SHARE_KEY = "winning-url-vault:pending-share";
 const LAST_EXPORT_BATCH_KEY = "winning-url-vault:last-export-batch";
 const OUTPUT_METHOD_LABELS = { unset:"未設定", normal:"通常URL", cokeon:"コークオン",
@@ -303,9 +307,18 @@ async function loadWinningLists() {
       return rank(left) - rank(right) || String(left.display_name || left.product_name || "").localeCompare(String(right.display_name || right.product_name || ""), "ja");
     });
     $("winningTabCount").textContent = state.winningLists.length.toLocaleString();
-    $("winningLists").innerHTML = state.winningLists.length
-      ? state.winningLists.map(winningCardHtml).join("")
-      : '<div class="empty">振り分け済みの当選カードはありません</div>';
+    const month = currentWinningMonth();
+    if (month !== winningFolderMonth) { winningFolderOpen.clear(); winningFolderMonth = month; }
+    $("winningLists").innerHTML = groupWinningFolders(state.winningLists, month).map(folder => {
+      const open = winningFolderOpen.has(folder.key) ? winningFolderOpen.get(folder.key) : folder.open;
+      return `<details class="winning-folder" data-winning-folder="${esc(folder.key)}" ${open ? "open" : ""}>
+        <summary><span>${esc(folder.label)}</span><small>${folder.items.length}カード</small></summary>
+        <div class="winning-folder-content">${folder.items.length ? folder.items.map(winningCardHtml).join("") : '<div class="empty">カードの「設定」から常設にも表示できます</div>'}</div>
+      </details>`;
+    }).join("");
+    document.querySelectorAll("[data-winning-folder]").forEach(folder => {
+      folder.ontoggle = () => winningFolderOpen.set(folder.dataset.winningFolder, folder.open);
+    });
     bindWinningControls();
     try { $("undoLastExport").classList.toggle("hidden", !localStorage.getItem(LAST_EXPORT_BATCH_KEY)); } catch {}
   } catch (error) {
@@ -327,8 +340,24 @@ function openOutputMethod(productId) {
   state.outputProductId = productId;
   $("outputMethodTitle").textContent = `${item?.display_name || item?.product_name || "当選カード"} の抽出方法`;
   $("unitPriceInput").value = item?.unit_price === null || item?.unit_price === undefined ? "" : String(item.unit_price);
+  $("monthlyFolderLabel").textContent = winningMonthLabel(winningMonth(item || {}));
+  $("showInPermanent").checked = Boolean(item?.show_in_permanent);
   $("outputMethodMessage").textContent = "";
   $("outputMethodDialog").showModal();
+}
+
+async function saveFolderVisibility() {
+  if (!state.outputProductId) return;
+  $("saveFolderVisibility").disabled = true;
+  try {
+    await api(`/api/products/${state.outputProductId}/folder-visibility`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ show_in_permanent: $("showInPermanent").checked })
+    });
+    $("outputMethodMessage").textContent = "表示フォルダを保存しました";
+    await loadWinningLists();
+  } catch (error) { $("outputMethodMessage").textContent = error.message; }
+  finally { $("saveFolderVisibility").disabled = false; }
 }
 
 async function saveUnitPrice() {
@@ -981,6 +1010,7 @@ document.querySelectorAll("[data-tab]").forEach(button => button.onclick = () =>
 $("refreshWinningLists").onclick = loadWinningLists;
 $("undoLastExport").onclick = undoLastExport;
 $("outputMethodClose").onclick = () => $("outputMethodDialog").close();
+$("saveFolderVisibility").onclick = saveFolderVisibility;
 $("saveUnitPrice").onclick = saveUnitPrice;
 $("outputMethodDialog").addEventListener("click", event => {
   const button = event.target.closest("[data-output-method]");

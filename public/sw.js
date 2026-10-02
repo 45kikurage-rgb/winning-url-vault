@@ -1,10 +1,11 @@
-const CACHE = "winning-url-vault-pwa-20261002-v7";
+const CACHE = "winning-url-vault-pwa-20261002-v8";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
   "/styles.css",
   "/app.js",
+  "/winning-folders.js",
   "/share.js",
   "/manifest.json",
   "/manifest.webmanifest",
@@ -58,4 +59,3 @@ self.addEventListener("fetch", event => {
     }
   })());
 });
-

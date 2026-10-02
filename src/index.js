@@ -12,7 +12,7 @@ import {
 import {
   cancelExportBatch, completeExportBatch, completeExportItem, getExportBatch,
   getPendingExportBatch, listWinningLists, nextExportItem, setOutputMethod,
-  startExportBatch, undoExportBatch
+  startExportBatch, undoExportBatch, setFolderVisibility
 } from "./extraction.js";
 
 const VERSION = "0.9.0";
@@ -849,6 +849,11 @@ export default {
       }
       if (url.pathname === "/api/export-batches/pending" && request.method === "GET") {
         return json({ ok: true, batch: await getPendingExportBatch(env) });
+      }
+      const folderRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/folder-visibility$/i);
+      if (folderRoute && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        return json({ ok: true, ...await setFolderVisibility(env, folderRoute[1], body.show_in_permanent) });
       }
       const outputMethodRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/output-method$/i);
       if (outputMethodRoute && request.method === "POST") {

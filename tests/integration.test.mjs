@@ -494,6 +494,33 @@ test("画面表示名を保存して振り分けると当選リストにも反�
   assert.equal((await request(worker, "/api/winning-lists")).products[0].display_name, pending.raw_name);
 });
 
+test("常設への追加・解除は保存され、当選件数や収益・同期を変更しない", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  await request(worker, "/api/ledger/campaigns");
+  const card = await createConfirmedCard(worker, "folder");
+  const assigned = await request(worker, `/api/cards/${card.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ campaign_id: "campaign-active-a" })
+  });
+  const before = (await request(worker, "/api/winning-lists")).products[0];
+  const outbox = await DB.prepare("SELECT COUNT(*) n FROM ledger_outbox").first();
+  assert.equal(before.show_in_permanent, 0);
+  for (const enabled of [true, false]) {
+    await request(worker, `/api/products/${assigned.product_id}/folder-visibility`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ show_in_permanent: enabled })
+    });
+    const after = (await request(worker, "/api/winning-lists")).products;
+    assert.equal(after.length, 1);
+    assert.equal(after[0].show_in_permanent, enabled ? 1 : 0);
+    for (const key of ['total_count','unexported_count','exported_count','current_month_revenue','lottery_start_date']) {
+      assert.equal(after[0][key],before[key]);
+    }
+  }
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM ledger_outbox").first()).n, outbox.n);
+});
+
 test("当選カードごとに抽出方法を設定し、一括確定・取消・1件ずつ処理できる", async t => {
   const { mf, analyzer, worker } = await createRuntime();
   t.after(() => cleanup(mf, analyzer));

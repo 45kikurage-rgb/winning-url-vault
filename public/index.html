@@ -138,6 +138,13 @@
 <dialog id="outputMethodDialog">
   <div class="dialog-head"><div><small>カード設定</small><h2 id="outputMethodTitle">抽出方法を選択</h2></div><button id="outputMethodClose" class="secondary">閉じる</button></div>
   <p>抽出済みの記録は、方法を変更しても未抽出には戻りません。</p>
+  <section class="folder-setting">
+    <h3>表示フォルダ</h3>
+    <p>開始月：<strong id="monthlyFolderLabel"></strong>（自動）</p>
+    <label><input id="showInPermanent" type="checkbox">常設にも表示する</label>
+    <small>開始月のフォルダにも残ります。件数・収益は重複しません。</small>
+    <button id="saveFolderVisibility" class="secondary" type="button">表示フォルダを保存</button>
+  </section>
   <section class="price-setting">
     <label for="unitPriceInput">商品単価（円）</label>
     <div><input id="unitPriceInput" type="number" min="0" step="1" inputmode="numeric" placeholder="例：150"><button id="saveUnitPrice" class="secondary" type="button">単価を保存</button></div>
@@ -220,6 +227,6 @@
   <p id="trialResetMessage" class="result" aria-live="polite"></p>
   <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
-<script src="/app.js"></script>
+<script type="module" src="/app.js"></script>
 </body>
 </html>

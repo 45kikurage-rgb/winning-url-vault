@@ -186,3 +186,18 @@ body[data-operation-mode="production"][data-active-tab="receive"] .summary stron
 #sendingTokensDialog input{width:100%;min-width:0;padding:10px;border:1px solid #76839b;background:#07162f;color:#fff;font-size:16px}
 #sendingTokensDialog button{margin-top:7px}
 #sendingTokenList .row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:10px}
+
+
+.winning-folder{border:2px solid #64728e;background:#070e20;min-width:0}
+.winning-folder>summary{cursor:pointer;padding:16px;color:#fff;font-size:1.2rem;font-weight:800;list-style:none;display:flex;align-items:center;gap:10px;min-height:56px}
+.winning-folder>summary::-webkit-details-marker{display:none}
+.winning-folder>summary::before{content:'▶';color:#ffce39;font-size:.8em}
+.winning-folder[open]>summary::before{content:'▼'}
+.winning-folder>summary small{margin-left:auto;color:#acbad2;font-size:.8em;white-space:nowrap}
+.winning-folder>summary:focus-visible{outline:3px solid #ffce39;outline-offset:2px}
+.winning-folder-content{display:grid;gap:16px;padding:0 12px 12px;min-width:0}
+.folder-setting{display:grid;gap:12px;border:1px solid #64728e;padding:16px;margin:16px 0}
+.folder-setting h3,.folder-setting p{margin:0}
+.folder-setting label{display:flex;align-items:center;gap:10px}
+.folder-setting input[type=checkbox]{width:24px;height:24px;flex:none;accent-color:#1558cb}
+.folder-setting small{color:#acbad2}
