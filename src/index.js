@@ -737,6 +737,18 @@ async function listUnresolved(env) {
   return json({ ok: true, items: rows.results || [] });
 }
 
+async function deleteUnresolved(env, itemId) {
+  const item = await env.DB.prepare(`SELECT i.id FROM items i
+    JOIN unresolved_items u ON u.item_id=i.id WHERE i.id=?`).bind(itemId).first();
+  if (!item) return json({ ok: false, error: "未判定データが見つかりません" }, 404);
+  await env.DB.batch([
+    env.DB.prepare("DELETE FROM unresolved_items WHERE item_id=?").bind(itemId),
+    env.DB.prepare("DELETE FROM items WHERE id=?").bind(itemId)
+  ]);
+  await audit(env, itemId, "unresolved_deleted");
+  return json({ ok: true, deleted: 1 });
+}
+
 async function latestJob(env) {
   const row = await env.DB.prepare("SELECT id FROM analysis_jobs ORDER BY created_at DESC LIMIT 1").first();
   return json({ ok: true, job: row ? await jobSummary(env, row.id) : null });
@@ -939,6 +951,8 @@ export default {
       if (url.pathname === "/api/pending" && request.method === "GET") return listPending(env);
       if (url.pathname === "/api/unresolved" && request.method === "GET") return listUnresolved(env);
       if (url.pathname === "/api/unresolved/retry" && request.method === "POST") return retryUnresolved(env);
+      const unresolvedItem = url.pathname.match(/^\/api\/unresolved\/([0-9a-f-]+)$/i);
+      if (unresolvedItem && request.method === "DELETE") return deleteUnresolved(env, unresolvedItem[1]);
       const confirmation = url.pathname.match(/^\/api\/pending\/([0-9a-f-]+)\/confirm$/i);
       if (confirmation && request.method === "POST") return confirmPending(request, env, confirmation[1]);
       const pendingReanalysis = url.pathname.match(/^\/api\/pending\/([0-9a-f-]+)\/reanalyze$/i);

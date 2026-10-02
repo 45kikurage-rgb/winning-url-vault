@@ -254,8 +254,22 @@ async function load() {
     $("pendingSection").classList.toggle("hidden", pending.items.length === 0);
     state.pendingItems = new Map(pending.items.map(item => [item.id, item]));
     $("pendingList").innerHTML = pending.items.map(pendingCard).join("");
-    $("unknownList").innerHTML = unresolved.items.slice(0, 10).map(item =>
-      `<div class="unknown-row"><span>${esc(item.reason)}</span><details><summary>受信内容を確認</summary><div class="unknown-value">${esc(item.value)}</div></details><small>${esc(item.pattern_key || "未知パターン")} / 再解析 ${Number(item.retry_count || 0)}回</small></div>`).join("");
+    $("unknownList").innerHTML = unresolved.items.slice(0, 10).map(item => {
+      const open = /^https?:\/\//i.test(item.value)
+        ? `<a class="secondary unknown-open" href="${esc(item.value)}" target="_blank" rel="noreferrer">開く</a>` : "";
+      return `<div class="unknown-row"><span>${esc(item.reason)}</span><details><summary>受信内容を確認</summary><div class="unknown-value">${esc(item.value)}</div></details><div class="unknown-actions">${open}<button class="secondary" data-copy-unresolved="${esc(item.id)}">コピー</button><button class="danger" data-delete-unresolved="${esc(item.id)}">削除</button></div><small>${esc(item.pattern_key || "未知パターン")} / 再解析 ${Number(item.retry_count || 0)}回</small></div>`;
+    }).join("");
+    const unresolvedById = new Map(unresolved.items.map(item => [item.id, item]));
+    document.querySelectorAll("[data-copy-unresolved]").forEach(button => button.onclick = async () => {
+      await writeClipboard(unresolvedById.get(button.dataset.copyUnresolved)?.value || "");
+      button.textContent = "コピー済み";
+    });
+    document.querySelectorAll("[data-delete-unresolved]").forEach(button => button.onclick = async () => {
+      if (!confirm("この未判定データ1件を削除しますか？")) return;
+      button.disabled = true;
+      try { await api(`/api/unresolved/${button.dataset.deleteUnresolved}`, { method:"DELETE" }); await load(); }
+      catch (error) { alert(error.message); button.disabled = false; }
+    });
     bindDynamic();
     syncPendingDialog(pending.items);
   } catch (error) {

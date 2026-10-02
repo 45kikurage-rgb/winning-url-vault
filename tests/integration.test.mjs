@@ -224,6 +224,11 @@ test("受信から初回確認、自動振り分け、未判定隔離まで実�
   assert.equal(unresolved.items.length, 2);
   assert.match(unresolved.items[0].reason + unresolved.items[1].reason, /汎用名/);
   assert.match(unresolved.items[0].reason + unresolved.items[1].reason, /対応対象/);
+  const deletedId = unresolved.items.find(item => item.value.includes("unsupported")).id;
+  const deleted = await request(worker, `/api/unresolved/${deletedId}`, { method: "DELETE" });
+  assert.equal(deleted.deleted, 1);
+  assert.equal((await request(worker, "/api/unresolved")).items.length, 1);
+  assert.equal((await post("https://coupon.sej.co.jp/unsupported")).counts.unresolved, 1);
 
   const newExpiry = await post("https://coupon.sej.co.jp/latte-new-expiry");
   assert.equal(newExpiry.counts.pending_confirmation, 1);

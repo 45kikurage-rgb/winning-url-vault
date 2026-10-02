@@ -64,6 +64,7 @@ h2{margin:0 0 6px}
 .unresolved>strong{font-size:28px;color:var(--yellow)}
 .unknown-row{display:flex;flex-direction:column;border-top:1px solid #526078;padding:7px 0;font-size:12px}
 .unknown-row small{color:var(--muted);margin-top:2px}
+.unknown-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:9px}.unknown-actions>*{min-height:40px;padding:7px;text-align:center}.unknown-open{display:grid;place-items:center;text-decoration:none}
 .unknown-value{white-space:pre-wrap;overflow-wrap:anywhere;padding:8px 0;user-select:text}
 button{min-height:44px;padding:8px 14px;border:2px solid #fff;background:var(--blue);color:#fff;cursor:pointer}
 button:disabled{opacity:.5;cursor:wait}
