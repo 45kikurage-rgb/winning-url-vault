@@ -59,6 +59,7 @@ async function startAnalyzer() {
       server.revisions.set(record, { revision: body.source_revision, serialized });
       if (path === "/api/v1/products/sync") server.products.set(body.data.product_id, body.data);
       if (path === "/api/v1/totals/sync") server.totals.set(body.data.campaign_id, body.data);
+      if (path === "/api/v1/revenue/products/sync") server.revenues.set(`${body.data.month}:${body.data.product_id}`, body.data);
       const lifecycle = path.match(/^\/api\/v1\/campaigns\/([^/]+)\/(close|corrections)$/);
       if (lifecycle) {
         const campaign = server.campaigns.find(item => item.campaign_id === lifecycle[1]);
@@ -91,6 +92,7 @@ async function startAnalyzer() {
   server.revisions = new Map();
   server.products = new Map();
   server.totals = new Map();
+  server.revenues = new Map();
   server.campaigns = [
     { campaign_id: "campaign-active-a", campaign_name: "コークオン", lottery_start_date: "2026-10-01", status: "active", is_archived: false, current_winner_count: 0, final_winner_count: null, final_account_count: null },
     { campaign_id: "campaign-active-b", campaign_name: "コークオン", lottery_start_date: "2026-11-01", status: "active", is_archived: false, current_winner_count: 0, final_winner_count: null, final_account_count: null },
@@ -488,6 +490,65 @@ test("当選カードごとに抽出方法を設定し、一括確定・取消�
   lists = await request(worker, "/api/winning-lists");
   assert.equal(Number(lists.products[0].unexported_count), 2);
   assert.equal(Number(lists.products[0].exported_count), 1);
+});
+
+test("JSTの2026-10以降だけを商品月収益へ集約し、抽出状態と分離して単価変更を再計算する", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  await request(worker, "/api/ledger/campaigns");
+  const card = await createConfirmedCard(worker, "revenue-base");
+  const assigned = await request(worker, `/api/cards/${card.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ campaign_id: "campaign-active-a" })
+  });
+  assert.equal(analyzer.ledgerRequests.filter(item => item.path === "/api/v1/revenue/products/sync").length, 0);
+
+  const records = [
+    ...Array.from({ length: 98 }, (_, index) => ({
+      id: crypto.randomUUID(), value: `https://coupon.example.test/revenue-${index}`,
+      received_at: new Date(Date.UTC(2026, 9, 2, 0, index)).toISOString()
+    })),
+    { id: crypto.randomUUID(), value: "https://coupon.example.test/jst-october", received_at: "2026-09-30T15:00:00.000Z" },
+    { id: crypto.randomUUID(), value: "https://coupon.example.test/jst-september", received_at: "2026-09-30T14:59:59.999Z" }
+  ];
+  for (let start = 0; start < records.length; start += 40) {
+    const group = records.slice(start, start + 40);
+    await DB.batch(group.flatMap(item => [
+      DB.prepare(`INSERT INTO items(id,value,canonical_value,value_type,card_id,status,received_at)
+        VALUES (?,?,?,?,?,'active',?)`).bind(item.id,item.value,item.value,"url",card.id,item.received_at),
+      DB.prepare(`INSERT INTO item_campaign_assignments(item_id,campaign_id,product_id,assigned_at)
+        VALUES (?,?,?,?)`).bind(item.id,"campaign-active-a",assigned.product_id,"2026-10-02T00:00:00.000Z")
+    ]));
+  }
+  await request(worker, `/api/products/${assigned.product_id}/unit-price`, {
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({unit_price:150})
+  });
+  let revenue=analyzer.revenues.get(`2026-10:${assigned.product_id}`);
+  assert.deepEqual({winner_count:revenue.winner_count,unit_price:revenue.unit_price,amount:revenue.amount},
+    {winner_count:100,unit_price:150,amount:15000});
+  let list=(await request(worker,"/api/winning-lists")).products[0];
+  assert.equal(Number(list.unit_price),150);assert.equal(Number(list.current_month_revenue),15000);
+
+  await request(worker, `/api/products/${assigned.product_id}/output-method`, {
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({output_method:"normal"})
+  });
+  const batch=await request(worker, `/api/products/${assigned.product_id}/export-batches`, {
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({})
+  });
+  await request(worker, `/api/export-batches/${batch.batch.id}/complete`, {method:"POST"});
+  list=(await request(worker,"/api/winning-lists")).products[0];
+  assert.equal(Number(list.current_month_revenue),15000);
+
+  await request(worker, `/api/products/${assigned.product_id}/unit-price`, {
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({unit_price:200})
+  });
+  revenue=analyzer.revenues.get(`2026-10:${assigned.product_id}`);
+  assert.equal(revenue.amount,20000);
+  const revenueRequests=analyzer.ledgerRequests.filter(item => item.path === "/api/v1/revenue/products/sync");
+  assert.equal(revenueRequests.length,2);
+  assert.equal(revenueRequests[1].body.source_revision,2);
+  const serialized=JSON.stringify(revenueRequests.map(item=>item.body));
+  assert.doesNotMatch(serialized,/coupon\.example\.test|canonical_value|"value"/i);
 });
 
 test("別商品の進行中一括を返さず、進行中の商品名を409で通知する", async t => {
