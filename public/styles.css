@@ -137,34 +137,32 @@ dialog::backdrop{background:#000b}
 @media(max-width:480px){.trial-notice{align-items:stretch;flex-direction:column}.trial-notice button{width:100%}}
 @media(max-width:480px){.tab-button{font-size:10px;padding-left:2px;padding-right:2px;white-space:nowrap}.tab-count{min-width:18px;height:18px;font-size:10px}.winning-stats{grid-template-columns:repeat(3,1fr);gap:4px}.winning-stats span{padding:6px 3px}.winning-stats strong{font-size:14px}.winning-stats .remaining strong{font-size:21px}.winning-actions{grid-template-columns:minmax(0,1fr) auto}.method-grid{grid-template-columns:1fr}.method-grid button:last-child{grid-column:auto}.price-setting>div{grid-template-columns:1fr}.main-tabs{padding-left:8px;padding-right:8px}}
 @media(max-width:600px){.header-side{gap:5px}.header-revenue{min-width:144px;padding:5px 7px}.header-revenue>div{gap:7px}.header-revenue strong{font-size:14px}.header-actions{gap:4px}}
-@media(max-width:600px) and (min-height:650px){
-body[data-operation-mode="production"][data-active-tab="receive"]{height:100dvh;overflow:hidden;padding-bottom:0}
-body[data-operation-mode="production"][data-active-tab="receive"] main{height:100dvh;overflow:hidden;padding:calc(5px + env(safe-area-inset-top,0px)) 8px calc(70px + env(safe-area-inset-bottom,0px))}
-body[data-operation-mode="production"][data-active-tab="receive"] header{height:70px;padding:2px 2px 6px;gap:6px}
-body[data-operation-mode="production"][data-active-tab="receive"] header p{display:none}
-body[data-operation-mode="production"][data-active-tab="receive"] h1{margin:0;font-size:22px;line-height:1.12}
-body[data-operation-mode="production"][data-active-tab="receive"] .header-side{align-items:center;gap:5px}
-body[data-operation-mode="production"][data-active-tab="receive"] .header-revenue{min-width:137px;padding:3px 6px;gap:1px}
-body[data-operation-mode="production"][data-active-tab="receive"] .header-revenue span{font-size:9px}
-body[data-operation-mode="production"][data-active-tab="receive"] .header-revenue strong{font-size:14px}
-body[data-operation-mode="production"][data-active-tab="receive"] .header-actions{gap:2px}
-body[data-operation-mode="production"][data-active-tab="receive"] .mode-badge{padding:2px 4px;border-width:1px;font-size:8px}
-body[data-operation-mode="production"][data-active-tab="receive"] .header-actions button{min-height:25px;padding:2px 5px;font-size:9px}
-body[data-operation-mode="production"][data-active-tab="receive"] #tabReceive{height:calc(100% - 70px);min-height:0;display:grid;grid-template-rows:minmax(0,1fr) 68px;gap:7px}
-body[data-operation-mode="production"][data-active-tab="receive"] .receive.panel{min-height:0;margin:7px 0 0;padding:9px;display:flex;flex-direction:column;overflow:hidden}
-body[data-operation-mode="production"][data-active-tab="receive"] .receive h2{margin-bottom:2px;font-size:21px}
-body[data-operation-mode="production"][data-active-tab="receive"] .receive>div:first-child>p{margin:2px 0 4px;font-size:11px;line-height:1.35}
-body[data-operation-mode="production"][data-active-tab="receive"] .receive textarea{flex:1;min-height:72px;margin-top:3px;padding:8px;resize:none}
-body[data-operation-mode="production"][data-active-tab="receive"] .actions{margin-top:7px;gap:6px}
-body[data-operation-mode="production"][data-active-tab="receive"] .actions button{min-height:40px;padding:5px 4px;font-size:13px}
-body[data-operation-mode="production"][data-active-tab="receive"] .receive-progress{margin-top:7px;padding:7px}
-body[data-operation-mode="production"][data-active-tab="receive"] .receive-progress progress{height:12px;margin:4px 0}
-body[data-operation-mode="production"][data-active-tab="receive"] .acceptance-summary{margin-top:5px;padding-top:5px;font-size:10px}
-body[data-operation-mode="production"][data-active-tab="receive"] .receive .result{margin-top:4px;font-size:10px}
-body[data-operation-mode="production"][data-active-tab="receive"] .summary{height:68px;margin:0;gap:6px}
-body[data-operation-mode="production"][data-active-tab="receive"] .summary article{padding:6px 8px;border-width:2px}
-body[data-operation-mode="production"][data-active-tab="receive"] .summary span{font-size:10px}
-body[data-operation-mode="production"][data-active-tab="receive"] .summary strong{margin-top:1px;font-size:18px}
+@media(max-width:600px){
+body[data-operation-mode="production"]{height:100dvh;overflow:hidden;padding-bottom:0}
+body[data-operation-mode="production"] main{height:100dvh;overflow:hidden;display:flex;flex-direction:column;padding:calc(7px + env(safe-area-inset-top,0px)) 8px calc(70px + env(safe-area-inset-bottom,0px))}
+body[data-operation-mode="production"] header{flex:0 0 auto;padding:7px 2px 11px;gap:6px;background:var(--bg);z-index:4}
+body[data-operation-mode="production"] header h1{font-size:29px;line-height:1.12}
+body[data-operation-mode="production"] header p{font-size:9px}
+body[data-operation-mode="production"] .header-side{align-items:center;gap:5px}
+body[data-operation-mode="production"] .header-revenue{min-width:137px;padding:3px 6px;gap:1px}
+body[data-operation-mode="production"] .header-revenue span{font-size:9px}
+body[data-operation-mode="production"] .header-revenue strong{font-size:14px}
+body[data-operation-mode="production"] .tab-page:not(.hidden){flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding-top:1px;padding-bottom:10px;scrollbar-gutter:stable}
+body[data-operation-mode="production"] #tabReceive{display:block}
+body[data-operation-mode="production"] .receive.panel{margin:8px 0 0;padding:9px}
+body[data-operation-mode="production"] .receive h2{margin-bottom:2px;font-size:21px}
+body[data-operation-mode="production"] .receive>div:first-child>p{margin:2px 0 4px;font-size:11px;line-height:1.35}
+body[data-operation-mode="production"] .receive textarea{height:clamp(120px,22dvh,190px);min-height:120px;margin-top:3px;padding:8px;resize:none}
+body[data-operation-mode="production"] .actions{margin-top:7px;gap:6px}
+body[data-operation-mode="production"] .actions button{min-height:40px;padding:5px 4px;font-size:13px}
+body[data-operation-mode="production"] .receive-progress{margin-top:7px;padding:7px}
+body[data-operation-mode="production"] .receive-progress progress{height:12px;margin:4px 0}
+body[data-operation-mode="production"] .acceptance-summary{margin-top:5px;padding-top:5px;font-size:10px}
+body[data-operation-mode="production"] .receive .result{margin-top:4px;font-size:10px}
+body[data-operation-mode="production"] .summary{margin:8px 0 0;gap:6px}
+body[data-operation-mode="production"] .summary article{padding:6px 8px;border-width:2px}
+body[data-operation-mode="production"] .summary span{font-size:10px}
+body[data-operation-mode="production"] .summary strong{margin-top:1px;font-size:18px}
 }
 .share-page{min-height:100svh;background:#fff;color:#111;color-scheme:light}
 .share-shell{min-height:100svh;display:grid;place-items:center;padding:18px}

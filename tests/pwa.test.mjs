@@ -76,7 +76,7 @@ test("当選リストは未設定・処理中・完了を分離し、固定下�
   assert.match(styles, /\.winning-card\.is-complete\{opacity:/);
 });
 
-test("上部収益とURL受信画面のモバイル1画面表示を備える", async () => {
+test("全タブ共通の固定ヘッダーと中央スクロール、コンパクトなURL入力欄を備える", async () => {
   const index = await text("index.html");
   const app = await text("app.js");
   const styles = await text("styles.css");
@@ -84,7 +84,9 @@ test("上部収益とURL受信画面のモバイル1画面表示を備える", a
   assert.match(index, /id="headerDailyRevenue"/);
   assert.match(app, /api\("\/api\/revenue\/summary"\)/);
   assert.match(app, /document\.body\.dataset\.activeTab = selected/);
-  assert.match(styles, /data-operation-mode="production"\]\[data-active-tab="receive"\]\{height:100dvh;overflow:hidden/);
+  assert.match(styles, /data-operation-mode="production"\]\{height:100dvh;overflow:hidden/);
   assert.match(styles, /env\(safe-area-inset-top/);
-  assert.match(styles, /#tabReceive\{height:calc\(100% - 70px\)/);
+  assert.match(styles, /\.tab-page:not\(\.hidden\)\{flex:1 1 auto;min-height:0;overflow-y:auto/);
+  assert.match(styles, /\.receive textarea\{height:clamp\(120px,22dvh,190px\)/);
+  assert.doesNotMatch(styles, /data-active-tab="receive"\][^\{]*h1/);
 });
