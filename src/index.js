@@ -12,7 +12,7 @@ import {
   startExportBatch, undoExportBatch
 } from "./extraction.js";
 
-const VERSION = "0.7.0";
+const VERSION = "0.7.1";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -879,11 +879,12 @@ export default {
       const startBatchRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/export-batches$/i);
       if (startBatchRoute && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
-        return json({ ok: true, ...await startExportBatch(env, startBatchRoute[1], String(body.copy_order || "received")) }, 201);
+        return json({ ok: true, ...await startExportBatch(env, startBatchRoute[1], String(body.copy_order || "received"),
+          String(body.paypay_kind || "")) }, 201);
       }
       const nextExportRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/export-next$/i);
       if (nextExportRoute && request.method === "GET") {
-        return json({ ok: true, ...await nextExportItem(env, nextExportRoute[1]) });
+        return json({ ok: true, ...await nextExportItem(env, nextExportRoute[1], String(url.searchParams.get("paypay_kind") || "")) });
       }
       const completeItemRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/items\/([0-9a-f-]+)\/export-complete$/i);
       if (completeItemRoute && request.method === "POST") {
