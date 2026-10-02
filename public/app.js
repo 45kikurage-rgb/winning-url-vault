@@ -249,26 +249,39 @@ function winningCardHtml(item) {
   const exported = Number(item.exported_count || 0);
   const unmatched = Number(item.unmatched_count || 0);
   const unset = item.output_method === "unset";
+  const complete = !unset && remaining === 0;
+  const unitPrice = item.unit_price === null || item.unit_price === undefined ? null : Number(item.unit_price);
+  const revenue = item.current_month_revenue === null || item.current_month_revenue === undefined ? null : Number(item.current_month_revenue);
+  const revenueMonth = String(item.revenue_month || "");
+  const monthLabel = revenueMonth ? `${Number(revenueMonth.slice(5, 7))}月収益` : "当月収益";
   const statusLabels = { active:"実施中", closing:"終了確認待ち", correcting:"訂正中", closed:"終了済み" };
-  return `<article class="winning-card" data-product-id="${esc(item.product_id)}">
+  const meta = `${esc(item.redemption_place || "利用先未設定")}${item.product_spec ? ` / ${esc(item.product_spec)}` : ""} / 期限 ${esc(item.valid_until || "なし")}`;
+  const priceLine = unitPrice === null
+    ? `<span class="price-unset">単価未設定</span><span>${esc(monthLabel)} —</span>`
+    : `<span>単価 ¥${unitPrice.toLocaleString()}</span><span>${esc(monthLabel)} ¥${Number(revenue || 0).toLocaleString()}</span>`;
+  return `<article class="winning-card ${unset ? "is-unset" : complete ? "is-complete" : "is-active"}" data-product-id="${esc(item.product_id)}">
     <div class="winning-campaign"><span>${esc(item.campaign_name || item.campaign_id)}　${esc(item.lottery_start_date || "")}</span><span>${esc(statusLabels[item.campaign_status] || item.campaign_status || "")}</span></div>
-    <h3>${esc(item.product_name)}</h3>
-    <div class="meta">${esc(item.redemption_place || "利用先未設定")}${item.product_spec ? ` / ${esc(item.product_spec)}` : ""}</div>
-    <div class="meta">期限 ${esc(item.valid_until || "期限なし")}</div>
-    <span class="method-label">抽出方法：${esc(methodLabel(item.output_method))}</span>
-    <div class="winning-stats"><span>登録<strong>${total.toLocaleString()}件</strong></span><span class="remaining">未抽出<strong>${remaining.toLocaleString()}件</strong></span><span>抽出済み<strong>${exported.toLocaleString()}件</strong></span></div>
+    <div class="winning-title"><h3>${esc(item.product_name)}</h3>${unset ? '<strong class="needs-setting">要設定</strong>' : ""}</div>
+    <div class="meta winning-meta">${meta}</div>
+    <div class="method-name">${esc(methodLabel(item.output_method))}</div>
+    <div class="revenue-line">${priceLine}</div>
+    ${unset
+      ? `<div class="unset-status"><span>登録 <strong>${total.toLocaleString()}件</strong></span><p>未設定なので、まだ出せません</p></div>`
+      : `<div class="winning-stats"><span>登録<strong>${total.toLocaleString()}件</strong></span><span class="remaining">未抽出<strong>${remaining.toLocaleString()}件</strong></span><span>抽出済み<strong>${exported.toLocaleString()}件</strong></span></div>`}
     ${unmatched ? `<div class="unmatched-note">現在の抽出方法では対象外 ${unmatched.toLocaleString()}件</div>` : ""}
-    <div class="winning-actions">
-      <button class="extract-button" data-export-product="${esc(item.product_id)}" ${!unset && remaining === 0 ? "disabled" : ""}><span>${unset ? "抽出方法を設定" : "抽出"}</span><strong>${remaining.toLocaleString()}件</strong></button>
-      <button class="method-button" data-method-product="${esc(item.product_id)}">設定</button>
-    </div>
+    ${unset
+      ? `<div class="winning-actions unset-actions"><button class="method-button setup-button" data-method-product="${esc(item.product_id)}">抽出方法を設定</button></div>`
+      : `<div class="winning-actions"><button class="extract-button" data-export-product="${esc(item.product_id)}" ${complete ? "disabled" : ""}>抽出 <strong>${remaining.toLocaleString()}件</strong></button><button class="method-button" data-method-product="${esc(item.product_id)}">設定</button></div>`}
   </article>`;
 }
 
 async function loadWinningLists() {
   try {
     const result = await api("/api/winning-lists");
-    state.winningLists = result.products || [];
+    state.winningLists = (result.products || []).sort((left, right) => {
+      const rank = item => item.output_method === "unset" ? 0 : Number(item.unexported_count || 0) > 0 ? 1 : 2;
+      return rank(left) - rank(right) || String(left.product_name || "").localeCompare(String(right.product_name || ""), "ja");
+    });
     $("winningTabCount").textContent = state.winningLists.length.toLocaleString();
     $("winningLists").innerHTML = state.winningLists.length
       ? state.winningLists.map(winningCardHtml).join("")
@@ -293,8 +306,28 @@ function openOutputMethod(productId) {
   const item = winningProduct(productId);
   state.outputProductId = productId;
   $("outputMethodTitle").textContent = `${item?.product_name || "当選カード"} の抽出方法`;
+  $("unitPriceInput").value = item?.unit_price === null || item?.unit_price === undefined ? "" : String(item.unit_price);
   $("outputMethodMessage").textContent = "";
   $("outputMethodDialog").showModal();
+}
+
+async function saveUnitPrice() {
+  if (!state.outputProductId) return;
+  const value = $("unitPriceInput").value.trim();
+  if (!/^\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+    $("outputMethodMessage").textContent = "単価は0円以上の整数で入力してください";
+    return;
+  }
+  $("saveUnitPrice").disabled = true;
+  $("outputMethodMessage").textContent = "単価を保存中…";
+  try {
+    await api(`/api/products/${state.outputProductId}/unit-price`, {
+      method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({unit_price:Number(value)})
+    });
+    $("outputMethodMessage").textContent = "単価を保存しました";
+    await loadWinningLists();
+  } catch (error) { $("outputMethodMessage").textContent = error.message; }
+  finally { $("saveUnitPrice").disabled = false; }
 }
 
 async function saveOutputMethod(method) {
@@ -928,6 +961,7 @@ document.querySelectorAll("[data-tab]").forEach(button => button.onclick = () =>
 $("refreshWinningLists").onclick = loadWinningLists;
 $("undoLastExport").onclick = undoLastExport;
 $("outputMethodClose").onclick = () => $("outputMethodDialog").close();
+$("saveUnitPrice").onclick = saveUnitPrice;
 $("outputMethodDialog").addEventListener("click", event => {
   const button = event.target.closest("[data-output-method]");
   if (button) saveOutputMethod(button.dataset.outputMethod);

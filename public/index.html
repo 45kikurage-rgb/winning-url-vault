@@ -115,6 +115,12 @@
 <dialog id="outputMethodDialog">
   <div class="dialog-head"><div><small>カード設定</small><h2 id="outputMethodTitle">抽出方法を選択</h2></div><button id="outputMethodClose" class="secondary">閉じる</button></div>
   <p>抽出済みの記録は、方法を変更しても未抽出には戻りません。</p>
+  <section class="price-setting">
+    <label for="unitPriceInput">商品単価（円）</label>
+    <div><input id="unitPriceInput" type="number" min="0" step="1" inputmode="numeric" placeholder="例：150"><button id="saveUnitPrice" class="secondary" type="button">単価を保存</button></div>
+    <small id="unitPriceHelp">未設定の月は0円として確定せず、「単価未設定」と表示します。</small>
+  </section>
+  <h3 class="method-heading">抽出方法</h3>
   <div class="method-grid">
     <button data-output-method="normal">通常URL</button>
     <button data-output-method="cokeon">コークオン</button>
