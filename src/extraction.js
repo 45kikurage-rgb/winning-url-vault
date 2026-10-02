@@ -43,8 +43,11 @@ async function product(env, productId) {
 }
 
 export async function listWinningLists(env) {
+  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
+  const currentMonth = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, "0")}`;
   const rows = await env.DB.prepare(`SELECT p.product_id,p.campaign_id,p.product_name,p.redemption_place,p.product_spec,
-    p.valid_until,p.output_method,p.assigned_at,c.campaign_name,c.lottery_start_date,c.status campaign_status,
+    p.valid_until,p.output_method,p.unit_price,p.assigned_at,c.campaign_name,c.lottery_start_date,c.status campaign_status,
+    r.month revenue_month,r.winner_count revenue_winner_count,r.amount current_month_revenue,r.sync_status revenue_sync_status,
     COUNT(a.item_id) total_count,
     COALESCE(SUM(CASE WHEN a.exported_at IS NOT NULL THEN 1 ELSE 0 END),0) exported_count,
     COALESCE(SUM(CASE WHEN a.exported_at IS NULL AND (
@@ -67,10 +70,11 @@ export async function listWinningLists(env) {
     JOIN item_campaign_assignments a ON a.product_id=p.product_id
     JOIN items i ON i.id=a.item_id AND i.status='active'
     LEFT JOIN vault_campaigns c ON c.campaign_id=p.campaign_id
+    LEFT JOIN product_monthly_revenue r ON r.product_id=p.product_id AND r.month=?
     WHERE p.is_archived=0
     GROUP BY p.product_id
     ORDER BY CASE c.status WHEN 'active' THEN 0 WHEN 'closing' THEN 1 WHEN 'correcting' THEN 2 ELSE 3 END,
-      c.lottery_start_date DESC,p.assigned_at DESC`).all();
+      c.lottery_start_date DESC,p.assigned_at DESC`).bind(currentMonth).all();
   return rows.results || [];
 }
 

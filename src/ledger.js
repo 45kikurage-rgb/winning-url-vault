@@ -2,6 +2,8 @@ const SOURCE_SYSTEM = "winning-url-vault";
 const RETRY_SECONDS = [60, 120, 300, 900, 3600];
 const now = () => new Date().toISOString();
 const uuid = () => crypto.randomUUID();
+export const REVENUE_START_MONTH = "2026-10";
+const REVENUE_START_UTC = "2026-09-30T15:00:00Z";
 
 export class VaultLedgerError extends Error {
   constructor(message, status = 400, code = "VAULT_LEDGER_ERROR", details = {}) {
@@ -138,6 +140,32 @@ function enqueueProductAndTotals(db, productId, campaignId, occurredAt) {
   ];
 }
 
+function refreshProductRevenueStatement(db, productId, occurredAt) {
+  return db.prepare(`INSERT INTO product_monthly_revenue
+    (month,campaign_id,product_id,winner_count,unit_price,amount,source_revision,sync_status,attempts,next_attempt_at,last_error,updated_at)
+    SELECT strftime('%Y-%m',datetime(i.received_at,'+9 hours')),a.campaign_id,a.product_id,COUNT(*),p.unit_price,
+      CASE WHEN p.unit_price IS NULL THEN NULL ELSE COUNT(*)*p.unit_price END,
+      CASE WHEN p.unit_price IS NULL THEN 0 ELSE 1 END,
+      CASE WHEN p.unit_price IS NULL THEN 'unset' ELSE 'pending' END,0,NULL,NULL,?
+    FROM item_campaign_assignments a JOIN items i ON i.id=a.item_id
+    JOIN ledger_products p ON p.product_id=a.product_id
+    WHERE a.product_id=? AND i.status='active' AND datetime(i.received_at)>=datetime(?)
+    GROUP BY strftime('%Y-%m',datetime(i.received_at,'+9 hours')),a.campaign_id,a.product_id,p.unit_price
+    ON CONFLICT(month,product_id) DO UPDATE SET
+      winner_count=excluded.winner_count,unit_price=excluded.unit_price,amount=excluded.amount,
+      source_revision=CASE WHEN excluded.unit_price IS NOT NULL AND
+        (product_monthly_revenue.winner_count<>excluded.winner_count OR product_monthly_revenue.unit_price IS NOT excluded.unit_price)
+        THEN product_monthly_revenue.source_revision+1 ELSE product_monthly_revenue.source_revision END,
+      sync_status=CASE WHEN excluded.unit_price IS NULL THEN 'unset' WHEN
+        product_monthly_revenue.winner_count<>excluded.winner_count OR product_monthly_revenue.unit_price IS NOT excluded.unit_price
+        THEN 'pending' ELSE product_monthly_revenue.sync_status END,
+      attempts=CASE WHEN product_monthly_revenue.winner_count<>excluded.winner_count OR product_monthly_revenue.unit_price IS NOT excluded.unit_price THEN 0 ELSE product_monthly_revenue.attempts END,
+      next_attempt_at=CASE WHEN product_monthly_revenue.winner_count<>excluded.winner_count OR product_monthly_revenue.unit_price IS NOT excluded.unit_price THEN NULL ELSE product_monthly_revenue.next_attempt_at END,
+      last_error=CASE WHEN product_monthly_revenue.winner_count<>excluded.winner_count OR product_monthly_revenue.unit_price IS NOT excluded.unit_price THEN NULL ELSE product_monthly_revenue.last_error END,
+      updated_at=excluded.updated_at
+    WHERE product_monthly_revenue.finalized_at IS NULL`).bind(occurredAt, productId, REVENUE_START_UTC);
+}
+
 function enqueueTotalsOnly(db, campaignId, occurredAt, outboxId) {
   const record = `totals:${campaignId}`;
   return [
@@ -189,6 +217,7 @@ export async function assignCardToCampaign(env, cardId, campaignId, choice = {})
     AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)`)
     .bind(campaignId, product.product_id, occurredAt, cardId));
   statements.push(...enqueueProductAndTotals(env.DB, product.product_id, campaignId, occurredAt));
+  statements.push(refreshProductRevenueStatement(env.DB, product.product_id, occurredAt));
   await env.DB.batch(statements);
   const assigned = await env.DB.prepare("SELECT COUNT(*) count FROM item_campaign_assignments WHERE product_id=?")
     .bind(product.product_id).first();
@@ -278,6 +307,60 @@ export async function outboxStatus(env) {
 export async function retryOutbox(env) {
   await env.DB.prepare("UPDATE ledger_outbox SET status='pending',next_attempt_at=NULL,updated_at=? WHERE status='failed'").bind(now()).run();
   return processOutbox(env, { limit: 50 });
+}
+
+export async function setUnitPrice(env, productId, value) {
+  const unitPrice = Number(value);
+  if (!Number.isSafeInteger(unitPrice) || unitPrice < 0) {
+    throw new VaultLedgerError("単価は0円以上の整数で入力してください", 400, "INVALID_UNIT_PRICE");
+  }
+  const model = await env.DB.prepare("SELECT product_id FROM ledger_products WHERE product_id=?").bind(productId).first();
+  if (!model) throw new VaultLedgerError("当選カードが見つかりません", 404, "PRODUCT_NOT_FOUND");
+  const occurredAt = now();
+  await env.DB.batch([
+    env.DB.prepare("UPDATE ledger_products SET unit_price=?,updated_at=? WHERE product_id=?").bind(unitPrice, occurredAt, productId),
+    refreshProductRevenueStatement(env.DB, productId, occurredAt)
+  ]);
+  const rows = await env.DB.prepare(`SELECT month,winner_count,unit_price,amount,source_revision,sync_status,finalized_at
+    FROM product_monthly_revenue WHERE product_id=? ORDER BY month`).bind(productId).all();
+  return { product_id: productId, unit_price: unitPrice, months: rows.results || [] };
+}
+
+async function revenueFailure(env, row, error) {
+  const attempts = Number(row.attempts || 0) + 1;
+  const retryable = error.status >= 500 || error.code === "DEPENDENCY_NOT_READY" || error.code === "CONCURRENT_MODIFICATION";
+  const delay = RETRY_SECONDS[Math.min(attempts - 1, RETRY_SECONDS.length - 1)];
+  const nextAttempt = retryable ? new Date(Date.now() + delay * 1000).toISOString() : null;
+  const message = `${error.code || "LEDGER_ERROR"}: ${error.message || String(error)}`.slice(0, 500);
+  await env.DB.prepare(`UPDATE product_monthly_revenue SET sync_status='failed',attempts=?,next_attempt_at=?,last_error=?
+    WHERE month=? AND product_id=? AND source_revision=?`).bind(attempts,nextAttempt,message,row.month,row.product_id,row.source_revision).run();
+  return { month:row.month, product_id:row.product_id, ok:false, retryable:Boolean(nextAttempt), error:message };
+}
+
+export async function processRevenueOutbox(env, options = {}) {
+  const limit = Math.min(50, Math.max(1, Number(options.limit || 20)));
+  const due = options.productId
+    ? await env.DB.prepare(`SELECT * FROM product_monthly_revenue WHERE product_id=? AND unit_price IS NOT NULL
+        AND (sync_status='pending' OR (sync_status='failed' AND next_attempt_at IS NOT NULL AND next_attempt_at<=?))
+        ORDER BY month LIMIT ?`).bind(options.productId,now(),limit).all()
+    : await env.DB.prepare(`SELECT * FROM product_monthly_revenue WHERE unit_price IS NOT NULL
+        AND (sync_status='pending' OR (sync_status='failed' AND next_attempt_at IS NOT NULL AND next_attempt_at<=?))
+        ORDER BY updated_at LIMIT ?`).bind(now(),limit).all();
+  const results=[];
+  for (const row of due.results || []) {
+    const sourceRecordId=`revenue:${row.month}:${row.product_id}`;
+    const payload={source_system:SOURCE_SYSTEM,source_record_id:sourceRecordId,source_revision:Number(row.source_revision),
+      occurred_at:row.updated_at,data:{month:row.month,campaign_id:row.campaign_id,product_id:row.product_id,
+        winner_count:Number(row.winner_count),unit_price:Number(row.unit_price),amount:Number(row.amount)}};
+    try {
+      const response=await callLedger(env,"vault","/api/v1/revenue/products/sync",{method:"POST",body:payload});
+      await env.DB.prepare(`UPDATE product_monthly_revenue SET sync_status='sent',attempts=attempts+1,next_attempt_at=NULL,
+        last_error=NULL,last_synced_at=? WHERE month=? AND product_id=? AND source_revision=?`)
+        .bind(now(),row.month,row.product_id,row.source_revision).run();
+      results.push({month:row.month,product_id:row.product_id,ok:true,result:response.result||"applied"});
+    } catch (error) { results.push(await revenueFailure(env,row,error)); }
+  }
+  return {attempted:results.length,results};
 }
 
 export async function ensureCampaignTotals(env, campaignId) {

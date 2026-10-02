@@ -4,7 +4,8 @@ import {
 } from "./core.js";
 import {
   VaultLedgerError, assignCardToCampaign, assignmentPreview, closeCampaign, closePreview,
-  enrichCards, outboxStatus, processOutbox, refreshCampaigns, retryOutbox, startCorrection
+  enrichCards, outboxStatus, processOutbox, processRevenueOutbox, refreshCampaigns, retryOutbox,
+  setUnitPrice, startCorrection
 } from "./ledger.js";
 import {
   cancelExportBatch, completeExportBatch, completeExportItem, getExportBatch,
@@ -12,7 +13,7 @@ import {
   startExportBatch, undoExportBatch
 } from "./extraction.js";
 
-const VERSION = "0.7.1";
+const VERSION = "0.8.0";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -876,6 +877,13 @@ export default {
         const body = await request.json().catch(() => ({}));
         return json({ ok: true, ...await setOutputMethod(env, outputMethodRoute[1], String(body.output_method || "")) });
       }
+      const unitPriceRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/unit-price$/i);
+      if (unitPriceRoute && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        const result = await setUnitPrice(env, unitPriceRoute[1], body.unit_price);
+        await processRevenueOutbox(env, { productId: unitPriceRoute[1] });
+        return json({ ok: true, ...result });
+      }
       const startBatchRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/export-batches$/i);
       if (startBatchRoute && request.method === "POST") {
         const body = await request.json().catch(() => ({}));
@@ -928,6 +936,7 @@ export default {
         // The source mutation is already committed. Delivery errors are captured in
         // the durable outbox and therefore must never roll back the Vault result.
         await processOutbox(env);
+        await processRevenueOutbox(env, { productId: result.product_id });
         return json({ ok: true, ...result }, 201);
       }
       const closePreviewRoute = url.pathname.match(/^\/api\/ledger\/campaigns\/([A-Za-z0-9_-]+)\/close-preview$/);
@@ -983,6 +992,9 @@ export default {
     }
   },
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(processOutbox(env, { limit: 50 }));
+    ctx.waitUntil((async () => {
+      await processOutbox(env, { limit: 50 });
+      await processRevenueOutbox(env, { limit: 20 });
+    })());
   }
 };
