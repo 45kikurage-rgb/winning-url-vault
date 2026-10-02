@@ -14,6 +14,7 @@ export function winningMonthLabel(month) {
 export function groupWinningFolders(items, currentMonth = currentWinningMonth()) {
   const months = new Map();
   for (const item of items) {
+    if (item.show_in_permanent === true || item.show_in_permanent === 1) continue;
     const month = winningMonth(item);
     if (!months.has(month)) months.set(month, []);
     months.get(month).push(item);
