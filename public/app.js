@@ -281,7 +281,7 @@ function winningCardHtml(item) {
     : `<span>単価 ¥${unitPrice.toLocaleString()}</span><span>${esc(monthLabel)} ¥${Number(revenue || 0).toLocaleString()}</span>`;
   return `<article class="winning-card ${unset ? "is-unset" : complete ? "is-complete" : "is-active"}" data-product-id="${esc(item.product_id)}">
     <div class="winning-campaign"><span>${esc(item.campaign_name || item.campaign_id)}　${esc(item.lottery_start_date || "")}</span><span>${esc(statusLabels[item.campaign_status] || item.campaign_status || "")}</span></div>
-    <div class="winning-title"><h3>${esc(item.product_name)}</h3>${unset ? '<strong class="needs-setting">要設定</strong>' : ""}</div>
+    <div class="winning-title"><h3>${esc(item.display_name || item.product_name)}</h3>${unset ? '<strong class="needs-setting">要設定</strong>' : ""}</div>
     <div class="meta winning-meta">${meta}</div>
     <div class="method-name">${esc(methodLabel(item.output_method))}</div>
     <div class="revenue-line">${priceLine}</div>
@@ -300,7 +300,7 @@ async function loadWinningLists() {
     const result = await api("/api/winning-lists");
     state.winningLists = (result.products || []).sort((left, right) => {
       const rank = item => item.output_method === "unset" ? 0 : Number(item.unexported_count || 0) > 0 ? 1 : 2;
-      return rank(left) - rank(right) || String(left.product_name || "").localeCompare(String(right.product_name || ""), "ja");
+      return rank(left) - rank(right) || String(left.display_name || left.product_name || "").localeCompare(String(right.display_name || right.product_name || ""), "ja");
     });
     $("winningTabCount").textContent = state.winningLists.length.toLocaleString();
     $("winningLists").innerHTML = state.winningLists.length
@@ -325,7 +325,7 @@ function bindWinningControls() {
 function openOutputMethod(productId) {
   const item = winningProduct(productId);
   state.outputProductId = productId;
-  $("outputMethodTitle").textContent = `${item?.product_name || "当選カード"} の抽出方法`;
+  $("outputMethodTitle").textContent = `${item?.display_name || item?.product_name || "当選カード"} の抽出方法`;
   $("unitPriceInput").value = item?.unit_price === null || item?.unit_price === undefined ? "" : String(item.unit_price);
   $("outputMethodMessage").textContent = "";
   $("outputMethodDialog").showModal();
@@ -368,7 +368,7 @@ function openExportAction(productId) {
   if (item.output_method === "unset") return openOutputMethod(productId);
   state.exportProductId = productId;
   state.exportPaypayKind = null;
-  $("exportActionTitle").textContent = `${item.product_name} を抽出`;
+  $("exportActionTitle").textContent = `${item.display_name || item.product_name} を抽出`;
   $("exportActionSummary").innerHTML = `未抽出<strong>${Number(item.unexported_count || 0).toLocaleString()}件</strong><small>${esc(methodLabel(item.output_method))}</small>`;
   $("exportActionMessage").textContent = "";
   const pending = state.pendingExportBatch;

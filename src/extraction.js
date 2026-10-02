@@ -46,6 +46,7 @@ export async function listWinningLists(env) {
   const jst = new Date(Date.now() + 9 * 60 * 60 * 1000);
   const currentMonth = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, "0")}`;
   const rows = await env.DB.prepare(`SELECT p.product_id,p.campaign_id,p.product_name,p.redemption_place,p.product_spec,
+    COALESCE(NULLIF(TRIM(pm.display_name),''),p.product_name) display_name,
     p.valid_until,p.output_method,p.unit_price,p.assigned_at,c.campaign_name,c.lottery_start_date,c.status campaign_status,
     r.month revenue_month,r.winner_count revenue_winner_count,r.amount current_month_revenue,r.sync_status revenue_sync_status,
     COUNT(a.item_id) total_count,
@@ -67,6 +68,8 @@ export async function listWinningLists(env) {
     COALESCE(SUM(CASE WHEN a.exported_at IS NULL AND p.output_method='paypay' AND i.value_type='paypay'
       AND i.value NOT LIKE 'https://%' THEN 1 ELSE 0 END),0) paypay_code_unexported_count
     FROM ledger_products p
+    LEFT JOIN cards card ON card.id=p.card_id
+    LEFT JOIN product_master pm ON pm.id=card.product_id
     JOIN item_campaign_assignments a ON a.product_id=p.product_id
     JOIN items i ON i.id=a.item_id AND i.status='active'
     LEFT JOIN vault_campaigns c ON c.campaign_id=p.campaign_id

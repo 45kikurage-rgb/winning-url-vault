@@ -464,6 +464,36 @@ test("当選0件のclosingでも0件同期を先に作り終了確認できる",
   assert.equal(analyzer.totals.get("campaign-closing").current_winner_count, 0);
 });
 
+test("画面表示名を保存して振り分けると当選リストにも反映し、正式名称は保持する", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  await request(worker, "/api/ledger/campaigns");
+  await request(worker, "/api/receive", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ values: ["https://coupon.sej.co.jp/display-name"] })
+  });
+  const pending = (await request(worker, "/api/pending")).items[0];
+  const displayName = "カフェラテ";
+  await request(worker, `/api/pending/${pending.id}/confirm`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action: "edit", display_name: displayName })
+  });
+  const card = (await request(worker, "/api/cards")).cards[0];
+  assert.equal(card.display_name, displayName);
+  const assigned = await request(worker, `/api/cards/${card.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ campaign_id: "campaign-active-a" })
+  });
+  const list = (await request(worker, "/api/winning-lists")).products[0];
+  assert.equal(list.display_name, displayName);
+  assert.equal(list.product_name, pending.raw_name);
+  assert.equal(Number(list.total_count), 1);
+  const stored = await DB.prepare("SELECT product_name FROM ledger_products WHERE product_id=?").bind(assigned.product_id).first();
+  assert.equal(stored.product_name, pending.raw_name);
+  await DB.prepare("UPDATE product_master SET display_name='' WHERE id=(SELECT product_id FROM cards WHERE id=?)").bind(card.id).run();
+  assert.equal((await request(worker, "/api/winning-lists")).products[0].display_name, pending.raw_name);
+});
+
 test("当選カードごとに抽出方法を設定し、一括確定・取消・1件ずつ処理できる", async t => {
   const { mf, analyzer, worker } = await createRuntime();
   t.after(() => cleanup(mf, analyzer));
