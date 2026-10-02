@@ -41,8 +41,9 @@
 
   <nav class="main-tabs" aria-label="当選URL管理メニュー">
     <button class="tab-button active" data-tab="receive" type="button">URL受信</button>
-    <button class="tab-button" data-tab="sorting" type="button">仕分け待ち <span id="sortingTabCount" class="tab-count">0</span></button>
+    <button class="tab-button" data-tab="sorting" type="button">仕分け用 <span id="sortingTabCount" class="tab-count">0</span></button>
     <button class="tab-button" data-tab="winning" type="button">当選リスト <span id="winningTabCount" class="tab-count">0</span></button>
+    <button class="tab-button" data-tab="campaigns" type="button">CP連携</button>
   </nav>
 
   <section class="trial-notice">
@@ -73,13 +74,6 @@
   </section>
 
   <section id="tabSorting" class="tab-page hidden">
-  <section class="panel ledger-panel">
-    <div class="row"><div><h2>キャンペーン連携</h2><p>中央管理台帳のキャンペーンと同期します。表示はキャンペーン名＋抽選開始日、関連付けはcampaign_idです。</p></div>
-      <button id="refreshCampaigns" class="secondary">再読込</button></div>
-    <div id="ledgerSyncStatus" class="sync-summary">同期状態を確認中…</div>
-    <div id="campaigns" class="campaign-list"></div>
-  </section>
-
   <section id="pendingSection" class="panel hidden">
     <h2>初回確認</h2>
     <p>初めての商品・期限だけ確認します。確定後のカードは自動再判定しません。</p>
@@ -103,6 +97,15 @@
       <div class="row"><div><h2>当選リスト</h2><p>キャンペーンへ振り分けた商品を、カードごとの抽出方法で管理します。</p></div><div class="winning-head-actions"><button id="undoLastExport" class="secondary hidden">直前の抽出を取消</button><button id="refreshWinningLists" class="secondary">再読込</button></div></div>
       <div id="winningLists" class="winning-list"><div class="empty">当選リスト読み込み待ち</div></div>
     </section>
+  </section>
+  <section id="tabCampaigns" class="tab-page hidden">
+  <section class="panel ledger-panel">
+    <div class="row"><div><h2>キャンペーン連携</h2><p>中央管理台帳のキャンペーンと同期します。表示はキャンペーン名＋抽選開始日、関連付けはcampaign_idです。</p></div>
+      <button id="refreshCampaigns" class="secondary">再読込</button></div>
+    <div id="ledgerSyncStatus" class="sync-summary">同期状態を確認中…</div>
+    <div id="campaigns" class="campaign-list"></div>
+  </section>
+
   </section>
 </main>
 

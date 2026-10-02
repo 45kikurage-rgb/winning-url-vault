@@ -35,7 +35,7 @@ function setMode(mode) {
 }
 
 function switchTab(name) {
-  const names = ["receive", "sorting", "winning"];
+  const names = ["receive", "sorting", "winning", "campaigns"];
   const selected = names.includes(name) ? name : "receive";
   document.body.dataset.activeTab = selected;
   for (const item of names) {
