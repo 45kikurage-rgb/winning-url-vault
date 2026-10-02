@@ -732,7 +732,7 @@ async function reanalyzePending(env, pendingId) {
 }
 
 async function listUnresolved(env) {
-  const rows = await env.DB.prepare(`SELECT i.id,i.received_at,u.reason,u.pattern_key,u.retry_count,u.last_error
+  const rows = await env.DB.prepare(`SELECT i.id,i.value,i.received_at,u.reason,u.pattern_key,u.retry_count,u.last_error
     FROM unresolved_items u JOIN items i ON i.id=u.item_id ORDER BY i.received_at ASC LIMIT 500`).all();
   return json({ ok: true, items: rows.results || [] });
 }

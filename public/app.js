@@ -251,7 +251,7 @@ async function load() {
     state.pendingItems = new Map(pending.items.map(item => [item.id, item]));
     $("pendingList").innerHTML = pending.items.map(pendingCard).join("");
     $("unknownList").innerHTML = unresolved.items.slice(0, 10).map(item =>
-      `<div class="unknown-row"><span>${esc(item.reason)}</span><small>${esc(item.pattern_key || "未知パターン")} / 再解析 ${Number(item.retry_count || 0)}回</small></div>`).join("");
+      `<div class="unknown-row"><span>${esc(item.reason)}</span><details><summary>受信内容を確認</summary><div class="unknown-value">${esc(item.value)}</div></details><small>${esc(item.pattern_key || "未知パターン")} / 再解析 ${Number(item.retry_count || 0)}回</small></div>`).join("");
     bindDynamic();
     syncPendingDialog(pending.items);
   } catch (error) {
