@@ -101,3 +101,11 @@ test("受信完了表示を自動で閉じ、仕分けカードと当選リス�
   assert.doesNotMatch(index, /id="refreshWinningLists"/);
   assert.match(styles, /\.receive\.panel\{margin:14px 0 0/);
 });
+
+
+test("1件ずつ抽出はAndroid/PWAでnoopenerの戻り値を失敗判定しない", async () => {
+  const app = await text("app.js");
+  assert.match(app, /window\.open\(state\.exportItem\.value, "_blank", "noopener"\);/);
+  assert.doesNotMatch(app, /if \(!opened\) throw new Error\("URLを開けませんでした"\)/);
+  assert.match(app, /URLを開きました。確認後「抽出済み・次へ」を押してください。/);
+});
