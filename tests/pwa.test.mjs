@@ -90,3 +90,14 @@ test("全タブ共通の固定ヘッダーと中央スクロール、コンパ�
   assert.match(styles, /\.receive textarea\{height:clamp\(120px,22dvh,190px\)/);
   assert.doesNotMatch(styles, /data-active-tab="receive"\][^\{]*h1/);
 });
+
+test("受信完了表示を自動で閉じ、仕分けカードと当選リストの重複表示を省く", async () => {
+  const index = await text("index.html");
+  const app = await text("app.js");
+  const styles = await text("styles.css");
+  assert.match(app, /job\.status === "completed"[\s\S]*setTimeout/);
+  assert.match(app, /state\.dismissedJobId = job\.id/);
+  assert.doesNotMatch(app, /coupon-foot"><strong>\$\{Number\(card\.count/);
+  assert.doesNotMatch(index, /id="refreshWinningLists"/);
+  assert.match(styles, /\.receive\.panel\{margin:14px 0 0/);
+});

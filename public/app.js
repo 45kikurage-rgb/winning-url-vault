@@ -9,7 +9,7 @@ const LAST_EXPORT_BATCH_KEY = "winning-url-vault:last-export-batch";
 const OUTPUT_METHOD_LABELS = { unset:"未設定", normal:"通常URL", cokeon:"コークオン",
   wallet:"えらべるPay", paypay:"PayPay", text_single:"文字列" };
 const state = { cursor: null, cardId: null, authenticated: false, cards: new Map(), pendingItems: new Map(),
-  activeJobId: null, pollTimer: null, refreshing: false, dialogPendingId: null,
+  activeJobId: null, dismissedJobId: null, progressHideJobId: null, progressHideTimer: null, pollTimer: null, refreshing: false, dialogPendingId: null,
   campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
   correctionCampaignId: null, winningLists: [], outputProductId: null, exportProductId: null,
   exportItem: null, exportBatch: null, pendingExportBatch: null, exportPaypayKind: null };
@@ -182,6 +182,10 @@ function showJobProgress(job) {
   const remaining = Math.max(0, total - done);
   const labels = { queued:"解析待ち", processing:"解析中", finalizing:"照合・登録中",
     awaiting_confirmation:"解析完了・初回確認待ち", completed:"解析完了" };
+  if (job.status === "completed" && state.dismissedJobId === job.id) {
+    $("receiveProgress").classList.add("hidden");
+    return;
+  }
   $("receiveProgress").classList.remove("hidden");
   $("progressStatus").textContent = labels[job.status] || "解析中";
   $("progressCount").textContent = `${done.toLocaleString()} / ${total.toLocaleString()}件`;
@@ -198,6 +202,25 @@ function showJobProgress(job) {
   $("receiveResult").textContent = job.lastError
     ? `前回エラー: ${job.lastError}（自動再試行します）`
     : `受付 ${Number(job.inputTotal || 0).toLocaleString()}件 / 貼付内重複 ${Number(job.inputDuplicates || 0).toLocaleString()}件 / 既登録 ${Number(job.existing || 0).toLocaleString()}件`;
+  if (job.status === "completed") {
+    if (state.progressHideJobId !== job.id) {
+      if (state.progressHideTimer) clearTimeout(state.progressHideTimer);
+      state.progressHideJobId = job.id;
+      state.progressHideTimer = setTimeout(() => {
+        if (state.activeJobId !== job.id) return;
+        state.dismissedJobId = job.id;
+        state.activeJobId = null;
+        $("receiveProgress").classList.add("hidden");
+        $("receiveResult").textContent = "";
+        state.progressHideJobId = null;
+        state.progressHideTimer = null;
+      }, 4000);
+    }
+  } else {
+    if (state.progressHideTimer) clearTimeout(state.progressHideTimer);
+    state.progressHideJobId = null;
+    state.progressHideTimer = null;
+  }
 }
 
 function clearReceive() {
@@ -234,7 +257,7 @@ function cardHtml(card) {
   return `<article class="coupon">
     <div><h3>${esc(card.display_name)}</h3><div class="meta">${esc(card.redeem_place)}${card.specification ? ` / ${esc(card.specification)}` : ""}</div>
     <div class="meta">期限 ${esc(card.expires_on || "期限なし")}</div>${assignments ? `<div class="assignment-list">${assignments}</div>` : '<div class="unassigned-label">解析済み・未仕分け</div>'}</div>
-    <div class="coupon-foot"><strong>${Number(card.count || 0).toLocaleString()}件</strong><div class="card-actions">
+    <div class="coupon-foot"><div class="card-actions">
       ${Number(card.unassigned_count || 0) > 0 ? `<button data-assign-card="${esc(card.id)}" data-title="${esc(card.display_name)}">振り分け（${Number(card.unassigned_count).toLocaleString()}）</button>` : ""}
       <button class="secondary" data-card="${esc(card.id)}" data-title="${esc(card.display_name)}">内容</button></div></div>
   </article>`;
@@ -1032,7 +1055,7 @@ $("trialResetConfirmation").oninput = event => {
 };
 $("confirmTrialReset").onclick = resetTrialData;
 document.querySelectorAll("[data-tab]").forEach(button => button.onclick = () => switchTab(button.dataset.tab));
-$("refreshWinningLists").onclick = loadWinningLists;
+$("refreshWinningLists")?.addEventListener("click", loadWinningLists);
 $("undoLastExport").onclick = undoLastExport;
 $("outputMethodClose").onclick = () => $("outputMethodDialog").close();
 $("saveFolderVisibility").onclick = saveFolderVisibility;
