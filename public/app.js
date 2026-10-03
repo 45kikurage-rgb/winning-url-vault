@@ -1087,7 +1087,9 @@ $("exportItemStop").onclick = () => $("exportItemDialog").close();
 $("exportItemComplete").onclick = completeCurrentExportItem;
 $("pendingDialog").addEventListener("cancel", event => event.preventDefault());
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("/sw.js").catch(error => console.warn("service worker", error));
+  navigator.serviceWorker.register("/sw.js")
+    .then(registration => registration.update())
+    .catch(error => console.warn("service worker", error));
 }
 boot();
 
