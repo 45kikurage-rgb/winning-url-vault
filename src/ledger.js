@@ -134,8 +134,22 @@ export async function assignmentPreview(env, cardId, campaignId) {
   const model = await cardModel(env, cardId);
   if (!model) throw new VaultLedgerError("カードが見つかりません", 404, "CARD_NOT_FOUND");
   const key = identityKey(model);
-  const exact = await env.DB.prepare("SELECT * FROM ledger_products WHERE campaign_id=? AND identity_key=?")
+  let exact = await env.DB.prepare("SELECT * FROM ledger_products WHERE campaign_id=? AND identity_key=?")
     .bind(campaignId, key).first();
+  if (!exact) {
+    const fallback = await env.DB.prepare(`SELECT * FROM ledger_products
+      WHERE campaign_id=?
+        AND COALESCE(redemption_place,'')=?
+        AND COALESCE(product_spec,'')=?
+        AND COALESCE(valid_until,'')=?
+        AND (
+          lower(product_name)=lower(?)
+          OR lower(product_name || ' / ' || COALESCE(product_spec,''))=lower(?)
+        )
+      ORDER BY assigned_at LIMIT 2`)
+      .bind(campaignId, model.redeem_place || "", model.specification || "", model.expires_on || "", model.raw_name, model.raw_name).all();
+    if ((fallback.results || []).length === 1) exact = fallback.results[0];
+  }
   const possibleRows = await env.DB.prepare(`SELECT product_id,product_name,redemption_place,product_spec,valid_until
     FROM ledger_products WHERE campaign_id=? AND identity_key<>? AND
     (lower(product_name)=lower(?) OR (COALESCE(redemption_place,'')=? AND COALESCE(product_spec,'')=? AND COALESCE(valid_until,'')=?))
@@ -149,7 +163,8 @@ export async function assignmentPreview(env, cardId, campaignId) {
     card: { id: model.card_id, product_name: model.raw_name, display_name: model.display_name,
       redemption_place: model.redeem_place || null, product_spec: model.specification || null,
       valid_until: model.expires_on || null, unassigned_count: Number(count?.count || 0) },
-    exact_product: exact || null, possible_products: possibleRows.results || []
+    exact_product: exact || null,
+    possible_products: exact ? [] : (possibleRows.results || [])
   };
 }
 
