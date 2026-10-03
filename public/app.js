@@ -604,9 +604,12 @@ async function useCurrentExportItem() {
   if (!state.exportItem) return;
   try {
     if (/^https:\/\//i.test(state.exportItem.value)) {
-      const opened = window.open(state.exportItem.value, "_blank", "noopener");
-      if (!opened) throw new Error("URLを開けませんでした");
-    } else await writeClipboard(state.exportItem.value);
+      window.open(state.exportItem.value, "_blank", "noopener");
+      $("exportItemMessage").textContent = "URLを開きました。確認後「抽出済み・次へ」を押してください。";
+    } else {
+      await writeClipboard(state.exportItem.value);
+      $("exportItemMessage").textContent = "文字列をコピーしました。";
+    }
     $("exportItemComplete").disabled = false;
   } catch (error) { $("exportItemMessage").textContent = error.message; }
 }
