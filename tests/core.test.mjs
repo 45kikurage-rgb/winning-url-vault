@@ -67,3 +67,41 @@ test("受信テキストはURL抽出と入力内重複排除を行う", () => {
   assert.deepEqual(extractInputValues({ text:"https://example.com/a\nhttps://example.com/a" }),
     ["https://example.com/a", "https://example.com/a"]);
 });
+
+
+test("えらべるPayは残高が違っても同じ判定グループになる", () => {
+  const base = {
+    status:"ok", site:"giftee_box", kind:"box", boxCategory:"eraberu_pay",
+    groupName:"えらべるPay", redeemPlace:"giftee Box", size:"none"
+  };
+  const a = normalizeAnalysis({ ...base, balance:411, balanceUnit:"ポイント" });
+  const b = normalizeAnalysis({ ...base, balance:1000, balanceUnit:"ポイント" });
+  assert.equal(a.valid, true);
+  assert.equal(a.rawName, "えらべるPay");
+  assert.equal(a.specification, "");
+  assert.equal(a.expiresOn, "");
+  assert.equal(a.matchKey, b.matchKey);
+});
+
+test("giftee Boxは残高ポイントごとに別判定グループになる", () => {
+  const base = {
+    status:"ok", site:"giftee_box", kind:"box", boxCategory:"giftee_box",
+    groupName:"giftee Box", redeemPlace:"giftee Box", size:"none", balanceUnit:"ポイント"
+  };
+  const a = normalizeAnalysis({ ...base, balance:500, groupSpecification:"500ポイント" });
+  const b = normalizeAnalysis({ ...base, balance:1000, groupSpecification:"1000ポイント" });
+  assert.equal(a.valid, true);
+  assert.equal(a.rawName, "giftee Box");
+  assert.equal(a.specification, "500ポイント");
+  assert.equal(b.specification, "1000ポイント");
+  assert.notEqual(a.matchKey, b.matchKey);
+});
+
+test("期限なし許可はgiftee Box本体だけに限定する", () => {
+  const gift = normalizeAnalysis({
+    status:"ok", site:"giftee_box", kind:"gift", product:"交換済みギフト",
+    brand:"ブランド", redeemPlace:"ブランド", size:"none"
+  });
+  assert.equal(gift.valid, false);
+  assert.match(gift.reason, /使用期限/);
+});
