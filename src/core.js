@@ -123,24 +123,49 @@ export function extractValues(body) {
 }
 
 export function normalizeAnalysis(result) {
-  const rawName = String(result?.product || result?.boxName || "").normalize("NFKC").replace(/\s+/g, " ").trim();
+  const site = normalizeText(result?.site || "");
+  const kind = normalizeText(result?.kind || "coupon");
+  const boxCategory = normalizeText(result?.boxCategory || "");
+  const isGifteeBox = site === "giftee_box" && kind === "box";
+  const isEraberuPay = isGifteeBox && boxCategory === "eraberu_pay";
+  const isAmountSplitGifteeBox = isGifteeBox && boxCategory === "giftee_box";
+
+  const fallbackName = String(result?.product || result?.boxName || "").normalize("NFKC").replace(/\s+/g, " ").trim();
+  const rawName = String(
+    isEraberuPay ? (result?.groupName || "えらべるPay")
+      : isAmountSplitGifteeBox ? (result?.groupName || "giftee Box")
+        : (result?.groupName || fallbackName)
+  ).normalize("NFKC").replace(/\s+/g, " ").trim();
+
   const expiresOn = String(result?.expiresOn || "").trim();
   const redeemPlace = normalizeRedeemPlace(result?.redeemPlace || result?.merchant || result?.brand || "");
-  const specification = normalizeSpecification(result?.capacity || (result?.size && !["none", "unknown", "mixed"].includes(result.size) ? result.size : ""));
+
+  let specificationSource = result?.capacity || (result?.size && !["none", "unknown", "mixed"].includes(result.size) ? result.size : "");
+  if (isEraberuPay) specificationSource = "";
+  if (isAmountSplitGifteeBox) {
+    const balance = Number(result?.balance);
+    specificationSource = result?.groupSpecification
+      || (Number.isFinite(balance) && balance >= 0 ? `${balance}${result?.balanceUnit || "ポイント"}` : "");
+  }
+  const specification = normalizeSpecification(specificationSource);
   const normalizedName = normalizeName(rawName);
+
   const conditions = {
     brand: normalizeText(result?.brand || ""),
-    kind: normalizeText(result?.kind || "coupon"),
-    site: normalizeText(result?.site || ""),
+    kind,
+    site,
     size: normalizeText(result?.size || "none")
   };
+  if (isGifteeBox) conditions.boxCategory = boxCategory || "other";
+
   const reasons = [];
   if (result?.status !== "ok") reasons.push(result?.status === "used" ? "使用済みクーポンの商品を特定できません" : result?.message || "解析結果が未確定です");
   if (isGenericName(rawName)) reasons.push("正式商品名ではなく汎用名しか取得できませんでした");
   if (!redeemPlace) reasons.push("利用先がありません");
-  if (!expiresOn || !/^20\d{2}-\d{2}-\d{2}$/.test(expiresOn)) reasons.push("使用期限がありません");
+  if ((!expiresOn || !/^20\d{2}-\d{2}-\d{2}$/.test(expiresOn)) && !isGifteeBox) reasons.push("使用期限がありません");
   if (["unknown", "mixed"].includes(result?.size)) reasons.push("容量・規格が確定していません");
-  if (!conditions.site) reasons.push("解析元サイトがありません");
+  if (!site) reasons.push("解析元サイトがありません");
+
   const requiredConditions = stableJson(conditions);
   const matchKey = [normalizedName, specification, redeemPlace, requiredConditions].join("\u001f");
   return {

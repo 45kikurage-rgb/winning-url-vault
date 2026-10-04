@@ -15,7 +15,7 @@ import {
   startExportBatch, undoExportBatch, setFolderVisibility
 } from "./extraction.js";
 
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
