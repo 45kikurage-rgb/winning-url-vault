@@ -67,3 +67,36 @@ test("受信テキストはURL抽出と入力内重複排除を行う", () => {
   assert.deepEqual(extractInputValues({ text:"https://example.com/a\nhttps://example.com/a" }),
     ["https://example.com/a", "https://example.com/a"]);
 });
+
+
+test("giftee Boxは期限なしでも有効で残高を規格に使う", () => {
+  const box = normalizeAnalysis({
+    status:"ok", site:"giftee_box", kind:"box", product:"キャンペーン限定 giftee Box",
+    redeemPlace:"giftee Box", balance:500, balanceUnit:"ポイント", size:"none"
+  });
+  assert.equal(box.valid, true);
+  assert.equal(box.expiresOn, "");
+  assert.equal(box.specification, "500ポイント");
+
+  const otherBalance = normalizeAnalysis({
+    status:"ok", site:"giftee_box", kind:"box", product:"キャンペーン限定 giftee Box",
+    redeemPlace:"giftee Box", balance:1000, balanceUnit:"ポイント", size:"none"
+  });
+  assert.notEqual(box.matchKey, otherBalance.matchKey);
+});
+
+test("期限なし許可はgiftee Box本体だけに限定する", () => {
+  const gift = normalizeAnalysis({
+    status:"ok", site:"giftee_box", kind:"gift", product:"デジタルギフト",
+    redeemPlace:"ブランド", size:"none"
+  });
+  assert.equal(gift.valid, false);
+  assert.match(gift.reason, /使用期限/);
+
+  const coupon = normalizeAnalysis({
+    status:"ok", site:"seven", kind:"coupon", product:"対象商品",
+    redeemPlace:"セブンイレブン", size:"none"
+  });
+  assert.equal(coupon.valid, false);
+  assert.match(coupon.reason, /使用期限/);
+});
