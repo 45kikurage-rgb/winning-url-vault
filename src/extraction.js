@@ -1,4 +1,5 @@
 import { VaultLedgerError } from "./ledger.js";
+import { lawsonLoginUrl } from "./lawson-url.js";
 
 const METHODS = new Set(["unset", "normal", "cokeon", "wallet", "paypay", "text_single"]);
 const PAYPAY_KINDS = new Set(["url", "code"]);
@@ -131,7 +132,8 @@ async function batchPayload(env, batch) {
   return { id: batch.id, product_id: batch.product_id, product_name: model.product_name,
     output_method: model.output_method, status: batch.status, copy_order: batch.copy_order,
     count: Number(batch.item_count || 0), created_at: batch.created_at,
-    completed_at: batch.completed_at || null, paypay_kind: inferPaypayKind(items), items };
+    completed_at: batch.completed_at || null, paypay_kind: inferPaypayKind(items),
+    items: items.map(item => ({ ...item, value: lawsonLoginUrl(item.value) || item.value })) };
 }
 
 export async function startExportBatch(env, productId, order = "received", requestedPaypayKind = "") {
@@ -179,7 +181,8 @@ export async function startExportBatch(env, productId, order = "received", reque
     throw error;
   }
   return { batch: { ...batch, product_name: model.product_name, output_method: model.output_method,
-    paypay_kind: selectedPaypayKind || null, count: items.length, items }, restored: false };
+    paypay_kind: selectedPaypayKind || null, count: items.length,
+    items: items.map(item => ({ ...item, value: lawsonLoginUrl(item.value) || item.value })) }, restored: false };
 }
 
 export async function getExportBatch(env, batchId) {
@@ -254,9 +257,10 @@ export async function undoExportBatch(env, batchId) {
 export async function nextExportItem(env, productId, paypayKind = "") {
   const model = await product(env, productId);
   const items = await eligibleItems(env, model, "received", paypayKind);
+  const item = items[0] ? { ...items[0], value: lawsonLoginUrl(items[0].value) || items[0].value } : null;
   return { product_id: productId, product_name: model.product_name, output_method: model.output_method,
     paypay_kind: model.output_method === "paypay" ? paypayKind || null : null,
-    remaining_count: items.length, item: items[0] || null };
+    remaining_count: items.length, item };
 }
 
 export async function completeExportItem(env, productId, itemId) {

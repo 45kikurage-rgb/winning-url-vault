@@ -237,6 +237,30 @@ test("受信から初回確認、自動振り分け、未判定隔離まで実�
   assert.equal(pending.items[0].expires_on, "2026-11-30");
 });
 
+test("Lawson coupon reception preserves original data and sends login to the analyzer", async t => {
+  const { mf, analyzer, worker } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const original = 'https://apli.lawson.jp/ldcp/coupon/?campaignId=testfixture&encDataCode=VEVTVEZJWFRVUkU%3D';
+  const result = await request(worker, '/api/receive', { method: 'POST', headers: {'content-type':'application/json'}, body:JSON.stringify({values:[original]}) });
+  assert.equal(result.counts.pending_confirmation, 1);
+  assert.equal(analyzer.analysisRequests[0].items[0].url, original.replace('/coupon/','/login/'));
+  const db = await mf.getD1Database('DB');
+  const item = await db.prepare('SELECT value,analysis_json FROM items LIMIT 1').first();
+  assert.equal(item.value, original);
+  assert.equal(JSON.parse(item.analysis_json).url, original);
+  const pending = await request(worker, '/api/pending');
+  await request(worker, `/api/pending/${pending.items[0].id}/confirm`, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'ok'})});
+  await request(worker, '/api/ledger/campaigns');
+  const card = (await request(worker, '/api/cards')).cards[0];
+  const assigned = await request(worker, `/api/cards/${card.id}/assign`, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign_id:'campaign-active-a'})});
+  await request(worker, `/api/products/${assigned.product_id}/output-method`, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({output_method:'normal'})});
+  const next = await request(worker, `/api/products/${assigned.product_id}/export-next`);
+  assert.equal(next.item.value, original.replace('/coupon/','/login/'));
+  const batch = await request(worker, `/api/products/${assigned.product_id}/export-batches`, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({})});
+  assert.equal(batch.batch.items[0].value, next.item.value);
+  assert.equal((await db.prepare('SELECT value FROM items LIMIT 1').first()).value, original);
+});
+
 test("コード系とQUOカードPayはURL解析と分離し、専用カードへ保管する", async t => {
   const { mf, analyzer, worker } = await createRuntime();
   t.after(() => cleanup(mf, analyzer));

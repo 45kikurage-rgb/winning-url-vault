@@ -1,5 +1,6 @@
 import {IntakeError,sendingIdentity,limitSending,listSendingTokens,issueSendingToken,revokeSendingToken} from './sending-auth.js';
 import {readIntake,beginIntake,materializeIntake,dispatchIntake,recoverIntakes} from './intake.js';
+import { lawsonLoginUrl } from './lawson-url.js';
 import {
   classifyValue, codeCard, extractInputValues, isGenericName, normalizeAnalysis,
   normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson
@@ -15,7 +16,7 @@ import {
   startExportBatch, undoExportBatch, setFolderVisibility
 } from "./extraction.js";
 
-const VERSION = "0.9.1";
+const VERSION = "0.9.2";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -187,9 +188,10 @@ async function ensureCodeCard(env, type) {
 
 async function analyzerRequest(env, values, options = {}) {
   if (!values.length) return [];
+  const analysisUrls = values.map(value => lawsonLoginUrl(value) || value);
   const request = new Request("https://coupon-analyzer.internal/api/analyze-detail", {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ items: values.map((value, index) => ({ label: String(index + 1), url: value })),
+    body: JSON.stringify({ items: analysisUrls.map((value, index) => ({ label: String(index + 1), url: value })),
       mode: options.mode === "fast" ? "fast" : "stable",
       renderImage: options.renderImage === true,
       includeProductImage: options.includeProductImage === true })
@@ -201,7 +203,13 @@ async function analyzerRequest(env, values, options = {}) {
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(payload.error || `Analyzer HTTP ${response.status}`);
   if (!Array.isArray(payload.results)) throw new Error("Analyzerの応答形式が不正です");
-  return payload.results;
+  return payload.results.map(result => {
+    const index = Number(result?.label) - 1;
+    if (Number.isInteger(index) && index >= 0 && index < values.length && result.url === analysisUrls[index]) {
+      return { ...result, url: values[index], ...(analysisUrls[index] !== values[index] ? { openUrl: analysisUrls[index] } : {}) };
+    }
+    return result;
+  });
 }
 
 async function processAnalysis(env, item, result) {
