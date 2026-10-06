@@ -16,7 +16,7 @@ import {
   startExportBatch, undoExportBatch, setFolderVisibility
 } from "./extraction.js";
 
-const VERSION = "0.9.2";
+const VERSION = "0.9.3";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -742,7 +742,7 @@ async function reanalyzePending(env, pendingId) {
 async function listUnresolved(env) {
   const rows = await env.DB.prepare(`SELECT i.id,i.value,i.received_at,u.reason,u.pattern_key,u.retry_count,u.last_error
     FROM unresolved_items u JOIN items i ON i.id=u.item_id ORDER BY i.received_at ASC LIMIT 500`).all();
-  return json({ ok: true, items: rows.results || [] });
+  return json({ ok: true, items: (rows.results || []).map(item => ({ ...item, openUrl: lawsonLoginUrl(item.value) || item.value })) });
 }
 
 async function deleteUnresolved(env, itemId) {

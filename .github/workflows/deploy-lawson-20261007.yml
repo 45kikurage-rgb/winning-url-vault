@@ -1,4 +1,4 @@
-name: Deploy Lawson URL support (one-off)
+name: Deploy Lawson URL support and opening links (one-off)
 on:
   push:
     branches: [main]

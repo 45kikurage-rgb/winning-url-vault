@@ -259,6 +259,11 @@ test("Lawson coupon reception preserves original data and sends login to the ana
   const batch = await request(worker, `/api/products/${assigned.product_id}/export-batches`, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({})});
   assert.equal(batch.batch.items[0].value, next.item.value);
   assert.equal((await db.prepare('SELECT value FROM items LIMIT 1').first()).value, original);
+  const unsupported = original.replace('testfixture', 'unsupported');
+  await request(worker, '/api/receive', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({values:[unsupported]})});
+  const unresolved = (await request(worker, '/api/unresolved')).items.find(item => item.value === unsupported);
+  assert.equal(unresolved.value, unsupported);
+  assert.equal(unresolved.openUrl, unsupported.replace('/coupon/', '/login/'));
 });
 
 test("コード系とQUOカードPayはURL解析と分離し、専用カードへ保管する", async t => {
