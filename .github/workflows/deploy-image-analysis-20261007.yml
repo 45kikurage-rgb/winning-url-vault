@@ -1,4 +1,4 @@
-name: Verify per-URL image analysis (one-off)
+name: Inspect image model response (one-off)
 on:
   push:
     branches: [main]

@@ -895,7 +895,12 @@ export default {
           || await sha256(String(body.image || "")) !== "f8fadbacf6bb4de99e502be6b09a6b211b673a6b102e92ee6cc43f5da8491dbc") {
           return json({ ok: false, error: "Not found" }, 404);
         }
-        return json({ ok: true, proposal: await analyzeCouponImage(env, body.image) });
+        const result = await env.AI.run("@cf/moondream/moondream3.1-9B-A2B", {
+          task: "query", image: body.image,
+          question: "Read this Japanese coupon screenshot. Return JSON with product_name, display_name, redeem_place, specification, expires_on (YYYY-MM-DD).",
+          reasoning: false, temperature: 0, max_tokens: 500, stream: false
+        });
+        return json({ ok: true, result });
       }
       // An explicit bearer token can never fall back to an administrator cookie.
       if(url.pathname.startsWith('/api/') && request.headers.has('authorization')) {
