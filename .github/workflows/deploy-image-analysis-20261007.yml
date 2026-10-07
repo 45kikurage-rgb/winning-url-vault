@@ -1,4 +1,4 @@
-name: Deploy per-URL image analysis (one-off)
+name: Verify per-URL image analysis (one-off)
 on:
   push:
     branches: [main]
