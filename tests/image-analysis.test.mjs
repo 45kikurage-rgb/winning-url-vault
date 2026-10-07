@@ -10,14 +10,21 @@ test("画像判定は対応画像だけを受け付け、AIのJSONを確認画�
   const calls = [];
   const env = { AI: { run: async (model, input) => {
     calls.push({ model, input });
-    return { answer: '```json\n{"product_name":"【大塚製薬】 ファイブミニ 1本無料","display_name":"ファイブミニ 1本無料","redeem_place":"ローソン","specification":"税込130円・1本無料","expires_on":"2026-10-19"}\n```' };
+    return { choices: [{ message: { content: '```json\n{"product_name":"【大塚製薬】 ファイブミニ 1本無料","display_name":"ファイブミニ 1本無料","redeem_place":"ローソン","specification":"税込130円・1本無料","expires_on":"2026-10-19"}\n```' } }] };
   } } };
   const result = await analyzeCouponImage(env, IMAGE);
-  assert.equal(calls[0].model, "@cf/moondream/moondream3.1-9B-A2B");
-  assert.equal(calls[0].input.image, IMAGE);
+  assert.equal(calls[0].model, "@cf/google/gemma-4-26b-a4b-it");
+  assert.equal(calls[0].input.messages[0].content[1].image_url.url, IMAGE);
   assert.equal(result.productName, "【大塚製薬】 ファイブミニ 1本無料");
   assert.equal(result.expiresOn, "2026-10-19");
   assert.equal(result.redeemPlace, "ローソン");
+});
+
+test("画像モデル応答がresultで包まれていても解析できる", async () => {
+  const env = { AI: { run: async () => ({
+    result: { response: '{"product_name":"商品","display_name":"商品","redeem_place":"店舗","specification":"無料","expires_on":"2026-12-31"}' }
+  }) } };
+  assert.equal((await analyzeCouponImage(env, IMAGE)).productName, "商品");
 });
 
 test("画像判定項目は長さを制限し、存在しない項目を空欄にする", () => {

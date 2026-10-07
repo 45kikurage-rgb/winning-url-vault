@@ -1,4 +1,4 @@
-name: Inspect Gemma image response (one-off)
+name: Deploy verified image analysis (one-off)
 on:
   push:
     branches: [main]

@@ -23,6 +23,18 @@ function parseJsonAnswer(answer) {
   throw new Error("画像から判定項目を読み取れませんでした。別の画像を選択するか手入力してください");
 }
 
+function answerText(response) {
+  let value = response;
+  for (let depth = 0; depth < 3 && value && typeof value === "object"; depth += 1) {
+    const choice = value.choices?.[0]?.message?.content;
+    if (typeof choice === "string") return choice;
+    if (typeof value.answer === "string") return value.answer;
+    if (typeof value.response === "string") return value.response;
+    value = value.result;
+  }
+  return value;
+}
+
 export function normalizeImageProposal(value) {
   const source = value && typeof value === "object" ? value : {};
   const productName = clean(source.product_name || source.productName, 160);
@@ -44,8 +56,18 @@ export async function analyzeCouponImage(env, imageDataUri) {
     "利用期限はクーポンのご利用期限・有効期限・引換期限を使い、画像にない項目は空文字にしてください。",
     "曜日が書かれていても日付はYYYY-MM-DDだけにしてください。推測で補完しないでください。"
   ].join("\n");
-  const response = await env.AI.run("@cf/moondream/moondream3.1-9B-A2B", {
-    task: "query", image, question, reasoning: false, temperature: 0, max_tokens: 500, stream: false
+  const response = await env.AI.run("@cf/google/gemma-4-26b-a4b-it", {
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text: question },
+        { type: "image_url", image_url: { url: image } }
+      ]
+    }],
+    temperature: 0,
+    max_tokens: 500,
+    stream: false,
+    chat_template_kwargs: { enable_thinking: false }
   });
-  return normalizeImageProposal(parseJsonAnswer(response?.answer || response?.response || response));
+  return normalizeImageProposal(parseJsonAnswer(answerText(response)));
 }

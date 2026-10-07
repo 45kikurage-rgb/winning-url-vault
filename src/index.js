@@ -889,25 +889,6 @@ export default {
     const url = new URL(request.url);
     env={...env,DB:env.DB?.withSession?env.DB.withSession('first-primary'):env.DB};
     try {
-      if (url.pathname === "/api/diag/9ca49338f4a6017aeddf55a70f6df89f" && request.method === "POST") {
-        const body = await request.json().catch(() => ({}));
-        if (Date.now() > 1791362693261 || body.key !== "09ace8d30eb1f16230e8767213bca642503df77bf7517386"
-          || await sha256(String(body.image || "")) !== "f8fadbacf6bb4de99e502be6b09a6b211b673a6b102e92ee6cc43f5da8491dbc") {
-          return json({ ok: false, error: "Not found" }, 404);
-        }
-        const result = await env.AI.run("@cf/google/gemma-4-26b-a4b-it", {
-          messages: [{
-            role: "user",
-            content: [
-              { type: "text", text: "この日本のクーポン画面を正確にOCRし、JSONだけで返してください。形式: {\"product_name\":\"正式な商品名\",\"display_name\":\"短い表示名\",\"redeem_place\":\"利用店舗\",\"specification\":\"容量・本数・無料または値引き条件\",\"expires_on\":\"YYYY-MM-DD\"}" },
-              { type: "image_url", image_url: { url: body.image } }
-            ]
-          }],
-          temperature: 0, max_tokens: 500, stream: false,
-          chat_template_kwargs: { enable_thinking: false }
-        });
-        return json({ ok: true, result });
-      }
       // An explicit bearer token can never fall back to an administrator cookie.
       if(url.pathname.startsWith('/api/') && request.headers.has('authorization')) {
         const identity=await sendingIdentity(request,env);
