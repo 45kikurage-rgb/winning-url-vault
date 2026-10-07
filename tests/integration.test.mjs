@@ -266,6 +266,38 @@ test("Lawson coupon reception preserves original data and sends login to the ana
   assert.equal(unresolved.openUrl, unsupported.replace('/coupon/', '/login/'));
 });
 
+test("未判定URLの画像確認は選択した1件だけを確定する", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const first = "https://coupon.sej.co.jp/unsupported-image-one";
+  const second = "https://coupon.sej.co.jp/unsupported-image-two";
+  await request(worker, "/api/receive", {
+    method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify({ values:[first, second] })
+  });
+  let unresolved = await request(worker, "/api/unresolved");
+  assert.equal(unresolved.items.length, 2);
+  const target = unresolved.items.find(item => item.value === first);
+  const confirmed = await request(worker, `/api/unresolved/${target.id}/image-confirm`, {
+    method:"POST", headers:{ "content-type":"application/json" },
+    body:JSON.stringify({
+      product_name:"【大塚製薬】ファイブミニ（税込130円）1本無料クーポン",
+      display_name:"ファイブミニ 1本無料",
+      redeem_place:"ローソン",
+      specification:"1本無料",
+      expires_on:"2026-10-19"
+    })
+  });
+  assert.equal(confirmed.classified, 1);
+  unresolved = await request(worker, "/api/unresolved");
+  assert.deepEqual(unresolved.items.map(item => item.value), [second]);
+  const rows = await DB.prepare("SELECT value,status FROM items ORDER BY value").all();
+  assert.deepEqual(rows.results.map(item => [item.value, item.status]), [[first, "active"], [second, "unresolved"]]);
+  const cards = await request(worker, "/api/cards");
+  assert.equal(cards.cards.length, 1);
+  assert.equal(cards.cards[0].display_name, "ファイブミニ 1本無料");
+  assert.equal(cards.cards[0].expires_on, "2026-10-19");
+});
+
 test("コード系とQUOカードPayはURL解析と分離し、専用カードへ保管する", async t => {
   const { mf, analyzer, worker } = await createRuntime();
   t.after(() => cleanup(mf, analyzer));

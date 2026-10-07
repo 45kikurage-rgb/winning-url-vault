@@ -12,7 +12,8 @@ const state = { cursor: null, cardId: null, authenticated: false, cards: new Map
   activeJobId: null, dismissedJobId: null, progressHideJobId: null, progressHideTimer: null, pollTimer: null, refreshing: false, dialogPendingId: null,
   campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
   correctionCampaignId: null, winningLists: [], outputProductId: null, exportProductId: null,
-  exportItem: null, exportBatch: null, pendingExportBatch: null, exportPaypayKind: null };
+  exportItem: null, exportBatch: null, pendingExportBatch: null, exportPaypayKind: null,
+  unresolvedItems: new Map(), imageAnalysisItemId: null, couponImageData: null };
 
 async function api(path, options) {
   const response = await fetch(path, options);
@@ -279,13 +280,17 @@ async function load() {
     $("pendingSection").classList.toggle("hidden", pending.items.length === 0);
     state.pendingItems = new Map(pending.items.map(item => [item.id, item]));
     $("pendingList").innerHTML = pending.items.map(pendingCard).join("");
-    $("unknownList").innerHTML = unresolved.items.slice(0, 10).map(item => {
+    $("unknownList").innerHTML = unresolved.items.map(item => {
       const openUrl = item.openUrl || item.value;
       const open = /^https?:\/\//i.test(openUrl)
         ? `<a class="secondary unknown-open" href="${esc(openUrl)}" target="_blank" rel="noreferrer">開く</a>` : "";
-      return `<div class="unknown-row"><span>${esc(item.reason)}</span><details><summary>受信内容を確認</summary><div class="unknown-value">${esc(item.value)}</div></details><div class="unknown-actions">${open}<button class="secondary" data-copy-unresolved="${esc(item.id)}">コピー</button><button class="danger" data-delete-unresolved="${esc(item.id)}">削除</button></div><small>${esc(item.pattern_key || "未知パターン")} / 再解析 ${Number(item.retry_count || 0)}回</small></div>`;
+      const imageAnalysis = /^https?:\/\//i.test(openUrl)
+        ? `<button data-image-unresolved="${esc(item.id)}">画像で判定</button>` : "";
+      return `<div class="unknown-row"><span>${esc(item.reason)}</span><details><summary>受信内容を確認</summary><div class="unknown-value">${esc(item.value)}</div></details><div class="unknown-actions">${open}${imageAnalysis}<button class="secondary" data-copy-unresolved="${esc(item.id)}">コピー</button><button class="danger" data-delete-unresolved="${esc(item.id)}">削除</button></div><small>${esc(item.pattern_key || "未知パターン")} / 再解析 ${Number(item.retry_count || 0)}回</small></div>`;
     }).join("");
     const unresolvedById = new Map(unresolved.items.map(item => [item.id, item]));
+    state.unresolvedItems = unresolvedById;
+    document.querySelectorAll("[data-image-unresolved]").forEach(button => button.onclick = () => openImageAnalysis(button.dataset.imageUnresolved));
     document.querySelectorAll("[data-copy-unresolved]").forEach(button => button.onclick = async () => {
       await writeClipboard(unresolvedById.get(button.dataset.copyUnresolved)?.value || "");
       button.textContent = "コピー済み";
@@ -301,6 +306,122 @@ async function load() {
   } catch (error) {
     $("cards").innerHTML = `<div class="empty error">${esc(error.message)}</div>`;
   }
+}
+
+function resetImageAnalysis() {
+  state.couponImageData = null;
+  $("couponImageFile").value = "";
+  $("couponImagePreview").innerHTML = "<span>画像未選択</span>";
+  $("imageAnalysisMessage").textContent = "";
+  $("imageAnalysisFields").classList.add("hidden");
+  $("reanalyzeCouponImage").classList.add("hidden");
+  $("confirmCouponImage").classList.add("hidden");
+  for (const id of ["imageProductName", "imageDisplayName", "imageRedeemPlace", "imageSpecification", "imageExpiresOn"]) $(id).value = "";
+}
+
+function openImageAnalysis(itemId) {
+  const item = state.unresolvedItems.get(itemId);
+  if (!item) return;
+  state.imageAnalysisItemId = itemId;
+  resetImageAnalysis();
+  $("imageAnalysisUrl").textContent = item.value;
+  $("imageAnalysisDialog").showModal();
+}
+
+async function imageToDataUri(file) {
+  if (!file || !/^image\/(?:png|jpeg|webp)$/i.test(file.type)) throw new Error("PNG・JPEG・WebPの画像を選択してください");
+  if (file.size > 12_000_000) throw new Error("画像が大きすぎます");
+  const bitmap = await createImageBitmap(file);
+  const max = 1600;
+  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width; canvas.height = height;
+  canvas.getContext("2d", { alpha:false }).drawImage(bitmap, 0, 0, width, height);
+  bitmap.close?.();
+  const data = canvas.toDataURL("image/jpeg", 0.88);
+  if (data.length > 3_000_000) throw new Error("画像を縮小できませんでした。別の画像を選択してください");
+  return data;
+}
+
+async function setCouponImage(file) {
+  try {
+    const data = await imageToDataUri(file);
+    state.couponImageData = data;
+    $("couponImagePreview").innerHTML = `<img src="${data}" alt="判定するスクリーンショット">`;
+    await analyzeSelectedImage();
+  } catch (error) {
+    $("imageAnalysisMessage").textContent = error.message;
+  }
+}
+
+async function pasteCouponImage() {
+  $("imageAnalysisMessage").textContent = "";
+  try {
+    if (!navigator.clipboard?.read) throw new Error("この端末では画像貼り付けを使えません。「画像を選択」を押してください");
+    const items = await navigator.clipboard.read();
+    for (const item of items) {
+      const type = item.types.find(value => /^image\/(?:png|jpeg|webp)$/i.test(value));
+      if (type) return setCouponImage(await item.getType(type));
+    }
+    throw new Error("クリップボードに画像がありません");
+  } catch (error) {
+    $("imageAnalysisMessage").textContent = error.message;
+  }
+}
+
+async function analyzeSelectedImage() {
+  if (!state.couponImageData || !state.imageAnalysisItemId) return;
+  $("imageAnalysisDialog").classList.add("image-analysis-working");
+  $("imageAnalysisMessage").textContent = "画像を読み取っています…";
+  $("reanalyzeCouponImage").disabled = true;
+  try {
+    const result = await api(`/api/unresolved/${state.imageAnalysisItemId}/image-analyze`, {
+      method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify({ image:state.couponImageData })
+    });
+    const proposal = result.proposal || {};
+    $("imageProductName").value = proposal.productName || "";
+    $("imageDisplayName").value = proposal.displayName || proposal.productName || "";
+    $("imageRedeemPlace").value = proposal.redeemPlace || "";
+    $("imageSpecification").value = proposal.specification || "";
+    $("imageExpiresOn").value = proposal.expiresOn || "";
+    $("imageAnalysisFields").classList.remove("hidden");
+    $("reanalyzeCouponImage").classList.remove("hidden");
+    $("confirmCouponImage").classList.remove("hidden");
+    $("imageAnalysisMessage").textContent = "読取結果を確認してください。違う箇所は修正できます。";
+  } catch (error) {
+    $("reanalyzeCouponImage").classList.remove("hidden");
+    $("imageAnalysisMessage").textContent = error.message;
+  } finally {
+    $("imageAnalysisDialog").classList.remove("image-analysis-working");
+    $("reanalyzeCouponImage").disabled = false;
+  }
+}
+
+async function confirmSelectedImage() {
+  if (!state.imageAnalysisItemId) return;
+  const button = $("confirmCouponImage");
+  button.disabled = true;
+  $("imageAnalysisMessage").textContent = "この1件を確定しています…";
+  const body = {
+    product_name: $("imageProductName").value,
+    display_name: $("imageDisplayName").value,
+    redeem_place: $("imageRedeemPlace").value,
+    specification: $("imageSpecification").value,
+    expires_on: $("imageExpiresOn").value
+  };
+  try {
+    await api(`/api/unresolved/${state.imageAnalysisItemId}/image-confirm`, {
+      method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify(body)
+    });
+    $("imageAnalysisDialog").close();
+    state.imageAnalysisItemId = null;
+    resetImageAnalysis();
+    await load();
+  } catch (error) {
+    $("imageAnalysisMessage").textContent = error.message;
+  } finally { button.disabled = false; }
 }
 
 function methodLabel(method) {
@@ -1040,6 +1161,15 @@ $("paste").onclick = async () => {
   try { $("receiveInput").value = await navigator.clipboard.readText(); }
   catch { $("receiveResult").textContent = "入力欄を長押しして貼り付けてください。"; }
 };
+$("pasteCouponImage").onclick = pasteCouponImage;
+$("couponImageFile").onchange = event => setCouponImage(event.currentTarget.files?.[0]);
+$("reanalyzeCouponImage").onclick = analyzeSelectedImage;
+$("confirmCouponImage").onclick = confirmSelectedImage;
+$("imageAnalysisClose").onclick = () => $("imageAnalysisDialog").close();
+$("imageAnalysisDialog").addEventListener("close", () => {
+  state.imageAnalysisItemId = null;
+  resetImageAnalysis();
+});
 $("dialogClose").onclick = () => $("itemsDialog").close();
 $("loadMore").onclick = loadItems;
 $("loginForm").onsubmit = login;

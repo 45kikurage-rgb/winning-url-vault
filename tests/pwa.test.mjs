@@ -102,6 +102,20 @@ test("受信完了表示を自動で閉じ、仕分けカードと当選リス�
   assert.match(styles, /\.receive\.panel\{margin:14px 0 0/);
 });
 
+test("未判定URLを1件ずつ画像で判定する画面を備える", async () => {
+  const index = await text("index.html");
+  const app = await text("app.js");
+  assert.match(index, /id="imageAnalysisDialog"/);
+  assert.match(index, /id="pasteCouponImage"/);
+  assert.match(index, /id="couponImageFile"[^>]*accept="image\/png,image\/jpeg,image\/webp"/);
+  assert.match(app, /data-image-unresolved/);
+  assert.match(app, /navigator\.clipboard\?\.read/);
+  assert.match(app, /\/image-analyze/);
+  assert.match(app, /\/image-confirm/);
+  assert.match(app, /この1件を確定/);
+  assert.doesNotMatch(app, /unresolved\.items\.slice\(0,\s*10\)/);
+});
+
 
 test("1件ずつ抽出はAndroid/PWAでnoopenerの戻り値を失敗判定しない", async () => {
   const app = await text("app.js");

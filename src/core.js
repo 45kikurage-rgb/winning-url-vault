@@ -34,6 +34,7 @@ export function normalizeRedeemPlace(value) {
   if (/^(?:ファミリーマート|ファミリマト|ファミマ|familymart)$/.test(normalized)) return "ファミリーマート";
   if (/^(?:ミスタードーナツ|ミスド)$/.test(normalized)) return "ミスタードーナツ";
   if (/^(?:スターバックス|starbucks)$/.test(normalized)) return "スターバックス";
+  if (/^(?:ローソン|lawson)$/.test(normalized)) return "ローソン";
   return normalized;
 }
 

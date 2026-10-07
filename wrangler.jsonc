@@ -3,6 +3,7 @@
   "name": "winning-url-vault",
   "main": "src/index.js",
   "compatibility_date": "2026-09-22",
+  "ai": { "binding": "AI" },
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",

@@ -87,7 +87,7 @@
   </section>
 
   <section class="unresolved panel">
-    <div class="row"><div><h2>未判定の受信内容</h2><p>URL・コード・テキストを確認し、ルール更新後に再解析できます。</p></div><button id="retry">再解析</button></div>
+    <div class="row"><div><h2>未判定の受信内容</h2><p>URLを開いてスクリーンショットを撮り、1件ずつ画像で判定できます。</p></div><button id="retry">再解析</button></div>
     <strong id="unknownBottom">—件</strong><div id="unknownList"></div>
   </section>
   </section>
@@ -124,6 +124,32 @@
   </section>
   <p id="sendingTokenMessage" aria-live="polite"></p>
   <div id="sendingTokenList"></div>
+</dialog>
+
+<dialog id="imageAnalysisDialog">
+  <div class="dialog-head"><div><small>未判定URL 1件</small><h2>画像で判定</h2></div><button id="imageAnalysisClose" class="secondary" type="button">閉じる</button></div>
+  <p class="image-analysis-guide">商品名と利用期限が見えるスクリーンショットを貼り付けてください。読取結果を確認してから、このURLだけを確定します。</p>
+  <div id="imageAnalysisUrl" class="unknown-value"></div>
+  <div class="image-input-actions">
+    <button id="pasteCouponImage" class="secondary" type="button">画像を貼り付け</button>
+    <label class="file-button">画像を選択<input id="couponImageFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+  </div>
+  <div id="couponImagePreview" class="coupon-image-preview"><span>画像未選択</span></div>
+  <p id="imageAnalysisMessage" class="result" aria-live="polite"></p>
+  <section id="imageAnalysisFields" class="image-analysis-fields hidden">
+    <label>正式商品名<input id="imageProductName" maxlength="160" autocomplete="off"></label>
+    <label>表示名<input id="imageDisplayName" maxlength="64" autocomplete="off"></label>
+    <div class="field-row">
+      <label>利用先<input id="imageRedeemPlace" maxlength="64" autocomplete="off"></label>
+      <label>容量・規格<input id="imageSpecification" maxlength="80" autocomplete="off"></label>
+    </div>
+    <label>使用期限<input id="imageExpiresOn" type="date" min="2020-01-01" max="2099-12-31"></label>
+    <p>画像の読取結果です。内容を確認し、違う場合は修正してください。</p>
+  </section>
+  <div class="confirm-actions">
+    <button id="reanalyzeCouponImage" class="secondary hidden" type="button">画像を再読取</button>
+    <button id="confirmCouponImage" class="hidden" type="button">この1件を確定</button>
+  </div>
 </dialog>
 
 <dialog id="pendingDialog" class="pending-dialog">
@@ -231,6 +257,6 @@
   <p id="trialResetMessage" class="result" aria-live="polite"></p>
   <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
-<script type="module" src="/app.js?v=20261007-lawson-v1"></script>
+<script type="module" src="/app.js?v=20261007-image-v1"></script>
 </body>
 </html>

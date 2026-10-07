@@ -1,6 +1,7 @@
 import {IntakeError,sendingIdentity,limitSending,listSendingTokens,issueSendingToken,revokeSendingToken} from './sending-auth.js';
 import {readIntake,beginIntake,materializeIntake,dispatchIntake,recoverIntakes} from './intake.js';
 import { lawsonLoginUrl } from './lawson-url.js';
+import { analyzeCouponImage } from './image-analysis.js';
 import {
   classifyValue, codeCard, extractInputValues, isGenericName, normalizeAnalysis,
   normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson
@@ -16,7 +17,7 @@ import {
   startExportBatch, undoExportBatch, setFolderVisibility
 } from "./extraction.js";
 
-const VERSION = "0.9.3";
+const VERSION = "0.9.4";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -745,6 +746,75 @@ async function listUnresolved(env) {
   return json({ ok: true, items: (rows.results || []).map(item => ({ ...item, openUrl: lawsonLoginUrl(item.value) || item.value })) });
 }
 
+async function unresolvedItem(env, itemId) {
+  return env.DB.prepare(`SELECT i.id,i.value,i.value_type,i.status,u.reason
+    FROM items i JOIN unresolved_items u ON u.item_id=i.id
+    WHERE i.id=? AND i.status='unresolved'`).bind(itemId).first();
+}
+
+async function analyzeUnresolvedImage(request, env, itemId) {
+  const item = await unresolvedItem(env, itemId);
+  if (!item) return json({ ok: false, error: "未判定データが見つかりません" }, 404);
+  const body = await request.json().catch(() => ({}));
+  let proposal;
+  try { proposal = await analyzeCouponImage(env, body.image); }
+  catch (error) { return json({ ok: false, error: error instanceof Error ? error.message : "画像を読み取れませんでした" }, 422); }
+  await audit(env, item.id, "unresolved_image_analyzed", {
+    productNameFound: Boolean(proposal.productName),
+    expiryFound: Boolean(proposal.expiresOn),
+    redeemPlaceFound: Boolean(proposal.redeemPlace)
+  });
+  return json({ ok: true, itemId: item.id, proposal });
+}
+
+async function confirmUnresolvedImage(request, env, itemId) {
+  const item = await unresolvedItem(env, itemId);
+  if (!item) return json({ ok: false, error: "未判定データが見つかりません" }, 404);
+  const body = await request.json().catch(() => ({}));
+  const rawName = String(body.product_name || "").normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, 160);
+  const normalizedName = normalizeName(rawName);
+  const displayName = String(body.display_name || rawName).normalize("NFKC").replace(/\s+/g, " ").trim().slice(0, 64);
+  const redeemPlace = normalizeRedeemPlace(body.redeem_place);
+  const specification = normalizeSpecification(body.specification);
+  const expiresOn = String(body.expires_on || "").trim();
+  if (isGenericName(rawName)) return json({ ok: false, error: "正式な商品名を入力してください" }, 400);
+  if (!normalizedName || !displayName || !redeemPlace || !/^20\d{2}-\d{2}-\d{2}$/.test(expiresOn)) {
+    return json({ ok: false, error: "商品名・表示名・利用先・使用期限を確認してください" }, 400);
+  }
+  const requiredConditions = stableJson({});
+  const matchKey = [normalizedName, specification, redeemPlace, requiredConditions].join("\u001f");
+  let product = await env.DB.prepare("SELECT id FROM product_master WHERE match_key=? AND confirmed=1").bind(matchKey).first();
+  if (!product) {
+    const productId = id();
+    await env.DB.prepare(`INSERT OR IGNORE INTO product_master
+      (id,source_type,raw_name,normalized_name,display_name,redeem_place,specification,required_conditions,match_key,confirmed)
+      VALUES (?,?,?,?,?,?,?,?,?,1)`).bind(productId, "image", rawName, normalizedName, displayName, redeemPlace,
+        specification, requiredConditions, matchKey).run();
+    product = await env.DB.prepare("SELECT id FROM product_master WHERE match_key=? AND confirmed=1").bind(matchKey).first();
+  } else {
+    await env.DB.prepare("UPDATE product_master SET display_name=?,updated_at=? WHERE id=?")
+      .bind(displayName, nowSql(), product.id).run();
+  }
+  let card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=?").bind(product.id, expiresOn).first();
+  if (!card) {
+    const cardId = id();
+    await env.DB.prepare("INSERT OR IGNORE INTO cards (id,product_id,expires_on,locked) VALUES (?,?,?,1)")
+      .bind(cardId, product.id, expiresOn).run();
+    card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=?").bind(product.id, expiresOn).first();
+  }
+  const analysis = {
+    status: "ok", site: "image", kind: "coupon", product: rawName, redeemPlace,
+    specification, expiresOn, confirmedFromImage: true, url: item.value
+  };
+  await env.DB.batch([
+    env.DB.prepare(`UPDATE items SET status='active',card_id=?,pending_id=NULL,analysis_json=?,analyzed_at=?,classified_at=?
+      WHERE id=? AND status='unresolved'`).bind(card.id, JSON.stringify(analysis), nowSql(), nowSql(), item.id),
+    env.DB.prepare("DELETE FROM unresolved_items WHERE item_id=?").bind(item.id)
+  ]);
+  await audit(env, item.id, "unresolved_image_confirmed", { productId: product.id, cardId: card.id });
+  return json({ ok: true, itemId: item.id, productId: product.id, cardId: card.id, classified: 1 });
+}
+
 async function deleteUnresolved(env, itemId) {
   const item = await env.DB.prepare(`SELECT i.id FROM items i
     JOIN unresolved_items u ON u.item_id=i.id WHERE i.id=?`).bind(itemId).first();
@@ -959,6 +1029,10 @@ export default {
       if (url.pathname === "/api/pending" && request.method === "GET") return listPending(env);
       if (url.pathname === "/api/unresolved" && request.method === "GET") return listUnresolved(env);
       if (url.pathname === "/api/unresolved/retry" && request.method === "POST") return retryUnresolved(env);
+      const unresolvedImageAnalyze = url.pathname.match(/^\/api\/unresolved\/([0-9a-f-]+)\/image-analyze$/i);
+      if (unresolvedImageAnalyze && request.method === "POST") return analyzeUnresolvedImage(request, env, unresolvedImageAnalyze[1]);
+      const unresolvedImageConfirm = url.pathname.match(/^\/api\/unresolved\/([0-9a-f-]+)\/image-confirm$/i);
+      if (unresolvedImageConfirm && request.method === "POST") return confirmUnresolvedImage(request, env, unresolvedImageConfirm[1]);
       const unresolvedItem = url.pathname.match(/^\/api\/unresolved\/([0-9a-f-]+)$/i);
       if (unresolvedItem && request.method === "DELETE") return deleteUnresolved(env, unresolvedItem[1]);
       const confirmation = url.pathname.match(/^\/api\/pending\/([0-9a-f-]+)\/confirm$/i);
