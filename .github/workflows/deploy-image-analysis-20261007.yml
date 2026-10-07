@@ -1,4 +1,4 @@
-name: Inspect image model response (one-off)
+name: Inspect Gemma image response (one-off)
 on:
   push:
     branches: [main]
