@@ -4,23 +4,71 @@ on:
     branches: [main]
     paths: [".github/workflows/deploy-seven-parser.yml"]
 permissions:
-  contents: read
+  contents: write
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          repository: 45kikurage-rgb/coupon-analyzer-api
-          ref: c5c12590dba39e72e517c2f91c7c6542c8eb476b
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-      - run: npm ci
-      - run: node --check src/index.js
-      - run: npm test
-      - run: npm run deploy
+      - name: Receive encrypted private source
+        env:
+          HANDOFF_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          cat > "$RUNNER_TEMP/receive-source.mjs" <<'JS'
+          import {generateKeyPairSync,privateDecrypt,createDecipheriv,constants} from 'node:crypto';
+          import {writeFileSync} from 'node:fs';
+          const repo=process.env.GITHUB_REPOSITORY, runId=process.env.GITHUB_RUN_ID;
+          const token=process.env.HANDOFF_GITHUB_TOKEN;
+          async function api(path,opts={}) {
+           const r=await fetch('https://api.github.com/repos/'+repo+path,{...opts,headers:{Authorization:'Bearer '+token,Accept:'application/vnd.github+json',...opts.headers}});
+           if(r.status===404) return null;
+           if(!r.ok) throw new Error('GitHub handoff request failed: '+r.status);
+           return r.json();
+          }
+          const {publicKey,privateKey}=generateKeyPairSync('rsa',{modulusLength:3072,publicKeyEncoding:{type:'spki',format:'pem'},privateKeyEncoding:{type:'pkcs8',format:'pem'}});
+          const keyPath='/.deployment/seven-public-key.json';
+          const previous=await api('/contents'+keyPath);
+          const json=JSON.stringify({runId,publicKey,sourceCommit:'c5c12590dba39e72e517c2f91c7c6542c8eb476b'});
+          await api('/contents'+keyPath,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:'chore: prepare encrypted deployment handoff [skip ci]',content:Buffer.from(json).toString('base64'),branch:'main',...(previous?.sha?{sha:previous.sha}:{})})});
+          console.log('Encrypted deployment handoff ready for run '+runId);
+          const deadline=Date.now()+12*60*1000;
+          while(Date.now()<deadline) {
+           const file=await api('/contents/.deployment/seven-payload.json?ref=main');
+           if(file?.content) {
+            const payload=JSON.parse(Buffer.from(file.content.replace(/\s/g,''),'base64').toString());
+            if(payload.runId===runId) {
+             const key=privateDecrypt({key:privateKey,padding:constants.RSA_PKCS1_OAEP_PADDING,oaepHash:'sha256'},Buffer.from(payload.wrappedKey,'base64'));
+             const decrypt=createDecipheriv('aes-256-gcm',key,Buffer.from(payload.iv,'base64'));
+             decrypt.setAAD(Buffer.from(runId));
+             decrypt.setAuthTag(Buffer.from(payload.tag,'base64'));
+             writeFileSync('source.tar.gz',Buffer.concat([decrypt.update(Buffer.from(payload.ciphertext,'base64')),decrypt.final()]),{mode:0o600});
+             console.log('Encrypted source authenticated and received');
+             process.exit(0);
+            }
+           }
+           await new Promise(r=>setTimeout(r,10000));
+          }
+          throw new Error('Encrypted deployment handoff expired');
+          
+          JS
+          node "$RUNNER_TEMP/receive-source.mjs"
+          mkdir -p "$RUNNER_TEMP/seven-api"
+          tar -xzf source.tar.gz -C "$RUNNER_TEMP/seven-api"
+          rm source.tar.gz
+      - name: Verify and deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+        run: |
+          cd "$RUNNER_TEMP/seven-api"
+          npm ci
+          node --check src/index.js
+          npm test
+          npm run deploy
+      - name: Remove decrypted source
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/seven-api" source.tar.gz "$RUNNER_TEMP/receive-source.mjs"
