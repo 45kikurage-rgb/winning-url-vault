@@ -78,7 +78,7 @@ async function startAnalyzer() {
     if (item.url.includes("unsupported")) continue;
     const generic = item.url.includes("generic");
     results.push({
-      label: item.label, url: item.url, status: "ok", site: "seven", kind: "coupon",
+      label: item.label, url: item.url, status: server.usedUrls?.has(item.url) ? "used" : "ok", site: "seven", kind: "coupon",
       product: generic ? "セブン-イレブン クーポン" : "セブンカフェ カフェラテ",
       capacity: "300ml", size: "other", redeemPlace: "セブンイレブン",
       expiresOn: item.url.includes("new-expiry") ? "2026-11-30" : "2026-10-31",
@@ -944,4 +944,49 @@ test("outbox再送はduplicateとstaleを成功扱いし、同一revision異内�
   assert.equal(conflict.next_attempt_at, null);
   assert.match(conflict.last_error, /REVISION_CONFLICT/);
   assert.equal(analyzer.revisions.get(`product:${first.product_id}`).revision, 2);
+});
+
+
+
+test("usage recheck isolates used coupons, keeps unknowns, protects assigned items and confirms deletion", async t => {
+  const {mf,analyzer,worker,DB}=await createRuntime();t.after(()=>cleanup(mf,analyzer));
+  const initial='https://coupon.sej.co.jp/initial-used';
+  const later='https://coupon.sej.co.jp/later-used';
+  const valid='https://coupon.sej.co.jp/still-valid';
+  const unknown='https://coupon.sej.co.jp/unsupported-usage';
+  const assigned='https://coupon.sej.co.jp/assigned-usage';
+  analyzer.usedUrls=new Set([initial]);
+  await request(worker,'/api/receive',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({values:[initial,later,valid,unknown,assigned,'X'.repeat(16)],clientRequestId:crypto.randomUUID()})});
+  assert.equal((await DB.prepare('SELECT status FROM items WHERE value=?').bind(initial).first()).status,'used');
+  const pending=await request(worker,'/api/pending');
+  await request(worker,`/api/pending/${pending.items[0].id}/confirm`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'ok'})});
+  await request(worker,'/api/ledger/campaigns');
+  const cards=await request(worker,'/api/cards');
+  const card=cards.cards.find(row=>row.display_name==='セブンカフェ カフェラテ');
+  const assignment=await request(worker,`/api/cards/${card.id}/assign`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign_id:'campaign-active-a'})});
+  const all=(await DB.prepare('SELECT id,value FROM items').all()).results;
+  const itemId=value=>all.find(row=>row.value===value).id;
+  // Keep one assigned URL; return the others to sorting for this scenario.
+  await DB.prepare('DELETE FROM item_campaign_assignments WHERE item_id IN (?,?)').bind(itemId(later),itemId(valid)).run();
+  analyzer.usedUrls.add(later);analyzer.usedUrls.add(assigned);
+  const overview=await request(worker,'/api/usage');
+  assert.equal(overview.usedIds.length,1);
+  assert.equal(overview.unsupported,1);
+  assert(!overview.ids.includes(itemId(assigned)));
+  const rechecked=await request(worker,'/api/usage/recheck',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ids:[itemId(later),itemId(valid),itemId(unknown),itemId(assigned)]})});
+  assert.equal(rechecked.used,1);assert.equal(rechecked.notUsed,1);assert.equal(rechecked.unknown,1);assert.equal(rechecked.skipped,1);
+  assert.equal((await DB.prepare('SELECT status FROM items WHERE id=?').bind(itemId(unknown)).first()).status,'unresolved');
+  assert.equal((await DB.prepare('SELECT status FROM items WHERE id=?').bind(itemId(assigned)).first()).status,'active');
+  const used=await request(worker,'/api/usage');assert.equal(used.usedIds.length,2);
+  analyzer.closeAllConnections?.();
+  // An unsupported response cannot mark or delete a coupon as used.
+  const unknownCheck=await request(worker,'/api/usage/recheck',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ids:[itemId(unknown)]})});
+  assert.equal(unknownCheck.unknown,1);
+  assert.equal((await request(worker,'/api/usage')).usedIds.length,2);
+  const refused=await worker.fetch('https://vault.test/api/usage/delete',{method:'POST',headers:{cookie:authCookies.get(worker),'content-type':'application/json'},body:JSON.stringify({ids:used.usedIds})});assert.equal(refused.status,400);
+  const deleted=await request(worker,'/api/usage/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ids:[...used.usedIds,itemId(valid),itemId(assigned)],confirmation:'使用済みを削除'})});
+  assert.equal(deleted.deleted,2);
+  assert.equal((await request(worker,'/api/usage')).usedIds.length,0);
+  assert(await DB.prepare('SELECT id FROM items WHERE id=?').bind(itemId(valid)).first());
+  assert(await DB.prepare('SELECT id FROM items WHERE id=?').bind(itemId(assigned)).first());
 });

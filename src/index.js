@@ -1,3 +1,4 @@
+import { usageOverview, recheckUsage, deleteUsed, markUsed } from './usage.js';
 import {IntakeError,sendingIdentity,limitSending,listSendingTokens,issueSendingToken,revokeSendingToken} from './sending-auth.js';
 import {readIntake,beginIntake,materializeIntake,dispatchIntake,recoverIntakes} from './intake.js';
 import { lawsonLoginUrl } from './lawson-url.js';
@@ -214,6 +215,10 @@ async function analyzerRequest(env, values, options = {}) {
 }
 
 async function processAnalysis(env, item, result) {
+  if (result?.status === "used" && result.url === item.value) {
+    await markUsed(env, item.id, result);
+    return { id:item.id, status:"used" };
+  }
   const normalized = normalizeAnalysis(result);
   const analysisJson = JSON.stringify(result);
   if (!normalized.valid) {
@@ -314,6 +319,7 @@ async function jobSummary(env, jobId) {
     COALESCE(SUM(CASE WHEN ji.state IN ('staged','done') THEN 1 ELSE 0 END),0) processed,
     COALESCE(SUM(CASE WHEN ji.state='done' AND i.status='active' THEN 1 ELSE 0 END),0) active,
     COALESCE(SUM(CASE WHEN ji.state='done' AND i.status='pending_confirmation' THEN 1 ELSE 0 END),0) pending_confirmation,
+    COALESCE(SUM(CASE WHEN ji.state='done' AND i.status='used' THEN 1 ELSE 0 END),0) used,
     COALESCE(SUM(CASE WHEN ji.state='done' AND i.status='unresolved' THEN 1 ELSE 0 END),0) unresolved
     FROM analysis_job_items ji JOIN items i ON i.id=ji.item_id WHERE ji.job_id=?`).bind(jobId).first();
   const accepted = Number(counts?.accepted || 0);
@@ -333,7 +339,7 @@ async function jobSummary(env, jobId) {
     queued: Number(counts?.queued || 0), processing: Number(counts?.processing || 0),
     staged: Number(counts?.staged || 0), processed,
     active: Number(counts?.active || 0), pendingConfirmation: pending,
-    unresolved: Number(counts?.unresolved || 0), lastError: job.last_error || "",
+    used: Number(counts?.used || 0), unresolved: Number(counts?.unresolved || 0), lastError: job.last_error || "",
     createdAt: job.created_at, completedAt: job.completed_at
   };
 }
@@ -506,6 +512,10 @@ async function finalizeJob(env, jobId) {
     for (const row of rows.results || []) {
       let result = null;
       try { result = row.result_json ? JSON.parse(row.result_json) : null; } catch {}
+      if (result?.status === "used" && result.url === row.value) {
+        await markUsed(env, row.item_id, result);
+        continue;
+      }
       if (result?.localCodeType) {
         if (!codeGroups.has(result.localCodeType)) codeGroups.set(result.localCodeType, []);
         codeGroups.get(result.localCodeType).push({ ...row, result });
@@ -603,7 +613,7 @@ async function receive(request, env, identity = {ownerKey:'admin'}) {
     return json({ok:true,stored:true,clientRequestId:input.clientRequestId,resumed,
       received:summary.accepted,duplicate:summary.inputDuplicates+summary.existing,
       inputDuplicate:summary.inputDuplicates,existing:summary.existing,
-      counts:{active:summary.active,pending_confirmation:summary.pendingConfirmation,unresolved:summary.unresolved},
+      counts:{active:summary.active,pending_confirmation:summary.pendingConfirmation,unresolved:summary.unresolved,used:summary.used},
       job:summary},resumed?200:202);
   } catch(error) {
     if(error instanceof IntakeError) return json({ok:false,stored:false,code:error.code,error:error.message},error.status);
@@ -931,6 +941,19 @@ export default {
       const jobStatus = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
       if (jobStatus && request.method === "GET") return getJob(env, jobStatus[1]);
       if (url.pathname === "/api/cards" && request.method === "GET") return listCards(env);
+      if (url.pathname === "/api/usage" && request.method === "GET") return json({ok:true,...await usageOverview(env)});
+      if (url.pathname === "/api/usage/recheck" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        const result=await recheckUsage(env,body.ids,analyzerRequest);
+        return json(result,result.ok?200:400);
+      }
+      if (url.pathname === "/api/usage/delete" && request.method === "POST") {
+        const body=await request.json().catch(()=>({}));
+        if (body.confirmation !== "使用済みを削除") return json({ok:false,error:"削除確認が必要です"},400);
+        const result=await deleteUsed(env,body.ids);
+        if (result.ok) await audit(env,null,"used_deleted",{count:result.deleted});
+        return json(result,result.ok?200:400);
+      }
       if (url.pathname === "/api/revenue/summary" && request.method === "GET") {
         return json({ ok: true, ...await getRevenueSummary(env) });
       }
@@ -1079,3 +1102,4 @@ export default {
     })());
   }
 };
+

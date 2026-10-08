@@ -198,7 +198,7 @@ function showJobProgress(job) {
   $("acceptanceSummary").innerHTML = [
     ["貼り付け", job.inputTotal], ["解析対象", job.accepted],
     ["貼付内重複", job.inputDuplicates], ["既に登録済み", job.existing],
-    ["カード保管", job.active], ["確認待ちURL", job.pendingConfirmation]
+    ["カード保管", job.active], ["確認待ちURL", job.pendingConfirmation], ["使用済み", job.used]
   ].map(([label, value]) => `<span>${label} <strong>${Number(value || 0).toLocaleString()}件</strong></span>`).join("");
   $("receiveResult").textContent = job.lastError
     ? `前回エラー: ${job.lastError}（自動再試行します）`
@@ -266,7 +266,8 @@ function cardHtml(card) {
 
 async function load() {
   try {
-    const [cards, pending, unresolved] = await Promise.all([api("/api/cards"), api("/api/pending"), api("/api/unresolved")]);
+    const [cards, pending, unresolved, usage] = await Promise.all([api("/api/cards"), api("/api/pending"), api("/api/unresolved"), api("/api/usage")]);
+    renderUsedCount(usage.usedIds);
     const total = cards.cards.reduce((sum, card) => sum + Number(card.count || 0), 0);
     $("total").textContent = `${total.toLocaleString()}件`;
     $("pendingCount").textContent = `${pending.items.length.toLocaleString()}件`;
@@ -1259,3 +1260,57 @@ for(const [button,input] of [['copySendingEndpoint','sendingEndpoint'],['copySen
   $(button).onclick=async()=>{try{await navigator.clipboard.writeText($(input).value);$('sendingTokenMessage').textContent='コピーしました。';}
     catch{$(input).select();$('sendingTokenMessage').textContent='入力欄を長押ししてコピーしてください。';}};
 }
+
+
+function renderUsedCount(ids) {
+  state.usedIds = ids || [];
+  $("deleteUsed").textContent = `使用済み ${state.usedIds.length.toLocaleString()}件`;
+  $("deleteUsed").classList.toggle("hidden", state.usedIds.length === 0);
+}
+
+async function recheckSortingUsage() {
+  const button=$("recheckUsage");
+  if (button.disabled) return;
+  button.disabled=true;
+  $("deleteUsed").disabled=true;
+  button.textContent="確認中…";
+  stopPolling();
+  let done=0, used=0, notUsed=0, unknown=0;
+  try {
+    const overview=await api("/api/usage");
+    unknown=overview.unsupported;
+    const total=overview.ids.length;
+    for(let start=0;start<total;start+=5) {
+      $("usageMessage").textContent=`使用状況を確認中 ${done}/${total}件`;
+      const result=await api("/api/usage/recheck",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids:overview.ids.slice(start,start+5)})});
+      done+=overview.ids.slice(start,start+5).length;
+      used+=result.used; notUsed+=result.notUsed; unknown+=result.unknown;
+      $("usageMessage").textContent=`使用状況を確認中 ${done}/${total}件`;
+    }
+    await load();
+    $("usageMessage").textContent=total || unknown ? `確認完了：使用済み ${used}件／使用済み表示なし ${notUsed}件／確認できない ${unknown}件` : "再確認できる仕分け前のURLはありません。";
+  } catch(error) {
+    $("usageMessage").textContent=`${done}件まで確認しました。${error.message} 再確認ボタンで再実行できます。`;
+    await load();
+  } finally {
+    button.disabled=false;
+    $("deleteUsed").disabled=false;
+    button.textContent="使用済み再確認";
+    if(state.authenticated) startPolling();
+  }
+}
+
+async function deleteUsedCoupons() {
+  const ids=[...(state.usedIds || [])];
+  if(!ids.length || !confirm(`使用済みの${ids.length.toLocaleString()}件を削除しますか？`)) return;
+  const button=$("deleteUsed");
+  button.disabled=true;
+  try {
+    const result=await api("/api/usage/delete",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({ids,confirmation:"使用済みを削除"})});
+    await load();
+    $("usageMessage").textContent=`使用済み ${result.deleted.toLocaleString()}件を削除しました。`;
+  } catch(error) { $("usageMessage").textContent=error.message; }
+  finally {button.disabled=false;}
+}
+$("recheckUsage").onclick=recheckSortingUsage;
+$("deleteUsed").onclick=deleteUsedCoupons;

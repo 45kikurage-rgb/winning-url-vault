@@ -202,3 +202,11 @@ body[data-operation-mode="production"] .summary strong{margin-top:1px;font-size:
 .folder-setting label{display:flex;align-items:center;gap:10px}
 .folder-setting input[type=checkbox]{width:24px;height:24px;flex:none;accent-color:#1558cb}
 .folder-setting small{color:#acbad2}
+
+
+.sorting-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.sorting-heading h2{margin:0;min-width:0;font-size:clamp(18px,5vw,24px)}
+.sorting-heading button{flex:0 0 auto;white-space:nowrap;font-size:12px;min-height:44px;padding:8px}
+.usage-summary{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px}
+.usage-summary:has(.hidden):has(p:empty){display:none}
+#usageMessage{margin:0;font-size:13px;color:var(--muted)}
