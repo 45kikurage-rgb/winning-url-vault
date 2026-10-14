@@ -1,3 +1,4 @@
+import { isEraberuPay } from "../public/analysis-amount.js";
 import { summarizeAnalysisAmounts } from "./analysis-amount.js";
 import { usageOverview, recheckUsage, deleteUsed, markUsed } from './usage.js';
 import {IntakeError,sendingIdentity,limitSending,listSendingTokens,issueSendingToken,revokeSendingToken} from './sending-auth.js';
@@ -675,7 +676,9 @@ async function confirmPending(request, env, pendingId) {
   catch { return json({ ok: false, error: "必要条件のJSONが正しくありません" }, 400); }
   const requiredConditions = stableJson(conditions);
   if (isGenericName(rawName)) return json({ ok: false, error: "汎用名は確定できません。正式商品名へ修正してください" }, 400);
-  if (!normalizedName || !displayName || !redeemPlace || !/^20\d{2}-\d{2}-\d{2}$/.test(expiresOn)) {
+  const expiryOptional = isEraberuPay(pending) && isEraberuPay({ required_conditions: requiredConditions });
+  const validExpiry = /^20\d{2}-\d{2}-\d{2}$/.test(expiresOn) || (expiryOptional && expiresOn === "");
+  if (!normalizedName || !displayName || !redeemPlace || !validExpiry) {
     return json({ ok: false, error: "商品名・表示名・利用先・使用期限を確認してください" }, 400);
   }
   const matchKey = [normalizedName, specification, redeemPlace, requiredConditions].join("\u001f");
@@ -711,7 +714,7 @@ async function confirmPending(request, env, pendingId) {
 }
 
 async function listCards(env) {
-  const rows = await env.DB.prepare(`SELECT c.id,c.expires_on,p.display_name,p.raw_name,p.redeem_place,p.specification,
+  const rows = await env.DB.prepare(`SELECT c.id,c.expires_on,p.display_name,p.raw_name,p.redeem_place,p.specification,p.required_conditions,
     COUNT(i.id) count FROM cards c JOIN product_master p ON p.id=c.product_id
     LEFT JOIN items i ON i.card_id=c.id AND i.status='active'
     GROUP BY c.id HAVING COUNT(i.id)>0

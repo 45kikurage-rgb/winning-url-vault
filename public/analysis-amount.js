@@ -9,3 +9,10 @@ export function analysisAmount(item) {
     ? `${total}（金額未取得 ${summary.unknownCount}件／全${summary.itemCount}件）`
     : `${total}（${summary.itemCount}件分）`;
 }
+
+export function isEraberuPay(item) {
+  let conditions;
+  try { conditions = JSON.parse(item?.required_conditions || "null"); } catch { return false; }
+  return conditions?.site === "giftee_box" && conditions?.kind === "box"
+    && conditions?.boxCategory === "eraberu_pay";
+}
