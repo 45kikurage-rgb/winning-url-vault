@@ -210,3 +210,6 @@ body[data-operation-mode="production"] .summary strong{margin-top:1px;font-size:
 .usage-summary{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:10px}
 .usage-summary:has(.hidden):has(p:empty){display:none}
 #usageMessage{margin:0;font-size:13px;color:var(--muted)}
+.balance-recheck{margin-top:12px;padding-top:12px;border-top:1px solid #e2e8f0}
+.balance-recheck button{width:100%;min-height:44px}
+.balance-recheck p{margin:8px 0 0;line-height:1.6;overflow-wrap:anywhere}

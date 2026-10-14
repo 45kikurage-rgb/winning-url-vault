@@ -1,4 +1,5 @@
 import { isEraberuPay } from "../public/analysis-amount.js";
+import { balanceRecheckOverview, recheckBalances } from "./balance-recheck.js";
 import { summarizeAnalysisAmounts } from "./analysis-amount.js";
 import { usageOverview, recheckUsage, deleteUsed, markUsed } from './usage.js';
 import {IntakeError,sendingIdentity,limitSending,listSendingTokens,issueSendingToken,revokeSendingToken} from './sending-auth.js';
@@ -979,6 +980,14 @@ export default {
       }
       if (url.pathname === "/api/winning-lists" && request.method === "GET") {
         return json({ ok: true, products: await listWinningLists(env) });
+      }
+      const balanceRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/balance-recheck$/i);
+      if (balanceRoute && request.method === "GET") {
+        return json({ ok: true, ...await balanceRecheckOverview(env, balanceRoute[1]) });
+      }
+      if (balanceRoute && request.method === "POST") {
+        const body = await request.json().catch(() => ({}));
+        return json({ ok: true, ...await recheckBalances(env, balanceRoute[1], body.ids, analyzerRequest) });
       }
       if (url.pathname === "/api/export-batches/pending" && request.method === "GET") {
         return json({ ok: true, batch: await getPendingExportBatch(env) });

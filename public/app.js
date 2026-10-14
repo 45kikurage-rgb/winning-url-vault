@@ -4,6 +4,7 @@ import { analysisAmount, isEraberuPay } from './analysis-amount.js';
 
 const $ = id => document.getElementById(id);
 const winningFolderOpen = new Map();
+const balanceRechecks = new Map();
 let winningFolderMonth = currentWinningMonth();
 const PENDING_SHARE_KEY = "winning-url-vault:pending-share";
 const LAST_EXPORT_BATCH_KEY = "winning-url-vault:last-export-batch";
@@ -443,7 +444,8 @@ function winningCardHtml(item) {
   const revenueMonth = String(item.revenue_month || "");
   const monthLabel = revenueMonth ? `${Number(revenueMonth.slice(5, 7))}月収益` : "当月収益";
   const statusLabels = { active:"実施中", closing:"終了確認待ち", correcting:"訂正中", closed:"終了済み" };
-  const meta = `${esc(item.redemption_place || "利用先未設定")}${item.product_spec ? ` / ${esc(item.product_spec)}` : ""} / 期限 ${esc(item.valid_until || "なし")}`;
+  const meta = `${esc(item.redemption_place || "利用先未設定")}${item.product_spec ? ` / ${esc(item.product_spec)}` : ""}${isEraberuPay(item) ? "" : ` / 期限 ${esc(item.valid_until || "なし")}`}`;
+  const recheck = balanceRechecks.get(item.product_id);
   const priceLine = unitPrice === null
     ? `<span class="price-unset">単価未設定</span><span>${esc(monthLabel)} —</span>`
     : `<span>単価 ¥${unitPrice.toLocaleString()}</span><span>${esc(monthLabel)} ¥${Number(revenue || 0).toLocaleString()}</span>`;
@@ -460,6 +462,10 @@ function winningCardHtml(item) {
     ${unset
       ? `<div class="winning-actions unset-actions"><button class="method-button setup-button" data-method-product="${esc(item.product_id)}">抽出方法を設定</button></div>`
       : `<div class="winning-actions"><button class="extract-button" data-export-product="${esc(item.product_id)}" ${complete ? "disabled" : ""}>抽出 <strong>${remaining.toLocaleString()}件</strong></button><button class="method-button" data-method-product="${esc(item.product_id)}">設定</button></div>`}
+    ${isEraberuPay(item) ? `<div class="balance-recheck">
+      <button class="secondary" data-balance-product="${esc(item.product_id)}" ${recheck?.running ? "disabled" : ""}>${recheck?.running ? "再解析中…" : "再解析"}</button>
+      <p class="meta" data-balance-message="${esc(item.product_id)}" role="status">${esc(recheck?.message || "過去のURLも確認し、残高があれば未抽出に戻します")}</p>
+    </div>` : ""}
   </article>`;
 }
 
@@ -497,6 +503,51 @@ function winningProduct(productId) {
 function bindWinningControls() {
   document.querySelectorAll("[data-method-product]").forEach(button => button.onclick = () => openOutputMethod(button.dataset.methodProduct));
   document.querySelectorAll("[data-export-product]").forEach(button => button.onclick = () => openExportAction(button.dataset.exportProduct));
+  document.querySelectorAll("[data-balance-product]").forEach(button => button.onclick = () => recheckWinningBalances(button.dataset.balanceProduct));
+}
+
+function updateBalanceRecheck(productId, update) {
+  const progress = { ...balanceRechecks.get(productId), ...update };
+  balanceRechecks.set(productId, progress);
+  document.querySelectorAll("[data-balance-product]").forEach(button => {
+    if (button.dataset.balanceProduct !== productId) return;
+    button.disabled = progress.running;
+    button.textContent = progress.running ? "再解析中…" : "再解析";
+  });
+  document.querySelectorAll("[data-balance-message]").forEach(element => {
+    if (element.dataset.balanceMessage === productId) element.textContent = progress.message;
+  });
+}
+
+async function recheckWinningBalances(productId) {
+  if (balanceRechecks.get(productId)?.running || !isEraberuPay(winningProduct(productId))) return;
+  updateBalanceRecheck(productId, { running: true, message: "再解析するURLを確認中…" });
+  const counts = { checked: 0, restored: 0, positive: 0, zero: 0, unknown: 0, skipped: 0 };
+  let done = 0;
+  let total = 0;
+  const summary = () => `未抽出へ戻したURL ${counts.restored}件 / 残高あり ${counts.positive}件 / 残高0の応答 ${counts.zero}件 / 残高不明 ${counts.unknown}件 / 対象外・状態変更 ${counts.skipped}件`;
+  try {
+    const overview = await api(`/api/products/${productId}/balance-recheck`);
+    total = overview.ids.length;
+    counts.skipped = overview.unsupported;
+    for (let offset = 0; offset < total; offset += 5) {
+      updateBalanceRecheck(productId, { message: `再解析中 ${done}/${total}件。${summary()}。画面を閉じずにお待ちください。` });
+      const ids = overview.ids.slice(offset, offset + 5);
+      const result = await api(`/api/products/${productId}/balance-recheck`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids })
+      });
+      for (const key of Object.keys(counts)) counts[key] += Number(result[key] || 0);
+      done += ids.length;
+      // Stop on an analyzer outage instead of repeatedly sending the remaining history.
+      if (result.error) throw new Error(result.error);
+    }
+    updateBalanceRecheck(productId, { running: false, message: `再解析完了（${done}件）。${summary()}。` });
+  } catch (error) {
+    updateBalanceRecheck(productId, { running: false,
+      message: `再解析を中断しました（応答確認 ${done}/${total}件）。${summary()}。${error.message} 再解析で再確認できます。` });
+  } finally {
+    await loadWinningLists();
+  }
 }
 
 function openOutputMethod(productId) {
