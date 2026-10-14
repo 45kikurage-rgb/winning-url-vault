@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Miniflare } from "miniflare";
 import { getRevenueSummary } from "../src/ledger.js";
+import { recheckBalances } from "../src/balance-recheck.js";
 
 const authCookies = new WeakMap();
 
@@ -75,6 +76,10 @@ async function startAnalyzer() {
   server.analysisRequests.push(body);
   const results = [];
   for (const item of body.items || []) {
+    if (server.balanceResults?.has(item.url)) {
+      results.push({ label: item.label, url: item.url, ...server.balanceResults.get(item.url) });
+      continue;
+    }
     if (item.url.includes("unsupported")) continue;
     const generic = item.url.includes("generic");
     results.push({
@@ -1052,4 +1057,129 @@ test("えらべるPayは期限空欄でOK・修正登録でき、通常商品に
     });
     assert.equal(denied.status, 400);
   }
+});
+
+const payConditions = JSON.stringify({ site: "giftee_box", kind: "box", boxCategory: "eraberu_pay" });
+const payBalance = balance => ({ status: "ok", site: "giftee_box", kind: "box", boxCategory: "eraberu_pay", balance });
+
+async function makeBalanceFixture(worker, DB, count = 1) {
+  await request(worker, "/api/ledger/campaigns");
+  let card;
+  for (let index = 0; index < count; index++) card = await createConfirmedCard(worker, `balance-${index}`);
+  const assigned = await request(worker, `/api/cards/${card.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ campaign_id: "campaign-active-a" })
+  });
+  const productId = assigned.product_id;
+  await request(worker, `/api/products/${productId}/output-method`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ output_method: "wallet" })
+  });
+  await DB.prepare("UPDATE product_master SET required_conditions=? WHERE id=(SELECT product_id FROM cards WHERE id=?)")
+    .bind(payConditions, card.id).run();
+  const rows = await DB.prepare("SELECT i.* FROM items i JOIN item_campaign_assignments a ON a.item_id=i.id WHERE a.product_id=? ORDER BY i.value")
+    .bind(productId).all();
+  return { productId, card, items: rows.results, path: `/api/products/${productId}/balance-recheck` };
+}
+
+const postIds = ids => ({ method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) });
+
+test("えらべるPayの過去URLを再解析し、正の残高だけ未抽出に戻して当選数・収益を保つ", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const { productId, items, path } = await makeBalanceFixture(worker, DB, 6);
+  await request(worker, `/api/products/${productId}/unit-price`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ unit_price: 500 })
+  });
+  const batch = await request(worker, `/api/products/${productId}/export-batches`, { method: "POST" });
+  await request(worker, `/api/export-batches/${batch.batch.id}/complete`, { method: "POST" });
+  const before = (await request(worker, "/api/winning-lists")).products[0];
+  assert.equal(before.exported_count, 6);
+  assert.equal(before.required_conditions, payConditions);
+  const productBefore = await DB.prepare("SELECT * FROM ledger_products WHERE product_id=?").bind(productId).first();
+  const revenueBefore = await DB.prepare("SELECT * FROM product_monthly_revenue").all();
+  analyzer.balanceResults = new Map(items.map((item, index) => [item.value, [
+    payBalance(500), payBalance(0), payBalance(null), { ...payBalance(1000), status: "error" },
+    { ...payBalance(1000), url: "https://different.test/" }, payBalance("250")
+  ][index]]));
+  const overview = await request(worker, path);
+  assert.deepEqual(new Set(overview.ids), new Set(items.map(item => item.id)));
+  const first = await request(worker, path, postIds(items.slice(0, 5).map(item => item.id)));
+  assert.equal(first.restored, 1);
+  assert.equal(first.zero, 1);
+  assert.equal(first.unknown, 3);
+  const second = await request(worker, path, postIds([items[5].id]));
+  assert.equal(second.restored, 1);
+  // A repeat does not count an already-unexported URL as restored again.
+  assert.equal((await request(worker, path, postIds([items[0].id]))).restored, 0);
+  const after = (await request(worker, "/api/winning-lists")).products[0];
+  assert.equal(after.unexported_count, 2);
+  assert.equal(after.exported_count, 4);
+  assert.equal(after.total_count, 6);
+  assert.deepEqual(await DB.prepare("SELECT * FROM ledger_products WHERE product_id=?").bind(productId).first(), productBefore);
+  assert.deepEqual((await DB.prepare("SELECT * FROM product_monthly_revenue").all()).results, revenueBefore.results);
+  const restored = await DB.prepare("SELECT * FROM item_campaign_assignments WHERE item_id=?").bind(items[0].id).first();
+  assert.equal(restored.exported_at, null);
+  assert.equal(restored.export_method, null);
+  assert.equal(restored.export_batch_id, null);
+  const stored = await DB.prepare("SELECT analysis_json,status,card_id FROM items WHERE id=?").bind(items[0].id).first();
+  assert.equal(stored.status, "active");
+  assert.equal(JSON.parse(stored.analysis_json).balanceRecheck.verdict, "positive");
+  assert.equal(JSON.parse(stored.analysis_json).product, JSON.parse(items[0].analysis_json).product);
+  const next = await request(worker, `/api/products/${productId}/export-next`);
+  assert.equal(next.remaining_count, 2);
+});
+
+test("再解析は別カード・進行中の抽出を保護し、通信失敗と競合で抽出状態を変えない", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const { productId, card, items, path } = await makeBalanceFixture(worker, DB);
+  const item = items[0];
+  const positive = async () => [{ url: item.value, ...payBalance(100) }];
+  const env = { DB };
+  const deny = async (options, status = 400) => {
+    const headers = new Headers(options?.headers || {}); headers.set("cookie", authCookies.get(worker));
+    const response = await worker.fetch(`https://vault.test${path}`, { ...options, headers });
+    assert.equal(response.status, status);
+  };
+  await deny(postIds([]));
+  await deny(postIds(Array(6).fill(item.id)));
+  assert.equal((await worker.fetch(`https://vault.test${path}`)).status, 401);
+  await DB.prepare("UPDATE product_master SET required_conditions='{}' WHERE id=(SELECT product_id FROM cards WHERE id=?)").bind(card.id).run();
+  await deny();
+  await deny(postIds([item.id]));
+  await DB.prepare("UPDATE product_master SET required_conditions=? WHERE id=(SELECT product_id FROM cards WHERE id=?)").bind(payConditions, card.id).run();
+  const batch = await request(worker, `/api/products/${productId}/export-batches`, { method: "POST" });
+  await deny({}, 409);
+  await deny(postIds([item.id]), 409);
+  await request(worker, `/api/export-batches/${batch.batch.id}`, { method: "DELETE" });
+  // A single export finishes while the analyzer is in flight.
+  const concurrent = await recheckBalances(env, productId, [item.id], async () => {
+    await request(worker, `/api/products/${productId}/items/${item.id}/export-complete`, { method: "POST" });
+    return positive();
+  });
+  assert.equal(concurrent.skipped, 1);
+  const exportedAt = (await DB.prepare("SELECT exported_at FROM item_campaign_assignments WHERE item_id=?").bind(item.id).first()).exported_at;
+  assert.ok(exportedAt);
+  const failure = await recheckBalances(env, productId, [item.id], async () => { throw new Error("outage"); });
+  assert.equal(failure.unknown, 1);
+  assert.ok(failure.error);
+  const duplicate = await recheckBalances(env, productId, [item.id], async () => [...await positive(), ...await positive()]);
+  assert.equal(duplicate.unknown, 1);
+  assert.equal((await DB.prepare("SELECT exported_at FROM item_campaign_assignments WHERE item_id=?").bind(item.id).first()).exported_at, exportedAt);
+  // A new bulk batch started during analysis prevents restoration too.
+  const otherCard = await createConfirmedCard(worker, "balance-foreign");
+  const other = await request(worker, `/api/cards/${otherCard.id}/assign`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ campaign_id: "campaign-active-b" })
+  });
+  const foreign = await DB.prepare("SELECT item_id FROM item_campaign_assignments WHERE product_id=?").bind(other.product_id).first();
+  const isolated = await recheckBalances(env, productId, [foreign.item_id], async (_, values) => {
+    assert.deepEqual(values, []); return [];
+  });
+  assert.equal(isolated.skipped, 1);
+  const pendingRace = await recheckBalances(env, productId, [item.id], async () => {
+    await DB.prepare("INSERT INTO export_batches(id,product_id,item_ids_json,status,item_count) VALUES(?,?,?,'pending',1)")
+      .bind(crypto.randomUUID(), productId, JSON.stringify([item.id])).run();
+    return positive();
+  });
+  assert.equal(pendingRace.skipped, 1);
+  assert.equal((await DB.prepare("SELECT exported_at FROM item_campaign_assignments WHERE item_id=?").bind(item.id).first()).exported_at, exportedAt);
 });

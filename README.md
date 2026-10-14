@@ -49,6 +49,8 @@
 - 「セブン-イレブン クーポン」などの汎用名は失敗扱い
 - 近似一致、部分一致、店舗名だけの一致は行わない
 - 一度確定したURLはAnalyzer更新後も自動で再判定・統合しない
+- えらべるPayの当選カードでは「再解析」で抽出済みを含む保存URLの現在残高を確認できる。URLとカテゴリーが一致し、正の残高を取得できたURLだけを未抽出へ戻す。残高0の応答・残高不明・通信失敗では抽出状態を変更しない。ギフト情報だけ返るURLも残高不明として扱う。
+- 再解析は5件ずつ行い、進捗と結果件数をカード内に表示する。中断時は再実行できる。一括抽出の進行中や解析中に抽出状態が変わったURLは更新しない。当選件数・仕分け先・単価・収益は変更しない。
 - URLは受信前チェックに加えてD1の一意制約でも重複を排除し、同時受信時も二重登録しない
 - 一時解析結果がすべて揃うまではカードへ登録せず、再試行時も確定処理を重複実行しない
 - Amazonギフト券は現行データ確認前のため自動判定しない
@@ -68,6 +70,8 @@ npm run deploy
 
 - `POST /api/receive` `{ "text": "URLまたはコードを1行1件" }`
 - `GET /api/cards`
+- `GET /api/products/:id/balance-recheck` 再解析対象の保存URL ID一覧（えらべるPay限定）
+- `POST /api/products/:id/balance-recheck` `{ "ids": ["URLのID（最大5件）"] }`
 - `GET /api/cards/:id/items?limit=50&cursor=...`
 - `GET /api/pending`
 - `POST /api/pending/:id/confirm` `{ "action": "ok|edit|cancel" }`

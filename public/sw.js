@@ -1,10 +1,10 @@
-const CACHE = "winning-url-vault-pwa-20261015-expiry-v1";
+const CACHE = "winning-url-vault-pwa-20261015-recheck-v1";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
   "/styles.css",
-  "/app.js?v=20261015-expiry-v1",
+  "/app.js?v=20261015-recheck-v1",
   "/analysis-amount.js",
   "/assignment-prediction.js",
   "/winning-folders.js",
