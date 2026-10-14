@@ -1,6 +1,6 @@
 import { currentWinningMonth, winningMonth, winningMonthLabel, groupWinningFolders } from './winning-folders.js';
 import { predictAssignmentCampaign } from './assignment-prediction.js';
-import { analysisAmount } from './analysis-amount.js';
+import { analysisAmount, isEraberuPay } from './analysis-amount.js';
 
 const $ = id => document.getElementById(id);
 const winningFolderOpen = new Map();
@@ -244,7 +244,7 @@ function pendingCard(item) {
       <label>画面表示名<input name="display_name" value="${esc(item.display_name)}" readonly></label>
       <div class="field-row"><label>容量・規格・金額<input name="specification" value="${esc(item.specification)}" placeholder="規格なし" readonly>${amount ? `<span class="meta" data-analysis-amount>${esc(amount)}</span>` : ""}</label>
       <label>利用先<input name="redeem_place" value="${esc(item.redeem_place)}" readonly></label></div>
-      <label>使用期限<input name="expires_on" type="date" value="${esc(item.expires_on)}" readonly></label>
+      ${isEraberuPay(item) ? "" : `<label>使用期限<input name="expires_on" type="date" value="${esc(item.expires_on)}" readonly></label>`}
       <p class="waiting">完全一致グループ ${Number(item.item_count || 0).toLocaleString()}件（残りの解析は継続中）</p>
       <button class="secondary copy-analysis" data-action="copy">ChatGPT用にコピー</button>
       <div class="confirm-actions"><button data-action="ok">OK</button><button class="secondary" data-action="edit">修正</button><button class="danger" data-action="cancel">キャンセル</button></div>
@@ -259,7 +259,7 @@ function cardHtml(card) {
   </div>`).join("");
   return `<article class="coupon">
     <div><h3>${esc(card.display_name)}</h3><div class="meta">${esc(card.redeem_place)}${card.specification ? ` / ${esc(card.specification)}` : ""}</div>
-    <div class="meta">期限 ${esc(card.expires_on || "期限なし")}</div>${assignments ? `<div class="assignment-list">${assignments}</div>` : '<div class="unassigned-label">解析済み・未仕分け</div>'}</div>
+    ${isEraberuPay(card) ? "" : `<div class="meta">期限 ${esc(card.expires_on || "期限なし")}</div>`}${assignments ? `<div class="assignment-list">${assignments}</div>` : '<div class="unassigned-label">解析済み・未仕分け</div>'}</div>
     <div class="coupon-foot"><div class="card-actions">
       ${Number(card.unassigned_count || 0) > 0 ? `<button data-assign-card="${esc(card.id)}" data-title="${esc(card.display_name)}">振り分け（${Number(card.unassigned_count).toLocaleString()}）</button>` : ""}
       <button class="secondary" data-card="${esc(card.id)}" data-title="${esc(card.display_name)}">内容</button></div></div>
@@ -995,7 +995,7 @@ async function copyPendingForChatGPT(card, button) {
     `画面表示名: ${value("display_name")}`,
     `容量・規格・金額: ${[value("specification"), analysisAmount(item)].filter(Boolean).join(" / ") || "なし"}`,
     `利用先: ${value("redeem_place")}`,
-    `使用期限: ${value("expires_on")}`,
+    ...(isEraberuPay(item) ? [] : [`使用期限: ${value("expires_on")}`]),
     `必要な商品条件: ${item?.required_conditions || "不明"}`,
     `商品画像: ${item?.image_data_uri ? "あり" : "なし"}`,
     "この内容で自動振り分け条件として問題ないか確認してください。"

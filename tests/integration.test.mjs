@@ -1020,3 +1020,36 @@ test("確認待ちAPIは代表URLではなく所属URLの解析金額を合計�
   assert.equal("item_analyses" in a, false);
   assert.equal(pending.items.find(item => item.id === "sum-b").analysis_amount_summary.totals[0].total, 200);
 });
+
+test("えらべるPayは期限空欄でOK・修正登録でき、通常商品には期限を要求する", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const ids = { ok: crypto.randomUUID(), edit: crypto.randomUUID(), normal: crypto.randomUUID() };
+  const payConditions = JSON.stringify({ site: "giftee_box", kind: "box", boxCategory: "eraberu_pay" });
+  for (const [id, conditions] of [[ids.ok, payConditions], [ids.edit, payConditions], [ids.normal, '{"site":"seven","kind":"coupon"}']]) {
+    await DB.prepare(`INSERT INTO pending_confirmations
+      (id,match_key,expires_on,raw_name,normalized_name,display_name,redeem_place,required_conditions,analysis_json)
+      VALUES (?,?, '', 'えらべるPay','えらべるpay','えらべるPay','gifteebox',?, '{}')`).bind(id,id,conditions).run();
+    await DB.prepare(`INSERT INTO items (id,value,canonical_value,value_type,pending_id,status)
+      VALUES (?,?,?,'url',?,'pending_confirmation')`).bind(id,`https://example.test/${id}`,`https://example.test/${id}`,id).run();
+  }
+  for (const action of ["ok", "edit"]) {
+    const approved = await request(worker, `/api/pending/${ids[action]}/confirm`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action })
+    });
+    assert.equal(approved.classified, 1);
+    assert.equal((await DB.prepare('SELECT expires_on FROM cards WHERE id=?').bind(approved.cardId).first()).expires_on, "");
+    assert.equal((await DB.prepare('SELECT status FROM items WHERE id=?').bind(ids[action]).first()).status, "active");
+  }
+  const cards = (await request(worker, "/api/cards")).cards;
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].count, 2);
+  assert.equal(JSON.parse(cards[0].required_conditions).boxCategory, "eraberu_pay");
+  for (const overrides of [{}, { required_conditions: payConditions }]) {
+    const denied = await worker.fetch(`https://vault.test/api/pending/${ids.normal}/confirm`, {
+      method: "POST", headers: { cookie: authCookies.get(worker), "content-type": "application/json" },
+      body: JSON.stringify({ action: "edit", ...overrides })
+    });
+    assert.equal(denied.status, 400);
+  }
+});
