@@ -1,3 +1,4 @@
+import { summarizeAnalysisAmounts } from "./analysis-amount.js";
 import { usageOverview, recheckUsage, deleteUsed, markUsed } from './usage.js';
 import {IntakeError,sendingIdentity,limitSending,listSendingTokens,issueSendingToken,revokeSendingToken} from './sending-auth.js';
 import {readIntake,beginIntake,materializeIntake,dispatchIntake,recoverIntakes} from './intake.js';
@@ -719,10 +720,26 @@ async function listCards(env) {
 }
 
 async function listPending(env) {
-  const rows = await env.DB.prepare(`SELECT p.*,COUNT(i.id) item_count FROM pending_confirmations p
+  const rows = await env.DB.prepare(`SELECT p.*,COUNT(i.id) item_count, json_group_array(
+      CASE WHEN json_valid(i.analysis_json) THEN json_object(
+        'status',json_extract(i.analysis_json,'$.status'),
+        'site',json_extract(i.analysis_json,'$.site'),
+        'kind',json_extract(i.analysis_json,'$.kind'),
+        'balance',CASE WHEN json_type(i.analysis_json,'$.balance') IN ('integer','real','text')
+          THEN json_extract(i.analysis_json,'$.balance') ELSE NULL END,
+        'balanceUnit',json_extract(i.analysis_json,'$.balanceUnit')) ELSE NULL END
+    ) item_analyses FROM pending_confirmations p
     LEFT JOIN items i ON i.pending_id=p.id AND i.status='pending_confirmation'
     GROUP BY p.id HAVING COUNT(i.id)>0 ORDER BY p.created_at ASC LIMIT 100`).all();
-  return json({ ok: true, items: rows.results || [] });
+  const items = (rows.results || []).map(({ item_analyses, ...item }) => {
+    let conditions;
+    try { conditions = JSON.parse(item.required_conditions); } catch { conditions = {}; }
+    if (conditions.site === "giftee_box" && conditions.kind === "box") {
+      item.analysis_amount_summary = summarizeAnalysisAmounts(JSON.parse(item_analyses).map(value => JSON.stringify(value)));
+    }
+    return item;
+  });
+  return json({ ok: true, items });
 }
 
 async function reanalyzePending(env, pendingId) {
