@@ -990,3 +990,33 @@ test("usage recheck isolates used coupons, keeps unknowns, protects assigned ite
   assert(await DB.prepare('SELECT id FROM items WHERE id=?').bind(itemId(valid)).first());
   assert(await DB.prepare('SELECT id FROM items WHERE id=?').bind(itemId(assigned)).first());
 });
+
+test("確認待ちAPIは代表URLではなく所属URLの解析金額を合計する", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const conditions = JSON.stringify({ site: "giftee_box", kind: "box", boxCategory: "eraberu_pay" });
+  const analysis = balance => JSON.stringify({ status: "ok", site: "giftee_box", kind: "box", balance, balanceUnit: "ポイント" });
+  for (const group of ["sum-a", "sum-b"]) {
+    await DB.prepare(`INSERT INTO pending_confirmations
+      (id,match_key,expires_on,raw_name,normalized_name,display_name,redeem_place,required_conditions,analysis_json)
+      VALUES (?,?, '', 'えらべるPay','えらべるpay','えらべるPay','gifteebox',?,?)`)
+      .bind(group, group, conditions, analysis(99999)).run();
+  }
+  for (const [id, group, balance, status] of [
+    ["sum-1", "sum-a", 500, "pending_confirmation"],
+    ["sum-2", "sum-a", 1000, "pending_confirmation"],
+    ["sum-3", "sum-a", null, "pending_confirmation"],
+    ["sum-4", "sum-a", 8000, "used"],
+    ["sum-5", "sum-b", 200, "pending_confirmation"]
+  ]) {
+    await DB.prepare(`INSERT INTO items (id,value,canonical_value,value_type,pending_id,status,analysis_json)
+      VALUES (?,?,?,'url',?,?,?)`).bind(id, `https://example.test/${id}`, `https://example.test/${id}`, group, status, analysis(balance)).run();
+  }
+  const pending = await request(worker, "/api/pending");
+  const a = pending.items.find(item => item.id === "sum-a");
+  assert.equal(a.item_count, 3);
+  assert.deepEqual(a.analysis_amount_summary, { totals: [{ unit: "ポイント", total: 1500, count: 2 }], unknownCount: 1, itemCount: 3 });
+  assert.equal(a.specification, "");
+  assert.equal("item_analyses" in a, false);
+  assert.equal(pending.items.find(item => item.id === "sum-b").analysis_amount_summary.totals[0].total, 200);
+});

@@ -1,5 +1,6 @@
 import { currentWinningMonth, winningMonth, winningMonthLabel, groupWinningFolders } from './winning-folders.js';
 import { predictAssignmentCampaign } from './assignment-prediction.js';
+import { analysisAmount } from './analysis-amount.js';
 
 const $ = id => document.getElementById(id);
 const winningFolderOpen = new Map();
@@ -232,6 +233,7 @@ function clearReceive() {
 }
 
 function pendingCard(item) {
+  const amount = analysisAmount(item);
   const image = item.image_data_uri
     ? `<img src="${esc(item.image_data_uri)}" alt="${esc(item.raw_name)}の商品画像">`
     : '<div class="image-tools"><div class="image-empty">画像なし</div><button class="secondary" data-action="reanalyze">画像を再取得</button></div>';
@@ -240,7 +242,7 @@ function pendingCard(item) {
       <label>正式商品名<input name="raw_name" value="${esc(item.raw_name)}" readonly></label>
       <label>判定用商品名<input name="normalized_name" value="${esc(item.normalized_name)}" readonly></label>
       <label>画面表示名<input name="display_name" value="${esc(item.display_name)}" readonly></label>
-      <div class="field-row"><label>容量・規格<input name="specification" value="${esc(item.specification)}" readonly></label>
+      <div class="field-row"><label>容量・規格・金額<input name="specification" value="${esc(item.specification)}" placeholder="規格なし" readonly>${amount ? `<span class="meta" data-analysis-amount>${esc(amount)}</span>` : ""}</label>
       <label>利用先<input name="redeem_place" value="${esc(item.redeem_place)}" readonly></label></div>
       <label>使用期限<input name="expires_on" type="date" value="${esc(item.expires_on)}" readonly></label>
       <p class="waiting">完全一致グループ ${Number(item.item_count || 0).toLocaleString()}件（残りの解析は継続中）</p>
@@ -991,7 +993,7 @@ async function copyPendingForChatGPT(card, button) {
     `正式商品名: ${value("raw_name")}`,
     `判定用商品名: ${value("normalized_name")}`,
     `画面表示名: ${value("display_name")}`,
-    `容量・規格: ${value("specification") || "なし"}`,
+    `容量・規格・金額: ${[value("specification"), analysisAmount(item)].filter(Boolean).join(" / ") || "なし"}`,
     `利用先: ${value("redeem_place")}`,
     `使用期限: ${value("expires_on")}`,
     `必要な商品条件: ${item?.required_conditions || "不明"}`,
