@@ -1,0 +1,34 @@
+name: Provisional read-only D1 preflight
+on:
+  push:
+    branches: [feature/provisional-receive-a-e-20261017]
+    paths:
+      - .github/workflows/provisional-preflight.yml
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Confirm credentials are available
+        run: test -n "$CLOUDFLARE_API_TOKEN" || (echo 'Cloudflare access unavailable' && exit 1)
+      - name: Inspect remote D1 metadata (read only)
+        run: npx wrangler d1 info winning-url-vault
+      - name: Confirm D1 Time Travel bookmark (read only)
+        run: npx wrangler d1 time-travel info winning-url-vault
+      - name: Check remote data counts and integrity (read only)
+        run: |
+          npx wrangler d1 execute winning-url-vault --remote --command "SELECT 'items' item_type, COUNT(*) n FROM items UNION ALL SELECT 'cards',COUNT(*) FROM cards UNION ALL SELECT 'product_master',COUNT(*) FROM product_master UNION ALL SELECT 'intake_receipts',COUNT(*) FROM intake_receipts;"
+          npx wrangler d1 execute winning-url-vault --remote --command "PRAGMA integrity_check;"
+      - name: List currently pending migrations (read only)
+        run: npx wrangler d1 migrations list winning-url-vault --remote
