@@ -609,7 +609,7 @@ async function receive(request, env, identity = {ownerKey:'admin'}) {
   try {
     const input=await readIntake(request,Boolean(identity.deviceId));
     // A replay of a normal receipt must stay normal after the administrator changes mode.
-    const normalReceipt=await env.DB.prepare("SELECT id FROM intake_receipts WHERE owner_key=? AND client_request_id=?")
+    const normalReceipt=await env.DB.prepare("SELECT job_id FROM intake_receipts WHERE owner_key=? AND client_request_id=?")
       .bind(identity.ownerKey,input.clientRequestId).first();
     if (!normalReceipt) {
       const held=await maybeReceiveProvisional(env,input,identity.ownerKey);
