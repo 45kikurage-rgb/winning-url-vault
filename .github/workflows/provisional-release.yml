@@ -1,0 +1,67 @@
+name: Release provisional inbox with D1 safety gate
+on:
+  push:
+    branches: [main]
+    paths:
+      - migrations/0008_provisional_inbox.sql
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: winning-url-vault-provisional-production
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - name: Verify safe additive migration
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const sql = fs.readFileSync("migrations/0008_provisional_inbox.sql","utf8").replace(/--[^\n]*/g,"");
+            if (/\b(DROP|DELETE|UPDATE|ALTER|TRUNCATE|REPLACE)\b/i.test(sql)) process.exit(1);
+            if (!sql.includes("CREATE TABLE IF NOT EXISTS provisional_mode") ||
+                !sql.includes("CREATE TABLE IF NOT EXISTS provisional_entries")) process.exit(1);
+            console.log("Only additive provisional table creation/initialization allowed");
+          '
+      - name: Confirm Cloudflare credentials
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo 'Missing Cloudflare access: deployment stopped' && exit 1)
+      - name: Check production D1 and available rollback bookmark
+        run: |
+          npx wrangler d1 info winning-url-vault
+          npx wrangler d1 time-travel info winning-url-vault
+          npx wrangler d1 execute winning-url-vault --remote --command "SELECT 'items' table_name,COUNT(*) n FROM items UNION ALL SELECT 'cards',COUNT(*) FROM cards UNION ALL SELECT 'intake_receipts',COUNT(*) FROM intake_receipts;"
+      - name: Confirm only approved migration is pending
+        run: |
+          set -euo pipefail
+          pending="$(npx wrangler d1 migrations list winning-url-vault --remote)"
+          printf '%s\n' "$pending"
+          if ! printf '%s\n' "$pending" | grep -q '0008_provisional_inbox.sql'; then
+            echo 'Approved migration is not pending; stopping to avoid unrelated changes'
+            exit 1
+          fi
+          if printf '%s\n' "$pending" | grep -Eq '000[1-7]_.*\.sql'; then
+            echo 'Unrelated legacy migrations are still pending; stopping'
+            exit 1
+          fi
+      - name: Apply approved additive D1 migration
+        run: npx wrangler d1 migrations apply winning-url-vault --remote
+      - name: Verify existing data and new isolated tables
+        run: |
+          npx wrangler d1 execute winning-url-vault --remote --command "SELECT 'items' table_name,COUNT(*) n FROM items UNION ALL SELECT 'cards',COUNT(*) FROM cards UNION ALL SELECT 'intake_receipts',COUNT(*) FROM intake_receipts UNION ALL SELECT 'provisional_slots',COUNT(*) FROM provisional_slots;"
+          npx wrangler d1 execute winning-url-vault --remote --command "SELECT mode FROM provisional_mode WHERE id=1;"
+      - name: Deploy Worker and PWA
+        run: npx wrangler deploy

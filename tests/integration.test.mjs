@@ -1183,3 +1183,106 @@ test("再解析は別カード・進行中の抽出を保護し、通信失敗�
   assert.equal(pendingRace.skipped, 1);
   assert.equal((await DB.prepare("SELECT exported_at FROM item_campaign_assignments WHERE item_id=?").bind(item.id).first()).exported_at, exportedAt);
 });
+
+
+test("暫定A〜Eの全端末共通受信と、別期限同一でも独立したカード化", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const jsonHeaders = { "content-type": "application/json", origin: "https://vault.test" };
+  const choose = mode => request(worker, "/api/receive-mode", {
+    method: "POST", headers: jsonHeaders, body: JSON.stringify({ mode })
+  });
+  const publish = (slot, bucketId, details = {}) => request(worker, "/api/provisional/" + slot + "/publish", {
+    method: "POST", headers: jsonHeaders, body: JSON.stringify({ bucket_id: bucketId, ...details })
+  });
+  const token = await request(worker, "/api/sending-tokens", {
+    method: "POST", headers: jsonHeaders, body: JSON.stringify({ deviceId: "03" })
+  });
+  const send = async body => {
+    const response = await worker.fetch("https://vault.test/api/receive", {
+      method: "POST", headers: { authorization: "Bearer " + token.token, "content-type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    assert.equal(response.status, 202);
+    return response.json();
+  };
+  assert.equal((await request(worker, "/api/receive-mode")).mode, "normal");
+  await choose("A");
+  const requestId = crypto.randomUUID();
+  const block = "ギフトコード\nABCD1234EFGH5678\n受取期限 2026年12月25日\nCOIN+残高へ加算されます。";
+  const first = await send({ text: block, clientRequestId: requestId });
+  assert.equal(first.provisional, true);
+  assert.equal(first.received, 1);
+  assert.equal(first.mode, "A");
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM items WHERE status='provisional'").first()).n, 1);
+  const retry = await send({ text: block, clientRequestId: requestId });
+  assert.equal(retry.received, 1);
+  assert.equal((await request(worker, "/api/cards")).cards.length, 0);
+
+  await choose("B");
+  const second = await send({
+    values: ["WXYZ5678IJKL9012"], clientRequestId: crypto.randomUUID()
+  });
+  assert.equal(second.mode, "B");
+  const list = await request(worker, "/api/provisional");
+  const A = list.buckets.find(item => item.slot === "A");
+  const B = list.buckets.find(item => item.slot === "B");
+  assert.equal(A.count, 1);
+  assert.equal(A.items[0].expires_on, "2026-12-25");
+  assert.equal(B.count, 1);
+  await publish("A", A.bucketId, { redeem_place: "エアウォレット", expires_on: "2026-12-25" });
+  await publish("B", B.bucketId, { name: "別キャンペーン", expires_on: "2026-12-25" });
+  const cards = await request(worker, "/api/cards");
+  assert.equal(cards.cards.length, 2);
+  assert.equal(cards.cards[0].expires_on, "2026-12-25");
+  assert.equal((await request(worker, "/api/provisional")).buckets.reduce((sum, item) => sum + item.count, 0), 0);
+  const receiptCount = await DB.prepare("SELECT COUNT(*) n FROM provisional_receipts WHERE status='stored'").first();
+  assert.equal(receiptCount.n, 2);
+
+  await choose("normal");
+  const normal = await request(worker, "/api/receive", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ values: ["ABCD1234EFGH5678"] })
+  });
+  assert.equal(normal.duplicate, 1);
+  assert.equal(normal.counts.active, 0);
+});
+
+test("無認証または送信専用トークンによる暫定モード変更を拒否", async t => {
+  const { mf, analyzer, worker } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const unauthorized = await worker.fetch("https://vault.test/api/receive-mode", {
+    method: "POST", headers: { "content-type": "application/json", origin: "https://vault.test" },
+    body: JSON.stringify({ mode: "A" })
+  });
+  assert.equal(unauthorized.status, 401);
+  const crossSite = await worker.fetch("https://vault.test/api/receive-mode", {
+    method: "POST", headers: {
+      cookie: authCookies.get(worker), "content-type": "application/json", origin: "https://attacker.test"
+    }, body: JSON.stringify({ mode: "A" })
+  });
+  assert.equal(crossSite.status, 403);
+});
+
+
+test("試用データの明示削除では暫定受付の参照も安全に消す", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const h = { "content-type": "application/json", origin: "https://vault.test" };
+  await request(worker, "/api/receive-mode", {
+    method: "POST", headers: h, body: JSON.stringify({ mode: "C" })
+  });
+  const incoming = await request(worker, "/api/receive", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ values: ["SAFE1234TEST5678"] })
+  });
+  assert.equal(incoming.provisional, true);
+  const result = await request(worker, "/api/trial/reset", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ confirmation: "完全削除" })
+  });
+  assert.equal(result.deleted, 1);
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM provisional_entries").first()).n, 0);
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM provisional_receipts").first()).n, 0);
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM items").first()).n, 0);
+});
