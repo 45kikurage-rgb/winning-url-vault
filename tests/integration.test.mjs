@@ -1263,3 +1263,26 @@ test("無認証または送信専用トークンによる暫定モード変更�
   });
   assert.equal(crossSite.status, 403);
 });
+
+
+test("試用データの明示削除では暫定受付の参照も安全に消す", async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const h = { "content-type": "application/json", origin: "https://vault.test" };
+  await request(worker, "/api/receive-mode", {
+    method: "POST", headers: h, body: JSON.stringify({ mode: "C" })
+  });
+  const incoming = await request(worker, "/api/receive", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ values: ["SAFE1234TEST5678"] })
+  });
+  assert.equal(incoming.provisional, true);
+  const result = await request(worker, "/api/trial/reset", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ confirmation: "完全削除" })
+  });
+  assert.equal(result.deleted, 1);
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM provisional_entries").first()).n, 0);
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM provisional_receipts").first()).n, 0);
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM items").first()).n, 0);
+});
