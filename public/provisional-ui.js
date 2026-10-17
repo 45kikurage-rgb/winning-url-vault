@@ -19,6 +19,7 @@ function renderOverview(data) {
     const count = data.buckets?.find(bucket => bucket.slot === mode)?.count;
     button.textContent = mode === "normal" ? "通常" : "暫定" + mode + (count ? " (" + count + ")" : "");
   }
+  $("receive").textContent = data.mode === "normal" ? "解析して保管" : "暫定" + data.mode + "に保管";
   $("provisionalModeStatus").textContent = "現在の受信先： " + (data.mode === "normal" ? "通常" : "暫定" + data.mode) +
     "（ARUNOMATICを含む全端末共通）";
   const container = $("provisionalSortingResults");
