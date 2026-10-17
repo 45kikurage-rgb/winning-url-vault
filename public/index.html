@@ -71,9 +71,27 @@
     <article><span>確認待ち</span><strong id="pendingCount">—</strong></article>
     <article><span>未判定</span><strong id="unknown">—</strong></article>
   </section>
+  <section class="panel provisional-mode-panel" aria-label="受信先の選択">
+    <h2>受信先を選択</h2>
+    <p>ARUNOMATICからの転送を含む全受信に適用されます。初期状態は通常です。</p>
+    <div class="provisional-mode-grid" role="group" aria-label="受信先">
+      <button type="button" data-provisional-mode="A" aria-pressed="false">暫定A</button>
+      <button type="button" data-provisional-mode="B" aria-pressed="false">暫定B</button>
+      <button type="button" data-provisional-mode="C" aria-pressed="false">暫定C</button>
+      <button type="button" data-provisional-mode="D" aria-pressed="false">暫定D</button>
+      <button type="button" data-provisional-mode="E" aria-pressed="false">暫定E</button>
+      <button type="button" data-provisional-mode="normal" aria-pressed="true">通常</button>
+    </div>
+    <p id="provisionalModeStatus" aria-live="polite">現在の受信先を確認中…</p>
+  </section>
   </section>
 
   <section id="tabSorting" class="tab-page hidden">
+  <section class="panel provisional-sorting-panel">
+    <div class="row"><h2>暫定A〜E の解析結果</h2><button class="secondary" id="refreshProvisional" type="button">再読み込み</button></div>
+    <p>暫定保管したコードやURLを表示します。期限が同じでも別の保管箱は自動統合しません。入力欄は空でもカード化できます。</p>
+    <div id="provisionalSortingResults"><p>読み込み待ち</p></div>
+  </section>
   <section id="pendingSection" class="panel hidden">
     <h2>初回確認</h2>
     <p>初めての商品・期限だけ確認します。確定後のカードは自動再判定しません。</p>
