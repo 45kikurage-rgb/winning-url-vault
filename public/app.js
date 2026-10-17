@@ -2,6 +2,7 @@ import { currentWinningMonth, winningMonth, winningMonthLabel, groupWinningFolde
 import { predictAssignmentCampaign } from './assignment-prediction.js';
 import { analysisAmount, isEraberuPay } from './analysis-amount.js';
 import { initProvisionalUI, refreshProvisionalUI } from "./provisional-ui.js";
+import { fetchReadWithRetry } from "./network-read.js";
 
 const $ = id => document.getElementById(id);
 const winningFolderOpen = new Map();
@@ -16,10 +17,10 @@ const state = { cursor: null, cardId: null, authenticated: false, cards: new Map
   campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
   correctionCampaignId: null, winningLists: [], outputProductId: null, exportProductId: null,
   exportItem: null, exportBatch: null, pendingExportBatch: null, exportPaypayKind: null,
-  unresolvedItems: new Map(), imageAnalysisItemId: null, couponImageData: null };
+  unresolvedItems: new Map(), imageAnalysisItemId: null, couponImageData: null, cardsLoaded: false };
 
 async function api(path, options) {
-  const response = await fetch(path, options);
+  const response = await fetchReadWithRetry(fetch, path, options);
   const payload = await response.json().catch(() => ({}));
   if (response.status === 401 && path !== "/api/auth/login") showLogin(payload.error || "ログインが必要です");
   if (!response.ok || payload.ok === false) {
@@ -49,7 +50,10 @@ function switchTab(name) {
   document.querySelectorAll("[data-tab]").forEach(button => button.classList.toggle("active", button.dataset.tab === selected));
   try { localStorage.setItem("winning-url-vault:tab", selected); } catch {}
   if (selected === "winning") loadWinningLists();
-  if (selected === "sorting") refreshProvisionalUI().catch(error => console.warn("provisional refresh", error));
+  if (selected === "sorting") {
+    refreshProvisionalUI().catch(error => console.warn("provisional refresh", error));
+    void load();
+  }
 }
 
 async function loadRevenueSummary() {
@@ -309,8 +313,18 @@ async function load() {
     });
     bindDynamic();
     syncPendingDialog(pending.items);
+    state.cardsLoaded = true;
+    $("sortingLoadStatus").classList.add("hidden");
+    $("retrySortingLoad").classList.add("hidden");
   } catch (error) {
-    $("cards").innerHTML = `<div class="empty error">${esc(error.message)}</div>`;
+    // A transient network failure is not a failure of the saved cards.
+    // Keep the last successful DOM and retry after returning to the app.
+    if (!state.authenticated) return;
+    console.warn("Sorting list temporarily unavailable", error);
+    if (!state.cardsLoaded) $("cards").innerHTML = '<div class="empty">通信復帰後にカードを再取得します。</div>';
+    $("sortingLoadStatus").textContent = "一時的に通信できません。前回のカード表示は保持しています。接続復帰時に自動再取得します。";
+    $("sortingLoadStatus").classList.remove("hidden");
+    $("retrySortingLoad").classList.remove("hidden");
   }
 }
 
@@ -1174,16 +1188,34 @@ function stopPolling() {
   state.pollTimer = null;
 }
 
+async function refreshVisibleData() {
+  if (!state.authenticated || document.hidden || state.refreshing) return;
+  state.refreshing = true;
+  try {
+    await Promise.allSettled([loadJob(), load()]);
+    if (document.body.dataset.activeTab === "sorting") {
+      await refreshProvisionalUI().catch(error => console.warn("provisional refresh", error));
+    }
+  } finally {
+    state.refreshing = false;
+  }
+}
+
 function startPolling() {
   stopPolling();
-  state.pollTimer = setInterval(async () => {
-    if (!state.authenticated || state.refreshing) return;
-    state.refreshing = true;
-    try { await Promise.all([loadJob(), load()]); }
-    catch (error) { console.warn("refresh", error); }
-    finally { state.refreshing = false; }
-  }, 2500);
+  // Android may suspend network operations when the PWA is in the background.
+  // Poll less often, and refresh immediately upon returning to the foreground.
+  state.pollTimer = setInterval(() => { void refreshVisibleData(); }, 8000);
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) void refreshVisibleData();
+});
+window.addEventListener("pageshow", event => {
+  if (event.persisted) void refreshVisibleData();
+});
+window.addEventListener("focus", () => { void refreshVisibleData(); });
+window.addEventListener("online", () => { void refreshVisibleData(); });
 
 async function retry() {
   $("retry").disabled = true;
@@ -1378,4 +1410,5 @@ async function deleteUsedCoupons() {
   finally {button.disabled=false;}
 }
 $("recheckUsage").onclick=recheckSortingUsage;
+$("retrySortingLoad").onclick = () => { void refreshVisibleData(); };
 $("deleteUsed").onclick=deleteUsedCoupons;

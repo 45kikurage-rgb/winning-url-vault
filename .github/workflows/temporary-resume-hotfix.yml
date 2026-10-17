@@ -1,0 +1,45 @@
+name: One-time sorting resume UI production hotfix
+on:
+  push:
+    branches: [main]
+    paths:
+      - public/app.js
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: winning-url-vault-sorting-resume-hotfix
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: contains(github.event.head_commit.message, '[deploy-vault-resume-20261017]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - name: Confirm Cloudflare permissions
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo 'Cloudflare credentials missing' && exit 1)
+      - name: Deploy UI only without D1 migration
+        run: npx wrangler deploy
+      - name: Verify production UI and online status
+        run: |
+          set -euo pipefail
+          root="https://winning-url-vault.45kikurage.workers.dev"
+          curl --fail --silent --show-error --retry 3 --max-time 20 "$root/" -o "$RUNNER_TEMP/index.html"
+          grep -q 'id="sortingLoadStatus"' "$RUNNER_TEMP/index.html"
+          grep -q 'id="retrySortingLoad"' "$RUNNER_TEMP/index.html"
+          curl --fail --silent --show-error --retry 3 --max-time 20 "$root/network-read.js" -o "$RUNNER_TEMP/network-read.js"
+          grep -q 'fetchReadWithRetry' "$RUNNER_TEMP/network-read.js"
+          curl --fail --silent --show-error --retry 3 --max-time 20 "$root/api/auth/status" -o "$RUNNER_TEMP/status.json"
+          grep -q '"mode":"production"' "$RUNNER_TEMP/status.json"

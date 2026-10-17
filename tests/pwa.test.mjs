@@ -123,3 +123,17 @@ test("1件ずつ抽出はAndroid/PWAでnoopenerの戻り値を失敗判定しな
   assert.doesNotMatch(app, /if \(!opened\) throw new Error\("URLを開けませんでした"\)/);
   assert.match(app, /URLを開きました。確認後「抽出済み・次へ」を押してください。/);
 });
+
+test("一時的な通信エラーでカードを消さず復帰時に再取得する", async () => {
+  const index = await text("index.html");
+  const app = await text("app.js");
+  const sw = await text("sw.js");
+  assert.match(index, /id="sortingLoadStatus"/);
+  assert.match(index, /id="retrySortingLoad"/);
+  assert.match(app, /if \(!state\.cardsLoaded\) \$\("cards"\)\.innerHTML/);
+  assert.doesNotMatch(app, /\$\("cards"\)\.innerHTML = `<div class="empty error">\$\{esc\(error\.message\)\}<\/div>`/);
+  assert.match(app, /document\.addEventListener\("visibilitychange"/);
+  assert.match(app, /window\.addEventListener\("focus"/);
+  assert.match(app, /document\.hidden/);
+  assert.match(sw, /network-read\.js/);
+});
