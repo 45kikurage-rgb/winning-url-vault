@@ -37,7 +37,8 @@ jobs:
             console.log("Only additive provisional table creation/initialization allowed");
           '
       - name: Confirm Cloudflare credentials
-        run: test -n "$CLOUDFLARE_API_TOKEN" || (echo 'Missing Cloudflare access: deployment stopped' && exit 1)
+        run: |
+          test -n "$CLOUDFLARE_API_TOKEN" || (echo 'Missing Cloudflare access: deployment stopped' && exit 1)
       - name: Check production D1 and available rollback bookmark
         run: |
           npx wrangler d1 info winning-url-vault
@@ -56,7 +57,7 @@ jobs:
             echo 'Unrelated legacy migrations are still pending; stopping'
             exit 1
           fi
-      - name: Apply D1 migration with automatic migration snapshot
+      - name: Apply approved additive D1 migration
         run: npx wrangler d1 migrations apply winning-url-vault --remote
       - name: Verify existing data and new isolated tables
         run: |
