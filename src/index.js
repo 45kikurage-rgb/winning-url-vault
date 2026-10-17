@@ -4,6 +4,7 @@ import { summarizeAnalysisAmounts } from "./analysis-amount.js";
 import { usageOverview, recheckUsage, deleteUsed, markUsed } from './usage.js';
 import {IntakeError,sendingIdentity,limitSending,listSendingTokens,issueSendingToken,revokeSendingToken} from './sending-auth.js';
 import {readIntake,beginIntake,materializeIntake,dispatchIntake,recoverIntakes} from './intake.js';
+import { modeInfo, changeMode, maybeReceiveProvisional, provisionalOverview, publishBucket } from "./provisional.js";
 import { lawsonLoginUrl } from './lawson-url.js';
 import { analyzeCouponImage } from './image-analysis.js';
 import {
@@ -607,6 +608,13 @@ async function processJobFully(env, jobId, acceptedCount) {
 async function receive(request, env, identity = {ownerKey:'admin'}) {
   try {
     const input=await readIntake(request,Boolean(identity.deviceId));
+    // A replay of a normal receipt must stay normal after the administrator changes mode.
+    const normalReceipt=await env.DB.prepare("SELECT id FROM intake_receipts WHERE owner_key=? AND client_request_id=?")
+      .bind(identity.ownerKey,input.clientRequestId).first();
+    if (!normalReceipt) {
+      const held=await maybeReceiveProvisional(env,input,identity.ownerKey);
+      if (held) return json({...held,clientRequestId:input.clientRequestId},202);
+    }
     const {receipt,resumed}=await beginIntake(env,input,identity.ownerKey);
     const stored=await materializeIntake(env,receipt);
     // Analysis queue failure does not invalidate saved input; cron retries dispatch.
@@ -955,6 +963,23 @@ export default {
       if (url.pathname === "/api/auth/logout" && request.method === "POST") return logout(env);
       if (url.pathname === "/api/status" && request.method === "GET") {
         return json({ ok: Boolean(env.DB), version: VERSION, analyzer: Boolean(env.COUPON_ANALYZER || env.ANALYZER_BASE_URL), mode: env.OPERATION_MODE || "trial" });
+      }
+      if (url.pathname === "/api/receive-mode" && request.method === "GET")
+        return json({ok:true,...await modeInfo(env)});
+      if (url.pathname === "/api/receive-mode" && request.method === "POST") {
+        if (request.headers.get("origin") !== url.origin)
+          return json({ok:false,error:"管理画面から操作してください",code:"SCOPE_DENIED"},403);
+        const body=await request.json().catch(()=>({}));
+        return json({ok:true,...await changeMode(env,body.mode)});
+      }
+      if (url.pathname === "/api/provisional" && request.method === "GET")
+        return json({ok:true,...await provisionalOverview(env)});
+      const publishSlot=url.pathname.match(/^\/api\/provisional\/([A-E])\/publish$/);
+      if (publishSlot && request.method === "POST") {
+        if (request.headers.get("origin") !== url.origin)
+          return json({ok:false,error:"管理画面から操作してください",code:"SCOPE_DENIED"},403);
+        const body=await request.json().catch(()=>({}));
+        return json(await publishBucket(env,publishSlot[1],body.bucket_id,body));
       }
       if (url.pathname === "/api/receive" && request.method === "POST") return receive(request, env);
       if (url.pathname === "/api/trial/reset" && request.method === "POST") return resetTrialData(request, env);
