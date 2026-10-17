@@ -1,0 +1,36 @@
+name: Provisional production HTTP smoke
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/provisional-smoke.yml
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify production UI and new module over HTTPS
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="https://winning-url-vault.45kikurage.workers.dev"
+          curl --fail --silent --show-error --location --retry 3 --max-time 20 "$root/" -o "$RUNNER_TEMP/vault.html"
+          grep -q 'data-provisional-mode="A"' "$RUNNER_TEMP/vault.html"
+          grep -q 'data-provisional-mode="normal"' "$RUNNER_TEMP/vault.html"
+          grep -q 'provisionalSortingResults' "$RUNNER_TEMP/vault.html"
+          curl --fail --silent --show-error --location --retry 3 --max-time 20 "$root/provisional-ui.js" -o "$RUNNER_TEMP/provisional-ui.js"
+          grep -q 'export async function refreshProvisionalUI' "$RUNNER_TEMP/provisional-ui.js"
+          echo 'Published frontend and module: OK'
+      - name: Verify public health and protected API
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="https://winning-url-vault.45kikurage.workers.dev"
+          curl --fail --silent --show-error --retry 3 --max-time 20 "$root/api/auth/status" -o "$RUNNER_TEMP/vault-status.json"
+          grep -q '"mode":"production"' "$RUNNER_TEMP/vault-status.json"
+          grep -q '"authenticated":false' "$RUNNER_TEMP/vault-status.json"
+          status="$(curl --silent --show-error --retry 3 --max-time 20 -o "$RUNNER_TEMP/protected-result.json" -w '%{http_code}' "$root/api/provisional")"
+          test "$status" = 401 || (echo "Protected endpoint returned $status instead of 401"; exit 1)
+          echo 'Public status OK / provisional endpoint requires authentication'
