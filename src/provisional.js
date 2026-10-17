@@ -125,7 +125,14 @@ async function finishReceive(env, receipt) {
       .bind(receipt.bucket_id).first())?.slot,
     received: Number(count?.n || 0),
     duplicate: JSON.parse(stored.plan_json).length - Number(count?.n || 0),
-    job: null
+    // ARUNOMATIC expects a durable job id, terminal status and inputTotal in
+    // every stored:true receipt. Reuse the persisted provisional receipt UUID,
+    // not a synthetic analysis job (provisional data is deliberately not analyzed).
+    job: {
+      id: receipt.id,
+      status: "completed",
+      inputTotal: JSON.parse(stored.plan_json).length
+    }
   };
 }
 
