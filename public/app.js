@@ -1,6 +1,7 @@
 import { currentWinningMonth, winningMonth, winningMonthLabel, groupWinningFolders } from './winning-folders.js';
 import { predictAssignmentCampaign } from './assignment-prediction.js';
 import { analysisAmount, isEraberuPay } from './analysis-amount.js';
+import { initProvisionalUI, refreshProvisionalUI } from "./provisional-ui.js";
 
 const $ = id => document.getElementById(id);
 const winningFolderOpen = new Map();
@@ -48,6 +49,7 @@ function switchTab(name) {
   document.querySelectorAll("[data-tab]").forEach(button => button.classList.toggle("active", button.dataset.tab === selected));
   try { localStorage.setItem("winning-url-vault:tab", selected); } catch {}
   if (selected === "winning") loadWinningLists();
+  if (selected === "sorting") refreshProvisionalUI().catch(error => console.warn("provisional refresh", error));
 }
 
 async function loadRevenueSummary() {
@@ -93,7 +95,7 @@ async function login(event) {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password })
     });
     showApp(result.mode);
-    await Promise.all([load(), loadCampaigns(), loadWinningLists(), loadRevenueSummary()]);
+    await Promise.all([load(), loadCampaigns(), loadWinningLists(), loadRevenueSummary(), initProvisionalUI(api, async () => { await load(); await loadWinningLists(); })]);
     await resumeLatestJob();
     await resumePendingShare();
     await restorePendingExport();
@@ -152,7 +154,7 @@ async function boot() {
     if (!result.configured) return showLogin("ログイン設定が未完了です");
     if (!result.authenticated) return showLogin();
     showApp(result.mode);
-    await Promise.all([load(), loadCampaigns(), loadWinningLists(), loadRevenueSummary()]);
+    await Promise.all([load(), loadCampaigns(), loadWinningLists(), loadRevenueSummary(), initProvisionalUI(api, async () => { await load(); await loadWinningLists(); })]);
     await resumeLatestJob();
     await resumePendingShare();
     await restorePendingExport();
@@ -1118,6 +1120,16 @@ async function receive() {
     const requestId = crypto.randomUUID();
     const result = await api("/api/receive", { method:"POST", headers:{ "content-type":"application/json" },
       body:JSON.stringify({ values, clientRequestId:requestId }) });
+    if (result.provisional) {
+      state.activeJobId = null;
+      $("receiveInput").value = "";
+      $("receiveProgress").classList.add("hidden");
+      $("receiveResult").textContent = "暫定" + result.mode + " に " +
+        Number(result.received || 0) + "件保管しました（重複 " +
+        Number(result.duplicate || 0) + "件）。";
+      await refreshProvisionalUI();
+      return true;
+    }
     state.activeJobId = result.job.id;
     $("receiveInput").value = "";
     showJobProgress(result.job);
