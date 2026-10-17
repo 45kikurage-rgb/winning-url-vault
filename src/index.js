@@ -886,6 +886,9 @@ async function resetTrialData(request, env) {
   const row = await env.DB.prepare("SELECT COUNT(*) count FROM items").first();
   const deleted = Number(row?.count || 0);
   await env.DB.batch([
+    env.DB.prepare("DELETE FROM provisional_entries"),
+    env.DB.prepare("DELETE FROM provisional_receipts"),
+    env.DB.prepare("DELETE FROM provisional_buckets WHERE id NOT IN (SELECT active_bucket_id FROM provisional_slots)"),
     env.DB.prepare("DELETE FROM unresolved_items"),
     env.DB.prepare("DELETE FROM audit_log"),
     env.DB.prepare("DELETE FROM analysis_staging"),
