@@ -1214,9 +1214,15 @@ test("暫定A〜Eの全端末共通受信と、別期限同一でも独立した
   assert.equal(first.provisional, true);
   assert.equal(first.received, 1);
   assert.equal(first.mode, "A");
+  // Android WinningValueSender.parseReceipt() rejects job:null even when stored:true.
+  assert.match(first.job.id, /^[0-9a-f-]{36}$/);
+  assert.equal(first.job.status, "completed");
+  assert.equal(first.job.inputTotal, first.received + first.duplicate);
   assert.equal((await DB.prepare("SELECT COUNT(*) n FROM items WHERE status='provisional'").first()).n, 1);
   const retry = await send({ text: block, clientRequestId: requestId });
   assert.equal(retry.received, 1);
+  assert.equal(retry.job.id, first.job.id, "同じ受付IDを再送しても同じ保管確認を返す");
+  assert.equal(retry.job.status, "completed");
   assert.equal((await request(worker, "/api/cards")).cards.length, 0);
 
   await choose("B");
