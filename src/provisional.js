@@ -206,7 +206,7 @@ export async function publishBucket(env, slot, bucketId, form) {
   const amount = amountText ? Number(amountText) : null;
   const conditions = stableJson({ provisionalBucket: bucketId });
   const normalized = normalizeName(name);
-  const spec = normalizeSpecification(form?.specification);
+  const spec = normalizeSpecification(form?.specification) || (amount !== null ? String(amount) + "円" : "");
   const matchKey = [normalized, spec, place, conditions].join("\u001f");
   const productId = uid(), cardId = uid();
   await env.DB.prepare(
