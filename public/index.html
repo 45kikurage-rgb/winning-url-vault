@@ -185,6 +185,18 @@
   <button id="loadMore" class="secondary hidden">続きを表示</button>
 </dialog>
 
+<dialog id="reassignDialog">
+  <div class="dialog-head"><div><small>当選リスト・キャンペーン変更</small><h2 id="reassignTitle">キャンペーンを選び直す</h2></div><button id="reassignClose" class="secondary" type="button">閉じる</button></div>
+  <p>現在：<strong id="reassignFrom"></strong></p>
+  <label>移動先キャンペーン
+    <select id="reassignCampaign"></select>
+  </label>
+  <p id="reassignSummary" class="assignment-decision" aria-live="polite"></p>
+  <p id="reassignMessage" class="result" aria-live="polite"></p>
+  <div class="confirm-actions"><button id="reassignConfirm" type="button" disabled>変更を確定</button></div>
+  <small>終了済みのキャンペーン・確定収益・設定が異なる既存商品は安全のため変更できません。</small>
+</dialog>
+
 <dialog id="outputMethodDialog">
   <div class="dialog-head"><div><small>カード設定</small><h2 id="outputMethodTitle">抽出方法を選択</h2></div><button id="outputMethodClose" class="secondary">閉じる</button></div>
   <p>抽出済みの記録は、方法を変更しても未抽出には戻りません。</p>
