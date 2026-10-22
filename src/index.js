@@ -12,7 +12,7 @@ import {
   normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson
 } from "./core.js";
 import {
-  VaultLedgerError, assignCardToCampaign, assignmentPreview, closeCampaign, closePreview,
+  VaultLedgerError, assignCardToCampaign, assignmentPreview, reassignmentPreview, reassignWinningProduct, closeCampaign, closePreview,
   enrichCards, getRevenueSummary, outboxStatus, processOutbox, processRevenueOutbox, refreshCampaigns, retryOutbox,
   setUnitPrice, startCorrection
 } from "./ledger.js";
@@ -1008,6 +1008,20 @@ export default {
       }
       if (url.pathname === "/api/winning-lists" && request.method === "GET") {
         return json({ ok: true, products: await listWinningLists(env) });
+      }
+      const reassignRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/reassign$/i);
+      if (reassignRoute && request.method === "GET") {
+        return json({ ok:true, ...await reassignmentPreview(env,reassignRoute[1],url.searchParams.get("campaign_id") || "") });
+      }
+      if (reassignRoute && request.method === "POST") {
+        const origin=request.headers.get("origin");
+        if (origin && origin !== url.origin) return json({ok:false,code:"SCOPE_DENIED",error:"管理画面から操作してください"},403);
+        const body=await request.json().catch(()=>({}));
+        const result=await reassignWinningProduct(env,reassignRoute[1],String(body.campaign_id || ""),String(body.preview_key || ""));
+        await processOutbox(env,{limit:50});
+        await processRevenueOutbox(env,{productId:result.from_product_id});
+        await processRevenueOutbox(env,{productId:result.product_id});
+        return json({ok:true,...result});
       }
       const balanceRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/balance-recheck$/i);
       if (balanceRoute && request.method === "GET") {
