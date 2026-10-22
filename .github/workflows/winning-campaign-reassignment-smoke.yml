@@ -1,0 +1,29 @@
+name: Verify campaign reassignment production assets
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/winning-campaign-reassignment-smoke.yml
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify published selection UI and API access protection
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="https://winning-url-vault.45kikurage.workers.dev"
+          curl --fail --silent --show-error --location --retry 3 --max-time 20 "$root/index.html?verify=reassign-20261022" -o "$RUNNER_TEMP/index.html"
+          grep -Fq 'id="reassignDialog"' "$RUNNER_TEMP/index.html"
+          grep -Fq 'id="reassignConfirm"' "$RUNNER_TEMP/index.html"
+          curl --fail --silent --show-error --location --retry 3 --max-time 20 "$root/app.js?verify=reassign-20261022" -o "$RUNNER_TEMP/app.js"
+          grep -Fq 'data-reassign-product' "$RUNNER_TEMP/app.js"
+          grep -Fq 'loadReassignmentPreview' "$RUNNER_TEMP/app.js"
+          curl --fail --silent --show-error --retry 3 --max-time 20 "$root/api/auth/status" -o "$RUNNER_TEMP/auth.json"
+          grep -Fq '"mode":"production"' "$RUNNER_TEMP/auth.json"
+          status="$(curl --silent --show-error --retry 3 --max-time 20 -o "$RUNNER_TEMP/protected.json" -w '%{http_code}' "$root/api/products/00000000-0000-0000-0000-000000000000/reassign?campaign_id=none")"
+          test "$status" = "401" || (echo "Expected 401 without login, got $status"; exit 1)
+          echo "Published campaign reassignment UI and protected API: OK"
