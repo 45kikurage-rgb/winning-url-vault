@@ -1292,3 +1292,87 @@ test("試用データの明示削除では暫定受付の参照も安全に消�
   assert.equal((await DB.prepare("SELECT COUNT(*) n FROM provisional_receipts").first()).n, 0);
   assert.equal((await DB.prepare("SELECT COUNT(*) n FROM items").first()).n, 0);
 });
+
+
+test("キャンペーン変更はURL・抽出履歴・単価を保護し両キャンペーンの当選数と収益を同期する", async function testMove(t){
+  const {mf,analyzer,worker,DB}=await createRuntime();
+  t.after(()=>cleanup(mf,analyzer));
+  await request(worker,"/api/ledger/campaigns");
+  const card=await createConfirmedCard(worker,"reassign-card");
+  const source=await request(worker,`/api/cards/${card.id}/assign`,{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({campaign_id:"campaign-active-a"})
+  });
+  await request(worker,`/api/products/${source.product_id}/unit-price`,{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({unit_price:120})
+  });
+  await request(worker,`/api/products/${source.product_id}/output-method`,{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({output_method:"normal"})
+  });
+  const next=await request(worker,`/api/products/${source.product_id}/export-next`);
+  await request(worker,`/api/products/${source.product_id}/items/${next.item.id}/export-complete`,{method:"POST"});
+  const before=(await request(worker,"/api/revenue/summary")).monthly_revenue;
+  const preview=await request(worker,`/api/products/${source.product_id}/reassign?campaign_id=campaign-active-b`);
+  assert.equal(preview.exported_count,1);
+  const moved=await request(worker,`/api/products/${source.product_id}/reassign`,{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({campaign_id:"campaign-active-b",preview_key:preview.preview_key})
+  });
+  assert.equal(moved.moved_count,1);
+  assert.notEqual(moved.product_id,source.product_id);
+  const list=(await request(worker,"/api/winning-lists")).products;
+  assert.equal(list.length,1);
+  assert.equal(list[0].campaign_id,"campaign-active-b");
+  assert.equal(list[0].product_id,moved.product_id);
+  assert.equal(list[0].output_method,"normal");
+  assert.equal(Number(list[0].unit_price),120);
+  assert.equal(list[0].exported_count,1);
+  assert.equal((await request(worker,"/api/revenue/summary")).monthly_revenue,before);
+  assert.equal((await DB.prepare("SELECT is_archived FROM ledger_products WHERE product_id=?").bind(source.product_id).first()).is_archived,1);
+  assert.ok((await DB.prepare("SELECT exported_at FROM item_campaign_assignments WHERE product_id=?").bind(moved.product_id).first()).exported_at);
+  assert.equal(analyzer.products.get(source.product_id).current_winner_count,0);
+  assert.equal(analyzer.products.get(moved.product_id).current_winner_count,1);
+  assert.equal(analyzer.totals.get("campaign-active-a").current_winner_count,0);
+  assert.equal(analyzer.totals.get("campaign-active-b").current_winner_count,1);
+  assert.equal(analyzer.revenues.get("2026-10:"+source.product_id)?.amount,0);
+  assert.equal(analyzer.revenues.get("2026-10:"+moved.product_id)?.amount,120);
+  assert.equal((await DB.prepare("SELECT action FROM audit_log WHERE action='campaign_reassigned'").first()).action,"campaign_reassigned");
+  const replay=await worker.fetch(`https://vault.test/api/products/${source.product_id}/reassign`,{
+    method:"POST",headers:{cookie:authCookies.get(worker),"content-type":"application/json"},
+    body:JSON.stringify({campaign_id:"campaign-active-b",preview_key:preview.preview_key})
+  });
+  assert.equal(replay.status,404);
+});
+
+test("キャンペーン変更は古い確認・終了済みキャンペーン・確定収益を拒否する", async function testBlock(t){
+  const {mf,analyzer,worker,DB}=await createRuntime();
+  t.after(()=>cleanup(mf,analyzer));
+  await request(worker,"/api/ledger/campaigns");
+  const card=await createConfirmedCard(worker,"reassign-block");
+  const source=await request(worker,`/api/cards/${card.id}/assign`,{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({campaign_id:"campaign-active-a"})
+  });
+  await request(worker,`/api/products/${source.product_id}/reassign?campaign_id=campaign-active-b`);
+  const stale=await worker.fetch(`https://vault.test/api/products/${source.product_id}/reassign`,{
+    method:"POST",headers:{cookie:authCookies.get(worker),"content-type":"application/json"},
+    body:JSON.stringify({campaign_id:"campaign-active-b",preview_key:"stale"})
+  });
+  assert.equal(stale.status,409);
+  assert.equal((await stale.json()).code,"REASSIGN_PREVIEW_CHANGED");
+  await DB.prepare("UPDATE vault_campaigns SET status='closed' WHERE campaign_id='campaign-active-b'").run();
+  const closed=await worker.fetch(`https://vault.test/api/products/${source.product_id}/reassign?campaign_id=campaign-active-b`,{
+    headers:{cookie:authCookies.get(worker)}
+  });
+  assert.equal(closed.status,409);
+  await DB.prepare("UPDATE vault_campaigns SET status='active' WHERE campaign_id='campaign-active-b'").run();
+  await request(worker,`/api/products/${source.product_id}/unit-price`,{
+    method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({unit_price:250})
+  });
+  await DB.prepare("UPDATE product_monthly_revenue SET finalized_at='2026-10-20T00:00:00Z' WHERE product_id=?")
+    .bind(source.product_id).run();
+  const finalized=await worker.fetch(`https://vault.test/api/products/${source.product_id}/reassign?campaign_id=campaign-active-b`,{
+    headers:{cookie:authCookies.get(worker)}
+  });
+  assert.equal(finalized.status,409);
+  assert.equal((await finalized.json()).code,"REVENUE_FINALIZED");
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM item_campaign_assignments WHERE product_id=?").bind(source.product_id).first()).n,1);
+});

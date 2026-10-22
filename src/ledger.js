@@ -281,6 +281,93 @@ export async function assignCardToCampaign(env, cardId, campaignId, choice = {})
     reused: Boolean(preview.exact_product || choice.product_id) };
 }
 
+export async function reassignmentPreview(env, productId, destinationCampaignId) {
+  const source = await env.DB.prepare(`SELECT p.*,c.status campaign_status,c.campaign_name,c.lottery_start_date
+    FROM ledger_products p LEFT JOIN vault_campaigns c ON c.campaign_id=p.campaign_id WHERE p.product_id=?`)
+    .bind(productId).first();
+  if (!source || source.is_archived) throw new VaultLedgerError("移動元カードが見つかりません", 404, "PRODUCT_NOT_FOUND");
+  if (!["active","closing","correcting"].includes(source.campaign_status)) {
+    throw new VaultLedgerError("終了済みキャンペーンは、先に訂正手続きを行ってください", 409, "SOURCE_CAMPAIGN_CLOSED");
+  }
+  const destination = await env.DB.prepare("SELECT * FROM vault_campaigns WHERE campaign_id=?")
+    .bind(destinationCampaignId).first();
+  if (!destination || destination.is_archived) throw new VaultLedgerError("移動先キャンペーンが見つかりません", 404, "CAMPAIGN_NOT_FOUND");
+  if (!["active","closing","correcting"].includes(destination.status)) {
+    throw new VaultLedgerError("終了済みキャンペーンへは移動できません", 409, "DESTINATION_CAMPAIGN_CLOSED");
+  }
+  if (source.campaign_id === destinationCampaignId) throw new VaultLedgerError("現在と同じキャンペーンです", 409, "SAME_CAMPAIGN");
+  const pending = await env.DB.prepare("SELECT id FROM export_batches WHERE status='pending' LIMIT 1").first();
+  if (pending) throw new VaultLedgerError("進行中の一括抽出を完了またはキャンセルしてください", 409, "EXPORT_BATCH_PENDING");
+  const stats = await env.DB.prepare(`SELECT COUNT(*) total_count,
+    COALESCE(SUM(CASE WHEN i.status='active' THEN 1 ELSE 0 END),0) active_count,
+    COALESCE(SUM(CASE WHEN a.exported_at IS NOT NULL THEN 1 ELSE 0 END),0) exported_count
+    FROM item_campaign_assignments a JOIN items i ON i.id=a.item_id WHERE a.product_id=?`)
+    .bind(productId).first();
+  if (!Number(stats?.total_count)) throw new VaultLedgerError("移動できる当選データがありません", 409, "NO_ASSIGNMENTS");
+  const existing = await env.DB.prepare("SELECT * FROM ledger_products WHERE campaign_id=? AND identity_key=?")
+    .bind(destinationCampaignId, source.identity_key).first();
+  if (existing && (existing.is_archived || existing.card_id !== source.card_id ||
+    existing.output_method !== source.output_method || existing.unit_price !== source.unit_price ||
+    existing.show_in_permanent !== source.show_in_permanent)) {
+    throw new VaultLedgerError("移動先に設定の異なる同一商品があります。商品設定と重複登録を確認してください", 409, "DESTINATION_PRODUCT_CONFLICT");
+  }
+  const finalized = await env.DB.prepare(`SELECT product_id,month FROM product_monthly_revenue
+    WHERE product_id IN (?,?) AND finalized_at IS NOT NULL LIMIT 1`)
+    .bind(productId, existing?.product_id || productId).first();
+  if (finalized) throw new VaultLedgerError("収益確定済みのカードは移動できません。訂正手続きで対応してください", 409, "REVENUE_FINALIZED");
+  const previewKey = JSON.stringify([productId,destinationCampaignId,source.updated_at,
+    existing?.product_id || "",existing?.updated_at || "",Number(stats.total_count),
+    Number(stats.active_count),source.campaign_status,destination.status]);
+  return { product_id:productId,from_campaign_id:source.campaign_id,
+    from_campaign_name:source.campaign_name,to_campaign_id:destinationCampaignId,
+    to_campaign_name:destination.campaign_name,to_lottery_start_date:destination.lottery_start_date,
+    target_product_id:existing?.product_id || null,total_count:Number(stats.total_count),
+    active_count:Number(stats.active_count),exported_count:Number(stats.exported_count),preview_key:previewKey };
+}
+
+export async function reassignWinningProduct(env, productId, destinationCampaignId, expectedPreviewKey) {
+  const preview = await reassignmentPreview(env,productId,destinationCampaignId);
+  if (preview.preview_key !== expectedPreviewKey) {
+    throw new VaultLedgerError("データが更新されています。移動先を再確認してください",409,"REASSIGN_PREVIEW_CHANGED");
+  }
+  const occurredAt = now();
+  const newProductId = preview.target_product_id || uuid();
+  const statements = [];
+  if (!preview.target_product_id) {
+    statements.push(env.DB.prepare(`INSERT INTO ledger_products
+      (product_id,campaign_id,card_id,product_name,redemption_place,product_spec,valid_until,
+      identity_key,assigned_at,output_method,show_in_permanent,unit_price,is_archived,created_at,updated_at)
+      SELECT ?,?,card_id,product_name,redemption_place,product_spec,valid_until,identity_key,?,
+      output_method,show_in_permanent,unit_price,0,?,? FROM ledger_products
+      WHERE product_id=? AND is_archived=0`)
+      .bind(newProductId,destinationCampaignId,occurredAt,occurredAt,occurredAt,productId));
+  }
+  const assignmentStatementIndex = statements.length;
+  statements.push(env.DB.prepare("UPDATE item_campaign_assignments SET campaign_id=?,product_id=? WHERE product_id=?")
+    .bind(destinationCampaignId,newProductId,productId));
+  statements.push(env.DB.prepare("UPDATE ledger_products SET is_archived=1,updated_at=? WHERE product_id=?")
+    .bind(occurredAt,productId));
+  statements.push(...enqueueProductAndTotals(env.DB,productId,preview.from_campaign_id,occurredAt));
+  statements.push(...enqueueProductAndTotals(env.DB,newProductId,destinationCampaignId,occurredAt));
+  statements.push(env.DB.prepare(`UPDATE product_monthly_revenue
+    SET winner_count=0,amount=CASE WHEN unit_price IS NULL THEN NULL ELSE 0 END,
+      source_revision=CASE WHEN unit_price IS NULL THEN source_revision ELSE source_revision+1 END,
+      sync_status=CASE WHEN unit_price IS NULL THEN 'unset' ELSE 'pending' END,
+      attempts=0,next_attempt_at=NULL,last_error=NULL,updated_at=?
+    WHERE product_id=? AND finalized_at IS NULL`).bind(occurredAt,productId));
+  statements.push(refreshProductRevenueStatement(env.DB,newProductId,occurredAt));
+  statements.push(env.DB.prepare("INSERT INTO audit_log (id,item_id,action,detail) VALUES (?,NULL,?,?)")
+    .bind(uuid(),"campaign_reassigned",JSON.stringify({
+      from_product_id:productId,to_product_id:newProductId,from_campaign_id:preview.from_campaign_id,
+      to_campaign_id:destinationCampaignId,count:preview.total_count,occurred_at:occurredAt
+    })));
+  const results = await env.DB.batch(statements);
+  const movedCount = Number(results[assignmentStatementIndex]?.meta?.changes || 0);
+  return { from_product_id:productId,product_id:newProductId,from_campaign_id:preview.from_campaign_id,
+    campaign_id:destinationCampaignId,moved_count:movedCount,exported_count:preview.exported_count,
+    reused:Boolean(preview.target_product_id) };
+}
+
 export async function cardAssignments(env) {
   const rows = await env.DB.prepare(`SELECT p.*,i.card_id,c.campaign_name,c.lottery_start_date,c.status campaign_status,
     MAX(a.assigned_at) last_assigned_at,

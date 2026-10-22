@@ -230,3 +230,9 @@ body[data-operation-mode="production"] .summary strong{margin-top:1px;font-size:
 .provisional-fields input {width:100%;min-width:0;box-sizing:border-box;}
 .provisional-publish-message {min-height:1.4em;}
 @media (max-width:480px){.provisional-fields{grid-template-columns:1fr;}}
+
+.winning-campaign{gap:8px;align-items:center}
+.winning-campaign>span:first-child{min-width:0;overflow-wrap:anywhere}
+.campaign-card-tools{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap;flex-shrink:0}
+.campaign-card-tools .campaign-change{min-height:28px;padding:4px 9px;font-size:12px;white-space:nowrap}
+#reassignDialog select{width:100%;max-width:100%}

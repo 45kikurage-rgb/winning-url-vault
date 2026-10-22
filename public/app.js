@@ -15,7 +15,7 @@ const OUTPUT_METHOD_LABELS = { unset:"未設定", normal:"通常URL", cokeon:"�
 const state = { cursor: null, cardId: null, authenticated: false, cards: new Map(), pendingItems: new Map(),
   activeJobId: null, dismissedJobId: null, progressHideJobId: null, progressHideTimer: null, pollTimer: null, refreshing: false, dialogPendingId: null,
   campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
-  correctionCampaignId: null, winningLists: [], outputProductId: null, exportProductId: null,
+  correctionCampaignId: null, winningLists: [], outputProductId: null, exportProductId: null, reassignProductId:null, reassignPreview:null,
   exportItem: null, exportBatch: null, pendingExportBatch: null, exportPaypayKind: null,
   unresolvedItems: new Map(), imageAnalysisItemId: null, couponImageData: null, cardsLoaded: false };
 
@@ -466,7 +466,7 @@ function winningCardHtml(item) {
     ? `<span class="price-unset">単価未設定</span><span>${esc(monthLabel)} —</span>`
     : `<span>単価 ¥${unitPrice.toLocaleString()}</span><span>${esc(monthLabel)} ¥${Number(revenue || 0).toLocaleString()}</span>`;
   return `<article class="winning-card ${unset ? "is-unset" : complete ? "is-complete" : "is-active"}" data-product-id="${esc(item.product_id)}">
-    <div class="winning-campaign"><span>${esc(item.campaign_name || item.campaign_id)}　${esc(item.lottery_start_date || "")}</span><span>${esc(statusLabels[item.campaign_status] || item.campaign_status || "")}</span></div>
+    <div class="winning-campaign"><span>${esc(item.campaign_name || item.campaign_id)}　${esc(item.lottery_start_date || "")}</span><span class="campaign-card-tools"><span>${esc(statusLabels[item.campaign_status] || item.campaign_status || "")}</span><button class="secondary campaign-change" data-reassign-product="${esc(item.product_id)}" type="button">変更</button></span></div>
     <div class="winning-title"><h3>${esc(item.display_name || item.product_name)}</h3>${unset ? '<strong class="needs-setting">要設定</strong>' : ""}</div>
     <div class="meta winning-meta">${meta}</div>
     <div class="method-name">${esc(methodLabel(item.output_method))}</div>
@@ -518,8 +518,64 @@ function winningProduct(productId) {
 
 function bindWinningControls() {
   document.querySelectorAll("[data-method-product]").forEach(button => button.onclick = () => openOutputMethod(button.dataset.methodProduct));
+  document.querySelectorAll("[data-reassign-product]").forEach(button => button.onclick = () => openReassignment(button.dataset.reassignProduct));
   document.querySelectorAll("[data-export-product]").forEach(button => button.onclick = () => openExportAction(button.dataset.exportProduct));
   document.querySelectorAll("[data-balance-product]").forEach(button => button.onclick = () => recheckWinningBalances(button.dataset.balanceProduct));
+}
+
+async function openReassignment(productId) {
+  const product=winningProduct(productId);
+  if(!product)return;
+  state.reassignProductId=productId;
+  state.reassignPreview=null;
+  $("reassignTitle").textContent=product.display_name||product.product_name;
+  $("reassignFrom").textContent=(product.campaign_name||product.campaign_id)+"　"+(product.lottery_start_date||"");
+  $("reassignMessage").textContent="";
+  const available=state.campaigns.filter(c=>!c.is_archived&&["active","closing","correcting"].includes(c.status)&&c.campaign_id!==product.campaign_id);
+  $("reassignCampaign").innerHTML=available.map(c=>`<option value="${esc(c.campaign_id)}">${esc(campaignLabel(c))}（${c.status==="active"?"実施中":c.status==="closing"?"終了確認待ち":"訂正中"}）</option>`).join("");
+  $("reassignConfirm").disabled=true;
+  $("reassignSummary").textContent=available.length?"":"移動できるキャンペーンがありません。終了済みの場合はCP連携から訂正手続きを行ってください。";
+  $("reassignDialog").showModal();
+  if(available.length)await loadReassignmentPreview();
+}
+async function loadReassignmentPreview() {
+  const productId=state.reassignProductId;
+  const campaignId=$("reassignCampaign").value;
+  if(!productId||!campaignId)return;
+  state.reassignPreview=null;
+  $("reassignConfirm").disabled=true;
+  $("reassignSummary").textContent="変更対象を確認中…";
+  $("reassignMessage").textContent="";
+  try{
+    const data=await api(`/api/products/${productId}/reassign?campaign_id=${encodeURIComponent(campaignId)}`);
+    if(state.reassignProductId!==productId||$("reassignCampaign").value!==campaignId)return;
+    state.reassignPreview=data;
+    $("reassignSummary").textContent=`${data.total_count.toLocaleString()}件（抽出済み ${data.exported_count.toLocaleString()}件）を「${data.to_campaign_name}」へ移動します。URL・抽出記録・単価は保持します。`;
+    $("reassignConfirm").disabled=false;
+  }catch(error){
+    $("reassignSummary").textContent="";
+    $("reassignMessage").textContent=error.message;
+  }
+}
+async function confirmReassignment(){
+  const preview=state.reassignPreview;
+  if(!preview||preview.product_id!==state.reassignProductId)return;
+  $("reassignConfirm").disabled=true;
+  $("reassignMessage").textContent="変更を保存中…";
+  try{
+    const result=await api(`/api/products/${preview.product_id}/reassign`,{
+      method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({campaign_id:preview.to_campaign_id,preview_key:preview.preview_key})
+    });
+    $("reassignDialog").close();
+    state.reassignProductId=null;
+    state.reassignPreview=null;
+    await Promise.all([loadWinningLists(),loadCampaigns(),loadRevenueSummary()]);
+    alert(`${result.moved_count.toLocaleString()}件のキャンペーンを変更しました。`);
+  }catch(error){
+    $("reassignMessage").textContent=error.message;
+    $("reassignConfirm").disabled=false;
+  }
 }
 
 function updateBalanceRecheck(productId, update) {
@@ -1290,6 +1346,9 @@ document.querySelectorAll("[data-tab]").forEach(button => button.onclick = () =>
 $("refreshWinningLists")?.addEventListener("click", loadWinningLists);
 $("undoLastExport").onclick = undoLastExport;
 $("outputMethodClose").onclick = () => $("outputMethodDialog").close();
+$("reassignClose").onclick = () => $("reassignDialog").close();
+$("reassignCampaign").onchange = loadReassignmentPreview;
+$("reassignConfirm").onclick = confirmReassignment;
 $("saveFolderVisibility").onclick = saveFolderVisibility;
 $("saveUnitPrice").onclick = saveUnitPrice;
 $("outputMethodDialog").addEventListener("click", event => {

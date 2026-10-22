@@ -1,6 +1,10 @@
 name: Deploy
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - docs/releases/winning-campaign-reassignment-20261022.md
 permissions:
   contents: read
 jobs:
@@ -20,4 +24,15 @@ jobs:
       - run: npm test
       - name: Verify Cloudflare credentials
         run: test -n "$CLOUDFLARE_API_TOKEN" || (echo "CLOUDFLARE_API_TOKEN repository secret is required" && exit 1)
-      - run: npm run deploy
+      - name: One-time release D1 preflight (read-only)
+        if: github.event_name == 'push'
+        run: |
+          npx wrangler d1 info winning-url-vault
+          npx wrangler d1 time-travel info winning-url-vault
+          npx wrangler d1 execute winning-url-vault --remote --command "SELECT COUNT(*) AS active_items FROM items WHERE status='active';"
+      - name: One-time release without D1 migrations
+        if: github.event_name == 'push'
+        run: npx wrangler deploy
+      - name: Manual deployment (legacy migration workflow)
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run deploy
