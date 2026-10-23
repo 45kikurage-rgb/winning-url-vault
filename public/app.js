@@ -1257,15 +1257,47 @@ async function refreshVisibleData() {
   }
 }
 
+// Keep a signed, already-authenticated browser signed in during ordinary use.
+// The status endpoint can only renew a still-valid HttpOnly session cookie.
+// No password or token is stored in localStorage, JavaScript or the PWA cache.
+let lastSessionCheck = 0;
+let sessionCheckInFlight = false;
+async function keepSessionAlive() {
+  if (!state.authenticated || document.hidden || sessionCheckInFlight ||
+      Date.now() - lastSessionCheck < 6 * 60 * 60 * 1000) return;
+  sessionCheckInFlight = true;
+  lastSessionCheck = Date.now();
+  try {
+    const status = await api("/api/auth/status");
+    if (!status.authenticated) {
+      stopPolling();
+      showLogin("ログインの有効期限が切れました。管理者の再認証が必要です。");
+    }
+  } catch (error) {
+    // Temporary network outages must not log out a valid local session.
+    lastSessionCheck = 0;
+    console.warn("session renewal", error);
+  } finally {
+    sessionCheckInFlight = false;
+  }
+}
+
 function startPolling() {
   stopPolling();
   // Android may suspend network operations when the PWA is in the background.
   // Poll less often, and refresh immediately upon returning to the foreground.
-  state.pollTimer = setInterval(() => { void refreshVisibleData(); }, 8000);
+  void keepSessionAlive();
+  state.pollTimer = setInterval(() => {
+    void keepSessionAlive();
+    void refreshVisibleData();
+  }, 8000);
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) void refreshVisibleData();
+  if (!document.hidden) {
+    void keepSessionAlive();
+    void refreshVisibleData();
+  }
 });
 window.addEventListener("pageshow", event => {
   if (event.persisted) void refreshVisibleData();
