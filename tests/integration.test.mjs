@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { createHmac } from "node:crypto";
 import { Miniflare } from "miniflare";
 import { getRevenueSummary } from "../src/ledger.js";
 import { recheckBalances } from "../src/balance-recheck.js";
@@ -182,6 +183,44 @@ test("未ログインではAPIを読めず、ログイン状態と試用モー�
   const status = await request(worker, "/api/auth/status");
   assert.equal(status.authenticated, true);
   assert.equal(status.mode, "trial");
+});
+
+test("有効な既存Cookieだけを更新し、期限切れ・偽造・匿名アクセスは拒否する", async t => {
+  const { mf, analyzer, worker } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const status = cookie => worker.fetch("https://vault.test/api/auth/status",
+    cookie ? { headers: { cookie } } : {});
+  const initial = await status();
+  assert.equal((await initial.json()).authenticated, false);
+  assert.equal(initial.headers.get("set-cookie"), null);
+  const stillFresh = await status(authCookies.get(worker));
+  assert.equal((await stillFresh.json()).authenticated, true);
+  assert.equal(stillFresh.headers.get("set-cookie"), null);
+  const signedCookie = expiry => {
+    const mac = createHmac("sha256", "integration-test-session-secret")
+      .update(String(expiry)).digest("base64url");
+    return `wuv_session=${expiry}.${mac}`;
+  };
+  const nearExpiry = Math.floor(Date.now() / 1000) + 60 * 60;
+  const renewal = await status(signedCookie(nearExpiry));
+  assert.equal((await renewal.json()).authenticated, true);
+  const renewed = renewal.headers.get("set-cookie");
+  assert.match(renewed, /HttpOnly; Secure; SameSite=Strict/);
+  assert.match(renewed, /Max-Age=2592000/);
+  const newExpiry = Number(renewed.match(/wuv_session=(\\d+)\\./)?.[1]);
+  assert.ok(newExpiry > nearExpiry + 20 * 24 * 60 * 60);
+  assert.equal((await (await status(renewed.split(";")[0])).json()).authenticated, true);
+  for (const invalid of [
+    signedCookie(Math.floor(Date.now() / 1000) - 1),
+    `wuv_session=${nearExpiry}.invalidsig`
+  ]) {
+    const response = await status(invalid);
+    assert.equal((await response.json()).authenticated, false);
+    assert.equal(response.headers.get("set-cookie"), null);
+    assert.equal((await worker.fetch("https://vault.test/api/cards", {
+      headers: { cookie: invalid }
+    })).status, 401);
+  }
 });
 
 async function cleanup(mf, analyzer) {
