@@ -1,10 +1,10 @@
-const CACHE = "winning-url-vault-pwa-20261017-sorting-resume-v1";
+const CACHE = "winning-url-vault-pwa-20261023-session-renew-v1";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
   "/styles.css",
-  "/app.js?v=20261017-sorting-resume-v1",
+  "/app.js?v=20261023-session-renew-v1",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
