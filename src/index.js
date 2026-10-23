@@ -939,12 +939,26 @@ export default {
         return await receive(request,env,identity);
       }
       if (url.pathname === "/api/auth/status" && request.method === "GET") {
-        return json({
+        const isAuthenticated = await authenticated(request, env);
+        const response = json({
           ok: true,
-          authenticated: await authenticated(request, env),
+          authenticated: isAuthenticated,
           configured: Boolean(env.ACCESS_PASSWORD_SHA256 && env.SESSION_SECRET),
           mode: env.OPERATION_MODE || "trial"
         });
+        // Only a previously authenticated browser may renew. Never turn an
+        // expired/missing/forged cookie into a session or bypass the password.
+        if (isAuthenticated) {
+          const [expiryText] = cookieValue(request, SESSION_COOKIE).split(".");
+          const remainingSeconds = Number(expiryText) - Math.floor(Date.now() / 1000);
+          if (remainingSeconds <= SESSION_SECONDS / 2) {
+            const refreshedExpiry = Math.floor(Date.now() / 1000) + SESSION_SECONDS;
+            const signature = await sign(String(refreshedExpiry), env.SESSION_SECRET);
+            response.headers.append("set-cookie",
+              `${SESSION_COOKIE}=${refreshedExpiry}.${signature}; Max-Age=${SESSION_SECONDS}; Path=/; HttpOnly; Secure; SameSite=Strict`);
+          }
+        }
+        return response;
       }
       if (url.pathname === "/api/auth/login" && request.method === "POST") return login(request, env);
       if (url.pathname.startsWith("/api/") && !await authenticated(request, env)) {
