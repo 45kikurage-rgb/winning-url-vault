@@ -137,3 +137,21 @@ test("一時的な通信エラーでカードを消さず復帰時に再取得�
   assert.match(app, /document\.hidden/);
   assert.match(sw, /network-read\.js/);
 });
+
+
+test("端末限定ログインUIはローカル非抽出鍵・登録手順とCookie認証を使う",async()=>{
+  const index=await text("index.html");
+  const app=await text("app.js");
+  const device=await text("device-login.js");
+  const sw=await text("sw.js");
+  assert.match(index,/id="deviceSetupButton"/);
+  assert.match(index,/id="devicePairingHash"/);
+  assert.match(index,/DEVICE_PAIRING_SHA256/);
+  assert.match(app,/loginWithDeviceKey/);
+  assert.match(app,/finishDevicePairing/);
+  assert.match(device,/generateKey\(\{name:"ECDSA",namedCurve:"P-256"\},false/);
+  assert.match(device,/indexedDB/);
+  assert.match(device,/\/api\/auth\/device\/verify/);
+  assert.doesNotMatch(device,/localStorage/);
+  assert.match(sw,/\/device-login\.js/);
+});
