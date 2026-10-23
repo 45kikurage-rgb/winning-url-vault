@@ -6,6 +6,7 @@ import {IntakeError,sendingIdentity,limitSending,listSendingTokens,issueSendingT
 import {readIntake,beginIntake,materializeIntake,dispatchIntake,recoverIntakes} from './intake.js';
 import { modeInfo, changeMode, maybeReceiveProvisional, provisionalOverview, publishBucket } from "./provisional.js";
 import { lawsonLoginUrl } from './lawson-url.js';
+import { registeredDevice, deviceSessionValid, newDeviceCookie, enrollDevice, challengeDevice, verifyDevice } from './device-auth.js';
 import { analyzeCouponImage } from './image-analysis.js';
 import {
   classifyValue, codeCard, extractInputValues, isGenericName, normalizeAnalysis,
@@ -79,8 +80,13 @@ function cookieValue(request, name) {
 }
 
 async function authenticated(request, env) {
-  if (!env.SESSION_SECRET || !env.ACCESS_PASSWORD_SHA256) return false;
+  if (!env.SESSION_SECRET) return false;
   const token = cookieValue(request, SESSION_COOKIE);
+  const device = await registeredDevice(env);
+  // Activating a registered device invalidates every previous password-only
+  // cookie, and blocks sessions from unregistered browsers.
+  if (device) return deviceSessionValid(env, token, device);
+  if (!env.ACCESS_PASSWORD_SHA256) return false;
   const [expiryText, signature] = token.split(".");
   const expiry = Number(expiryText);
   if (!expiry || expiry <= Math.floor(Date.now() / 1000) || !signature) return false;
@@ -93,6 +99,9 @@ async function loginIdentifier(request, env) {
 }
 
 async function login(request, env) {
+  if (await registeredDevice(env)) {
+    return json({ok:false,error:"このサイトは登録済み端末専用です"},403);
+  }
   if (!env.ACCESS_PASSWORD_SHA256 || !env.SESSION_SECRET) {
     return json({ ok: false, error: "ログイン設定が未完了です" }, 503);
   }
@@ -939,11 +948,14 @@ export default {
         return await receive(request,env,identity);
       }
       if (url.pathname === "/api/auth/status" && request.method === "GET") {
+        const device = await registeredDevice(env);
         const isAuthenticated = await authenticated(request, env);
         const response = json({
           ok: true,
           authenticated: isAuthenticated,
-          configured: Boolean(env.ACCESS_PASSWORD_SHA256 && env.SESSION_SECRET),
+          configured: Boolean(env.SESSION_SECRET && (device || env.ACCESS_PASSWORD_SHA256)),
+          deviceOnlyMode: Boolean(device),
+          pairingAvailable: Boolean(env.DEVICE_PAIRING_SHA256),
           mode: env.OPERATION_MODE || "trial"
         });
         // Only a previously authenticated browser may renew. Never turn an
@@ -952,14 +964,21 @@ export default {
           const [expiryText] = cookieValue(request, SESSION_COOKIE).split(".");
           const remainingSeconds = Number(expiryText) - Math.floor(Date.now() / 1000);
           if (remainingSeconds <= SESSION_SECONDS / 2) {
-            const refreshedExpiry = Math.floor(Date.now() / 1000) + SESSION_SECONDS;
-            const signature = await sign(String(refreshedExpiry), env.SESSION_SECRET);
-            response.headers.append("set-cookie",
-              `${SESSION_COOKIE}=${refreshedExpiry}.${signature}; Max-Age=${SESSION_SECONDS}; Path=/; HttpOnly; Secure; SameSite=Strict`);
+            if (device) {
+              response.headers.append("set-cookie", await newDeviceCookie(env,device.credential_id));
+            } else {
+              const refreshedExpiry = Math.floor(Date.now() / 1000) + SESSION_SECONDS;
+              const signature = await sign(String(refreshedExpiry), env.SESSION_SECRET);
+              response.headers.append("set-cookie",
+                `${SESSION_COOKIE}=${refreshedExpiry}.${signature}; Max-Age=${SESSION_SECONDS}; Path=/; HttpOnly; Secure; SameSite=Strict`);
+            }
           }
         }
         return response;
       }
+      if (url.pathname === "/api/auth/device/enroll" && request.method === "POST") return enrollDevice(request,env);
+      if (url.pathname === "/api/auth/device/challenge" && request.method === "POST") return challengeDevice(request,env);
+      if (url.pathname === "/api/auth/device/verify" && request.method === "POST") return verifyDevice(request,env);
       if (url.pathname === "/api/auth/login" && request.method === "POST") return login(request, env);
       if (url.pathname.startsWith("/api/") && !await authenticated(request, env)) {
         return json({ ok: false, code: "TOKEN_INVALID", error: "ログインまたは送信専用トークンが必要です" }, 401);
