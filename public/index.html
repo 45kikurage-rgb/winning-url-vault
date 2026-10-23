@@ -25,6 +25,22 @@
     <button id="loginButton" type="submit">ログイン</button>
     <small id="loginMessage" aria-live="polite"></small>
   </form>
+  <section id="deviceLoginSection" class="login-card" aria-labelledby="deviceLoginTitle">
+    <h2 id="deviceLoginTitle">この端末専用ログイン</h2>
+    <p>登録した端末からは、パスワードを入力せずにログインできます。</p>
+    <button id="deviceLoginButton" type="button">この端末でログイン</button>
+    <button id="deviceSetupButton" class="secondary" type="button">この端末を登録・再登録</button>
+    <div id="deviceSetupSteps" class="hidden">
+      <p>Cloudflare管理者が <code>DEVICE_PAIRING_SHA256</code> に次の文字列をSecretとして登録してください。</p>
+      <label>端末登録用ハッシュ
+        <textarea id="devicePairingHash" readonly rows="3" spellcheck="false"></textarea>
+      </label>
+      <button id="copyDevicePairingHash" class="secondary" type="button">ハッシュをコピー</button>
+      <button id="confirmDeviceSetup" type="button">Cloudflareに保存したので端末を登録</button>
+      <small>登録に成功すると、以前のパスワードログインと他端末のログインは無効になります。別端末を登録する場合はCloudflareで新しいハッシュに更新します。</small>
+    </div>
+    <p id="deviceLoginMessage" aria-live="polite"></p>
+  </section>
 </section>
 
 <main id="app" class="hidden">
@@ -290,7 +306,7 @@
   <p id="trialResetMessage" class="result" aria-live="polite"></p>
   <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
-<script type="module" src="/app.js?v=20261023-session-renew-v1"></script>
+<script type="module" src="/app.js?v=20261023-device-login-v1"></script>
 </body>
 </html>
 

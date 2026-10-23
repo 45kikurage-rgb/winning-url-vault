@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createHmac } from "node:crypto";
+import { createHmac, createHash } from "node:crypto";
 import { Miniflare } from "miniflare";
 import { getRevenueSummary } from "../src/ledger.js";
 import { recheckBalances } from "../src/balance-recheck.js";
@@ -128,6 +128,7 @@ async function createRuntime() {
         COKEON_REDEEM_BASE_URL: "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=",
         ACCESS_PASSWORD_SHA256: "b916a41ca29c2e11feef1e12aa42f69e6a5531c4995a8a4f4979c165206b0171",
         SESSION_SECRET: "integration-test-session-secret",
+        DEVICE_PAIRING_SHA256: createHash("sha256").update("A".repeat(43)).digest("hex"),
         OPERATION_MODE: "trial"
       }
     });
@@ -221,6 +222,61 @@ test("有効な既存Cookieだけを更新し、期限切れ・偽造・匿名�
       headers: { cookie: invalid }
     })).status, 401);
   }
+});
+
+
+test("この端末の署名鍵だけがログインし、旧パスワードと旧Cookieを無効化する", async t => {
+  const {mf,analyzer,worker}=await createRuntime();
+  t.after(()=>cleanup(mf,analyzer));
+  const origin="https://vault.test";
+  const post=(path,body)=>worker.fetch(origin+path,{method:"POST",
+    headers:{"content-type":"application/json",origin},
+    body:JSON.stringify(body||{})});
+  const oldCookie=authCookies.get(worker);
+  const pair=await crypto.subtle.generateKey(
+    {name:"ECDSA",namedCurve:"P-256"},false,["sign","verify"]);
+  const publicJwk=await crypto.subtle.exportKey("jwk",pair.publicKey);
+  const prior=await worker.fetch(origin+"/api/auth/status");
+  assert.equal((await prior.json()).deviceOnlyMode,false);
+  const unauthorized=await post("/api/auth/device/enroll",{pairingCode:"B".repeat(43),publicJwk});
+  assert.equal(unauthorized.status,403);
+  const enrolled=await post("/api/auth/device/enroll",{pairingCode:"A".repeat(43),publicJwk});
+  assert.equal(enrolled.status,200);
+  assert.equal((await enrolled.json()).registered,true);
+  const replayEnroll=await post("/api/auth/device/enroll",{pairingCode:"A".repeat(43),publicJwk});
+  assert.equal(replayEnroll.status,409);
+  const old=await worker.fetch(origin+"/api/cards",{headers:{cookie:oldCookie}});
+  assert.equal(old.status,401);
+  const oldLogin=await post("/api/auth/login",{password:"test-access-password"});
+  assert.equal(oldLogin.status,403);
+  const anonymous=await worker.fetch(origin+"/api/auth/status");
+  const status=await anonymous.json();
+  assert.equal(status.deviceOnlyMode,true);
+  assert.equal(status.authenticated,false);
+  const challenge=await (await post("/api/auth/device/challenge")).json();
+  const bytes=await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},
+    pair.privateKey,new TextEncoder().encode(challenge.message));
+  const signature=Buffer.from(bytes).toString("base64url");
+  const accepted=await post("/api/auth/device/verify",{challenge:challenge.challenge,signature});
+  assert.equal(accepted.status,200);
+  const cookie=accepted.headers.get("set-cookie");
+  assert.match(cookie,/HttpOnly; Secure; SameSite=Strict/);
+  assert.equal((await (await worker.fetch(origin+"/api/auth/status",{
+    headers:{cookie:cookie.split(";")[0]}})).json()).authenticated,true);
+  assert.equal((await worker.fetch(origin+"/api/cards")).status,401);
+  const replay=await post("/api/auth/device/verify",{challenge:challenge.challenge,signature});
+  assert.equal(replay.status,409);
+  const stranger=await crypto.subtle.generateKey(
+    {name:"ECDSA",namedCurve:"P-256"},false,["sign","verify"]);
+  const otherChallenge=await (await post("/api/auth/device/challenge")).json();
+  const otherSig=Buffer.from(await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},
+    stranger.privateKey,new TextEncoder().encode(otherChallenge.message))).toString("base64url");
+  assert.equal((await post("/api/auth/device/verify",{
+    challenge:otherChallenge.challenge,signature:otherSig})).status,401);
+  assert.equal((await worker.fetch(origin+"/api/auth/device/verify",{
+    method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({challenge:otherChallenge.challenge,signature:otherSig})
+  })).status,403);
 });
 
 async function cleanup(mf, analyzer) {

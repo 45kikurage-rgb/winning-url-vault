@@ -15,3 +15,13 @@
 - Miniflareの認証境界試験と既存の全npm test、node --check合格を本番反映の条件とする。
 - 本番は既存Workersにコード/静的ファイルのみデプロイ。D1 preflightは参照専用で migrationを実行しない。
 - Cloudflare側の正式なログインパスワード紛失は別途管理者による安全なSecret再設定が必要。復元用バックドアは導入しない。
+
+## 2026-10-23 登録した1端末だけの自動ログイン（本番更新）
+- 対象: Android PWAと管理Workerのログイン。GitHub PR #12。
+- 端末内 IndexedDB に非抽出ECDSA秘密鍵を生成し、Cloudflare管理者がDEVICE_PAIRING_SHA256に利用者端末上で生成したハッシュを登録した場合だけ鍵をペアリングする。
+- 端末の登録確定で従来のパスワードログイン/既存の管理Cookieを無効化し、署名付き短命チャレンジで新ログインCookieを発行する。
+- ARUNOMATICのsend-only Bearer認証とURL/コード/商品の既存データは一切変更しない。
+- DB migration 0009 は2テーブルと1インデックスの非破壊追加。CI全成功。Cloudflare本番はD1のread-only preflightとTime Travel情報照合後に適用。
+- パスワードと署名鍵はチャット/ソース/Secretへ平文登録しない。登録ハッシュだけをCloudflare Secretへ利用者が設定する。
+- **コード公開だけでは端末登録完了ではない**。CloudflareでのSecret設定と、対象端末での初回登録・ブラウザ動作確認は別作業。
+- 端末鍵が失われた際はCloudflare管理者が新しいDEVICE_PAIRING_SHA256に差し替え、同じ端末を再ペアリングする。データの削除は不要。
