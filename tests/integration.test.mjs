@@ -207,7 +207,7 @@ test("有効な既存Cookieだけを更新し、期限切れ・偽造・匿名�
   const renewed = renewal.headers.get("set-cookie");
   assert.match(renewed, /HttpOnly; Secure; SameSite=Strict/);
   assert.match(renewed, /Max-Age=2592000/);
-  const newExpiry = Number(renewed.match(/wuv_session=(\\d+)\\./)?.[1]);
+  const newExpiry = Number(renewed.match(/wuv_session=(\d+)\./)?.[1]);
   assert.ok(newExpiry > nearExpiry + 20 * 24 * 60 * 60);
   assert.equal((await (await status(renewed.split(";")[0])).json()).authenticated, true);
   for (const invalid of [
