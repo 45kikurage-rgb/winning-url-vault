@@ -961,7 +961,8 @@ export default {
         // Only a previously authenticated browser may renew. Never turn an
         // expired/missing/forged cookie into a session or bypass the password.
         if (isAuthenticated) {
-          const [expiryText] = cookieValue(request, SESSION_COOKIE).split(".");
+          const parts = cookieValue(request, SESSION_COOKIE).split(".");
+          const expiryText = device ? parts[2] : parts[0];
           const remainingSeconds = Number(expiryText) - Math.floor(Date.now() / 1000);
           if (remainingSeconds <= SESSION_SECONDS / 2) {
             if (device) {
