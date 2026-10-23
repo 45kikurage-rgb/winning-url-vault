@@ -3,6 +3,7 @@ import { predictAssignmentCampaign } from './assignment-prediction.js';
 import { analysisAmount, isEraberuPay } from './analysis-amount.js';
 import { initProvisionalUI, refreshProvisionalUI } from "./provisional-ui.js";
 import { fetchReadWithRetry } from "./network-read.js";
+import { loginWithDeviceKey, prepareDevicePairing, finishDevicePairing } from "./device-login.js";
 
 const $ = id => document.getElementById(id);
 const winningFolderOpen = new Map();
@@ -16,7 +17,7 @@ const state = { cursor: null, cardId: null, authenticated: false, cards: new Map
   activeJobId: null, dismissedJobId: null, progressHideJobId: null, progressHideTimer: null, pollTimer: null, refreshing: false, dialogPendingId: null,
   campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
   correctionCampaignId: null, winningLists: [], outputProductId: null, exportProductId: null, reassignProductId:null, reassignPreview:null,
-  exportItem: null, exportBatch: null, pendingExportBatch: null, exportPaypayKind: null,
+  exportItem: null, exportBatch: null, pendingExportBatch: null, exportPaypayKind: null, deviceOnlyMode: false,
   unresolvedItems: new Map(), imageAnalysisItemId: null, couponImageData: null, cardsLoaded: false };
 
 async function api(path, options) {
@@ -78,7 +79,10 @@ function showLogin(message = "") {
   state.authenticated = false;
   $("app").classList.add("hidden");
   $("loginScreen").classList.remove("hidden");
+  $("loginForm").classList.toggle("hidden", state.deviceOnlyMode);
+  $("deviceLoginButton").classList.toggle("hidden", !state.deviceOnlyMode);
   $("loginMessage").textContent = message;
+  $("deviceLoginMessage").textContent = message;
   $("loginPassword").value = "";
 }
 
@@ -155,8 +159,18 @@ async function boot() {
   try {
     const result = await api("/api/auth/status");
     setMode(result.mode);
+    state.deviceOnlyMode = Boolean(result.deviceOnlyMode);
     if (!result.configured) return showLogin("ログイン設定が未完了です");
-    if (!result.authenticated) return showLogin();
+    if (!result.authenticated) {
+      if (state.deviceOnlyMode) {
+        try {
+          if (await loginWithDeviceKey()) return boot();
+        } catch (error) {
+          return showLogin(error.message);
+        }
+      }
+      return showLogin();
+    }
     showApp(result.mode);
     await Promise.all([load(), loadCampaigns(), loadWinningLists(), loadRevenueSummary(), initProvisionalUI(api, async () => { await load(); await loadWinningLists(); })]);
     await resumeLatestJob();
@@ -1270,8 +1284,13 @@ async function keepSessionAlive() {
   try {
     const status = await api("/api/auth/status");
     if (!status.authenticated) {
+      if (status.deviceOnlyMode) {
+        try {
+          if (await loginWithDeviceKey()) return;
+        } catch (error) { console.warn("device reauthentication", error); }
+      }
       stopPolling();
-      showLogin("ログインの有効期限が切れました。管理者の再認証が必要です。");
+      showLogin("この端末の認証が必要です");
     }
   } catch (error) {
     // Temporary network outages must not log out a valid local session.
@@ -1359,6 +1378,47 @@ $("imageAnalysisDialog").addEventListener("close", () => {
 $("dialogClose").onclick = () => $("itemsDialog").close();
 $("loadMore").onclick = loadItems;
 $("loginForm").onsubmit = login;
+$("deviceLoginButton").onclick = async () => {
+  $("deviceLoginButton").disabled = true;
+  $("deviceLoginMessage").textContent = "端末鍵を確認しています…";
+  try {
+    if (!await loginWithDeviceKey()) throw Error("この端末は未登録です。下の端末登録から開始してください。");
+    await boot();
+  } catch (error) { $("deviceLoginMessage").textContent = error.message; }
+  finally { $("deviceLoginButton").disabled = false; }
+};
+$("deviceSetupButton").onclick = async () => {
+  $("deviceSetupButton").disabled = true;
+  $("deviceLoginMessage").textContent = "端末鍵を作成しています…";
+  try {
+    const result = await prepareDevicePairing();
+    $("devicePairingHash").value = result.hash;
+    $("deviceSetupSteps").classList.remove("hidden");
+    $("deviceLoginMessage").textContent = "ハッシュをCloudflareのDEVICE_PAIRING_SHA256に登録してください。";
+  } catch (error) { $("deviceLoginMessage").textContent = error.message; }
+  finally { $("deviceSetupButton").disabled = false; }
+};
+$("copyDevicePairingHash").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($("devicePairingHash").value);
+    $("deviceLoginMessage").textContent = "端末登録用ハッシュをコピーしました。";
+  } catch (error) {
+    $("devicePairingHash").select();
+    $("deviceLoginMessage").textContent = "選択された文字列を長押ししてコピーしてください。";
+  }
+};
+$("confirmDeviceSetup").onclick = async () => {
+  $("confirmDeviceSetup").disabled = true;
+  $("deviceLoginMessage").textContent = "登録端末を検証しています…";
+  try {
+    await finishDevicePairing();
+    $("deviceSetupSteps").classList.add("hidden");
+    $("devicePairingHash").value = "";
+    await boot();
+  } catch (error) { $("deviceLoginMessage").textContent = error.message; }
+  finally { $("confirmDeviceSetup").disabled = false; }
+};
+
 $("logout").onclick = logout;
 $("openTrialReset").onclick = openTrialReset;
 $("refreshCampaigns").onclick = loadCampaigns;
