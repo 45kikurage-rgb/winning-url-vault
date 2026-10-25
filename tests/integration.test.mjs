@@ -1511,3 +1511,59 @@ test('UI display aliases persist independently and never change product identity
   assert.equal((await price(150)).status,200);
   assert.deepEqual((await DB.prepare('SELECT * FROM product_monthly_revenue WHERE product_id=?').bind(productId).all()).results,finalized.results);
 });
+
+test('未抽出内容は方式未設定・対象外もページ取得でき、閲覧で抽出・割当・収益を変えない',async t=>{
+ const {mf,analyzer,worker,DB}=await createRuntime();t.after(()=>cleanup(mf,analyzer));
+ await request(worker,'/api/ledger/campaigns');
+ const card=await createConfirmedCard(worker,'inspect-contents');
+ const product=await request(worker,`/api/cards/${card.id}/assign`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign_id:'campaign-active-a'})});
+ const pid=product.product_id,ids=Array.from({length:107},()=>crypto.randomUUID());
+ for(let start=0;start<ids.length;start+=35){
+  await DB.batch(ids.slice(start,start+35).flatMap((id,index)=>[
+   DB.prepare("INSERT INTO items(id,value,canonical_value,value_type,card_id,status,received_at) VALUES (?,?,?,?,?,'active','2026-10-25T00:00:00Z')").bind(id,index%2?'<sample-code>':`https://example.test/${id}`,id,index%2?'paypay':'url',card.id),
+   DB.prepare("INSERT INTO item_campaign_assignments(item_id,campaign_id,product_id,assigned_at) VALUES (?,'campaign-active-a',?,'2026-10-25')").bind(id,pid)
+  ]));
+ }
+ await DB.prepare("UPDATE item_campaign_assignments SET exported_at='2026-10-25' WHERE item_id=?").bind(ids[0]).run();
+ await DB.prepare("UPDATE items SET status='used' WHERE id=?").bind(ids[1]).run();
+ const before={};for(const table of ['items','item_campaign_assignments','ledger_products','product_monthly_revenue','ledger_outbox'])before[table]=(await DB.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()).results;
+ const path=`/api/products/${pid}/unexported-items`;
+ assert.equal((await worker.fetch('https://vault.test'+path)).status,401);
+ assert.equal((await worker.fetch('https://vault.test'+path+'?cursor=bad',{headers:{cookie:authCookies.get(worker)}})).status,400);
+ const all=[];let cursor=null;let pageSizes=[];
+ do{
+  const page=await request(worker,path+(cursor?'?cursor='+encodeURIComponent(cursor):''));
+  assert.equal(page.total,106);assert.equal(page.compatible_count,0);assert.equal(page.output_method,'unset');
+  all.push(...page.items);pageSizes.push(page.items.length);cursor=page.nextCursor;
+ }while(cursor);
+ assert.deepEqual(pageSizes,[50,50,6]);assert.equal(new Set(all.map(x=>x.id)).size,106);
+ assert.ok(!all.some(x=>[ids[0],ids[1]].includes(x.id)));
+ assert.ok(all.every(x=>x.compatible===0));assert.ok(all.some(x=>x.value==='<sample-code>'));
+ for(const table of Object.keys(before))assert.deepEqual((await DB.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()).results,before[table]);
+ const list=(await request(worker,'/api/winning-lists')).products.find(x=>x.product_id===pid);
+ assert.equal(list.total_count,107);assert.equal(list.exported_count,1);assert.equal(list.raw_unexported_count,106);assert.equal(list.unexported_count,0);
+ await request(worker,`/api/products/${pid}/output-method`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({output_method:'normal'})});
+ const filtered=await request(worker,path);assert.equal(filtered.total,106);assert.ok(filtered.compatible_count>0&&filtered.compatible_count<106);
+});
+
+test('商品単位の終了済み移動を永続化・解除でき、CP・元データ・収益・同期は不変',async t=>{
+ const {mf,analyzer,worker,DB}=await createRuntime();t.after(()=>cleanup(mf,analyzer));
+ await request(worker,'/api/ledger/campaigns');
+ const card=await createConfirmedCard(worker,'manual-finished');
+ const assigned=await request(worker,`/api/cards/${card.id}/assign`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign_id:'campaign-active-a'})});
+ const pid=assigned.product_id,path=`/api/products/${pid}/list-state`;
+ const move=(value,origin='https://vault.test',cookie=authCookies.get(worker))=>worker.fetch('https://vault.test'+path,{method:'POST',headers:{origin,cookie,'content-type':'application/json'},body:JSON.stringify({finished:value})});
+ assert.equal((await move(true,'https://vault.test','')).status,401);
+ assert.equal((await move(true,'https://other.test')).status,403);
+ for(const value of [null,'true',1,[]])assert.equal((await move(value)).status,400);
+ const before={};for(const table of ['items','item_campaign_assignments','ledger_products','product_master','vault_campaigns','product_monthly_revenue','ledger_outbox'])before[table]=(await DB.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()).results;
+ assert.equal((await move(true)).status,200);
+ let row=(await request(worker,'/api/winning-lists')).products.find(x=>x.product_id===pid);
+ assert.equal(row.manual_finished,1);assert.equal(row.campaign_status,'active');assert.equal(row.raw_unexported_count,1);
+ assert.equal((await DB.prepare('SELECT manual_finished FROM ui_product_settings WHERE product_id=?').bind(pid).first()).manual_finished,1);
+ assert.equal((await move(false)).status,200);
+ row=(await request(worker,'/api/winning-lists')).products.find(x=>x.product_id===pid);assert.equal(row.manual_finished,0);
+ for(const table of Object.keys(before))assert.deepEqual((await DB.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()).results,before[table]);
+ await DB.prepare("UPDATE vault_campaigns SET status='closed' WHERE campaign_id='campaign-active-a'").run();
+ assert.equal((await move(false)).status,409);
+});

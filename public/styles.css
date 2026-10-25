@@ -377,3 +377,10 @@ body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;font-weight:4
 #app .main-tabs{grid-template-columns:minmax(max-content,1fr) minmax(max-content,1.3fr) minmax(max-content,1.8fr) minmax(max-content,1.4fr);overflow-x:auto}
 #app header h1{font-size:clamp(1rem,5vw,1.2rem);line-height:1.7}
 #app>header{padding-top:calc(.6rem + env(safe-area-inset-top,0px))}
+#unexportedContentsDialog{max-height:90dvh;overflow:auto;width:min(44rem,calc(100% - 1.25rem))}
+.unexported-contents-list{display:grid;gap:.6rem;margin:.75rem 0}
+.unexported-content{border:1px solid #65758e;padding:.6rem;min-width:0}
+.unexported-content small{display:block;margin:.35rem 0;color:var(--muted)}
+.content-actions{display:flex;gap:.5rem}
+.content-actions button,.content-actions a{display:inline-flex;align-items:center;justify-content:center;min-height:2.75rem;padding:.5rem .75rem;white-space:nowrap;font-size:1rem}
+.list-state-setting{display:grid;gap:.35rem;margin:.5rem 0}

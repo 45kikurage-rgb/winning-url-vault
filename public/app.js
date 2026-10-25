@@ -16,6 +16,7 @@ let winningView = { ...DEFAULT_VIEW };
 try { winningView = normalizeView(JSON.parse(localStorage.getItem(WINNING_VIEW_KEY) || '{}')); } catch {}
 let winningOrder = [], winningRequest = 0, winningLoaded = false, closedManuallyOpen = false;
 let recheckConfirmProductId = null;
+let contentsProductId = null, contentsCursor = null, contentsLoading = false, contentsGeneration = 0;
 const displayNames = new Map();
 let displayNamesLoaded, editingName, campaignFilter = 'all';
 function displayLabel(scope,id,fallback) { return displayNames.get(`${scope}:${id}`) || fallback || '商品名未取得'; }
@@ -559,7 +560,7 @@ function winningCardHtml(item) {
     ${winningView.showCampaign ? `<div class="product-campaign">${esc(item.campaign_name || item.campaign_id)} · ${esc(item.lottery_start_date || '開始日未取得')}</div>` : ''}
     <div class="product-body"><div class="product-meta"><span class="product-spec-place">${esc(item.product_spec || '規格未設定')}／${esc(item.redemption_place || '引換先未取得')}</span><span>${esc(expiryLabel(item,winningView.relativeDates))}</span>${item.show_in_permanent ? '<span>常設</span>' : ''}</div>
     <div class="product-controls"><small class="product-method">${esc(methodLabel(item.output_method))}</small><div class="product-actions"><button class="extract-button${remaining > 999 ? ' wide-count' : ''}" data-export-product="${id}" ${unset || remaining === 0 ? 'disabled' : ''}><span>未抽出</span><strong>${remaining.toLocaleString()}</strong><span>件</span></button><button class="secondary product-settings" data-method-product="${id}" aria-label="${esc(name)}の設定">設定</button></div></div></div>
-    ${reasons.length ? `<div class="product-notes">${esc(reasons.join(' / '))}</div>` : ''}
+    ${item.manual_finished && item.campaign_status !== 'closed' ? '<div class="product-notes">手動で終了済みへ移動</div>' : ''}${reasons.length ? `<div class="product-notes">${esc(reasons.join(' / '))}</div>` : ''}
     ${isEraberuPay(item) ? `<div class="product-recheck"><span data-balance-message="${id}" role="status">${esc(recheck?.message || '再解析は設定から')}</span>${recheck?.running ? `<button class="secondary" data-stop-recheck="${id}">再解析を中断</button>` : ''}</div>` : ''}`;
 }
 
@@ -615,8 +616,8 @@ function renderWinningLists() {
   renderWinningSection($('winningActive'),selected.active,'active');
   renderWinningSection($('winningClosedProducts'),selected.closed,'closed');
   $('winningClosed').open = closedManuallyOpen || Boolean(winningView.query.trim() && selected.closed.length);
-  $('winningClosedTitle').textContent = `終了したキャンペーン · ${selected.closed.length}/${selected.closedCount}商品`;
-  $('winningClosedCounts').textContent = `終了全体の未抽出残 ${selected.closedRemaining.toLocaleString()}件 / 絞込内 ${selected.filteredClosedRemaining.toLocaleString()}件`;
+  $('winningClosedTitle').textContent = `終了済み · ${selected.closed.length}/${selected.closedCount}商品`;
+  $('winningClosedCounts').textContent = `対応未抽出：終了全体 ${selected.closedRemaining.toLocaleString()}件 / 絞込内 ${selected.filteredClosedRemaining.toLocaleString()}件${selected.closedRawRemaining !== selected.closedRemaining ? `／方式未設定・対象外を含む未抽出 ${selected.closedRawRemaining.toLocaleString()}件` : ''}`;
   $('winningListCount').textContent = `${selected.filteredCount}/${selected.total}商品`;
   $('winningRemaining').setAttribute('aria-pressed',String(winningView.status === 'remaining'));
   $('winningAttention').setAttribute('aria-pressed',String(winningView.status === 'attention'));
@@ -780,8 +781,14 @@ async function recheckWinningBalances(productId) {
 function updateOutputSettings() {
   const item = winningProduct(state.outputProductId);
   $('outputMethodContext').textContent = productContext(item);
-  if (!item) { $('settingsReassign').disabled=true; $('settingsRecheck').disabled=true; return; }
-  $('outputMethodCounts').textContent = `合計 ${Number(item.total_count || 0).toLocaleString()}件 / 抽出済み ${Number(item.exported_count || 0).toLocaleString()}件 / 対応未抽出 ${Number(item.unexported_count || 0).toLocaleString()}件 / 対象外 ${Number(item.unmatched_count || 0).toLocaleString()}件`;
+  if (!item) { for (const id of ['settingsReassign','settingsRecheck','settingsInspectUnexported','settingsMoveFinished']) $(id).disabled=true; return; }
+  $('outputMethodCounts').textContent = `合計 ${Number(item.total_count || 0).toLocaleString()}件 / 抽出済み ${Number(item.exported_count || 0).toLocaleString()}件 / 保管中の未抽出 ${Number(item.raw_unexported_count ?? item.unexported_count ?? 0).toLocaleString()}件 / 対応未抽出 ${Number(item.unexported_count || 0).toLocaleString()}件 / 対象外 ${Number(item.unmatched_count || 0).toLocaleString()}件`;
+  const rawRemaining = Number(item.raw_unexported_count ?? item.unexported_count ?? 0);
+  $('settingsInspectUnexported').textContent = `未抽出の中身（${rawRemaining.toLocaleString()}件）`;
+  $('settingsInspectUnexported').disabled = false;
+  $('settingsMoveFinished').disabled = item.campaign_status === 'closed';
+  $('settingsMoveFinished').textContent = item.campaign_status === 'closed' ? 'CP終了済み' : item.manual_finished ? '通常の一覧へ戻す' : '終了済みへ移動';
+  $('settingsMoveFinishedHelp').textContent = item.campaign_status === 'closed' ? 'CP全体が終了済みです。変更はCP連携の訂正手続きから行います。' : 'この商品の一覧上の移動です。CP全体の終了確定はCP連携で行います。';
   const price = item.unit_price == null ? '単価未設定' : `単価 ${Number(item.unit_price).toLocaleString()}円`;
   $('outputMethodRevenue').textContent = `${price} / ${item.revenue_month || '当月'}収益 ${item.unit_price == null ? '—（単価未設定）' : item.current_month_revenue == null ? '未取得' : `${Number(item.current_month_revenue).toLocaleString()}円`}（収益月は受信月基準） / 現在の方式：${methodLabel(item.output_method)}`;
   $('settingsReassign').disabled = !['active','closing','correcting'].includes(item.campaign_status);
@@ -802,6 +809,54 @@ function openOutputMethod(productId) {
   updateOutputSettings();
   $('outputMethodDialog').showModal();
 }
+async function openUnexportedContents() {
+  const item = winningProduct(state.outputProductId);
+  if (!item) return;
+  contentsProductId = item.product_id;
+  $('unexportedContentsTitle').textContent = `${displayLabel('winning',item.product_id,item.display_name || item.product_name)} の未抽出`;
+  $('unexportedContentsContext').textContent = productContext(item);
+  $('unexportedContentsDialog').showModal();
+  await loadUnexportedContents(true);
+}
+async function loadUnexportedContents(reset = false) {
+  if (!contentsProductId || (!reset && contentsLoading)) return;
+  if (reset) { contentsGeneration++; contentsCursor=null; $('unexportedContentsList').replaceChildren(); }
+  const generation = contentsGeneration, productId = contentsProductId;
+  contentsLoading=true;
+  $('unexportedContentsMore').disabled=true;
+  $('unexportedContentsMessage').textContent='読み込み中…';
+  try {
+    const query = contentsCursor ? `?cursor=${encodeURIComponent(contentsCursor)}` : '';
+    const result = await api(`/api/products/${productId}/unexported-items${query}`);
+    if (generation !== contentsGeneration || productId !== contentsProductId) return;
+    $('unexportedContentsSummary').textContent = `保管中の未抽出 ${result.total.toLocaleString()}件／現在の方式に対応 ${result.compatible_count.toLocaleString()}件${result.output_method === 'unset' ? '（方式未設定）' : ''}`;
+    $('unexportedContentsList').insertAdjacentHTML('beforeend',result.items.map(item=>{
+      const open = /^https?:\/\//i.test(item.value) ? `<a class="secondary" href="${esc(item.value)}" target="_blank" rel="noreferrer">開く</a>` : '';
+      return `<article class="unexported-content"><div class="unknown-value">${esc(item.value)}</div><small>${item.compatible ? '現在の方式に対応' : result.output_method === 'unset' ? '方式未設定' : '現在の方式では対象外'}</small><div class="content-actions"><button type="button" class="secondary" data-inspect-copy="${esc(item.id)}">コピー</button>${open}</div></article>`;
+    }).join(''));
+    for (const item of result.items) {
+      const button = [...$('unexportedContentsList').querySelectorAll('[data-inspect-copy]')].find(b=>b.dataset.inspectCopy===item.id);
+      button.onclick=async()=>{try{await writeClipboard(item.value);button.textContent='コピー済み';}catch(error){$('unexportedContentsMessage').textContent=error.message;}};
+    }
+    contentsCursor=result.nextCursor;
+    $('unexportedContentsMore').classList.toggle('hidden',!contentsCursor);
+    $('unexportedContentsMessage').textContent=result.total ? '' : '未抽出データはありません。';
+  } catch(error) { if(generation === contentsGeneration) $('unexportedContentsMessage').textContent=error.message; }
+  finally { if(generation === contentsGeneration){contentsLoading=false;$('unexportedContentsMore').disabled=false;} }
+}
+async function toggleFinished() {
+  const item = winningProduct(state.outputProductId);
+  if (!item || item.campaign_status === 'closed') return;
+  const finished = !item.manual_finished;
+  $('settingsMoveFinished').disabled=true;
+  try {
+    await api(`/api/products/${item.product_id}/list-state`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({finished})});
+    item.manual_finished=finished;
+    $('outputMethodDialog').close();
+    renderWinningLists();
+  } catch(error){$('outputMethodMessage').textContent=error.message;updateOutputSettings();}
+}
+
 function openBalanceRecheckConfirmation() {
   const item = winningProduct(state.outputProductId);
   if (!isEraberuPay(item) || balanceRechecks.get(item.product_id)?.running) return;
@@ -1533,6 +1588,12 @@ async function loadItems() {
   } catch (error) { $("itemList").textContent = error.message; }
 }
 
+$('settingsInspectUnexported').onclick=openUnexportedContents;
+$('settingsMoveFinished').onclick=toggleFinished;
+$('unexportedContentsClose').onclick=()=>$('unexportedContentsDialog').close();
+$('unexportedContentsMore').onclick=()=>loadUnexportedContents();
+$('unexportedContentsRefresh').onclick=()=>loadUnexportedContents(true);
+$('unexportedContentsDialog').addEventListener('close',()=>{contentsGeneration++;contentsProductId=null;contentsLoading=false;$('unexportedContentsList').replaceChildren();});
 $('displayNameClose').onclick = () => $('displayNameDialog').close();
 $('displayNameInput').oninput = checkDisplayName;
 $('displayNameSave').onclick = saveDisplayAlias;

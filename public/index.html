@@ -11,7 +11,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icon-any-192.png">
   <link rel="icon" type="image/png" href="/icon-any-192.png">
-  <link rel="stylesheet" href="/styles.css?v=20261025-approved-ui">
+  <link rel="stylesheet" href="/styles.css?v=20261025-settings-contents">
 </head>
 <body>
 <section id="loginScreen" class="login-screen">
@@ -142,7 +142,7 @@
       <div class="winning-quick"><button id="winningRemaining" class="secondary" type="button" aria-pressed="false">未抽出あり</button><button id="winningAttention" class="secondary" type="button" aria-pressed="false">要確認</button><button id="clearWinningFilters" class="secondary hidden" type="button">解除</button><small id="winningListCount"></small></div>
       <p id="winningLoadStatus" class="result" role="status"></p><button id="retryWinningLoad" class="secondary hidden" type="button">再読み込み</button>
       <button id="undoLastExport" class="secondary hidden" type="button">直前の抽出を取消</button>
-      <div id="winningLists" class="winning-list"><div id="winningActive" class="winning-products"></div><details id="winningClosed" class="winning-closed"><summary><span id="winningClosedTitle">終了したキャンペーン</span></summary><p id="winningClosedCounts" class="meta"></p><div id="winningClosedProducts" class="winning-products"></div></details></div>
+      <div id="winningLists" class="winning-list"><div id="winningActive" class="winning-products"></div><details id="winningClosed" class="winning-closed"><summary><span id="winningClosedTitle">終了済み</span></summary><p id="winningClosedCounts" class="meta"></p><div id="winningClosedProducts" class="winning-products"></div></details></div>
     </section>
   </section>
   <section id="tabCampaigns" class="tab-page hidden">
@@ -255,7 +255,7 @@
 <dialog id="outputMethodDialog" aria-labelledby="outputMethodTitle">
   <div class="dialog-head"><div><small>商品設定</small><h2 id="outputMethodTitle">抽出方法を選択</h2></div><button id="outputMethodClose" class="secondary">閉じる</button></div>
   <div id="outputMethodContext" class="product-context"></div><div id="outputMethodCounts" class="settings-counts"></div><small class="meta">未抽出は現在の抽出方式に対応する件数です。対象外は抽出済みを含むため、各数は単純に加算できません。</small><p id="outputMethodRevenue" class="meta"></p>
-  <section class="settings-operations"><button id="settingsReassign" class="secondary" type="button">キャンペーンカテゴリを変更</button><small id="settingsReassignHelp"></small><div id="settingsRecheckSection" class="hidden"><button id="settingsRecheck" class="secondary" type="button">残高を再解析</button><p class="meta">抽出済みでも、正の残高があれば未抽出に戻ります。次の画面で確認してから開始します。</p><p id="settingsRecheckProgress" role="status"></p></div></section>
+  <section class="settings-operations"><button id="settingsInspectUnexported" class="secondary" type="button">未抽出の中身を見る</button><div class="list-state-setting"><button id="settingsMoveFinished" class="secondary" type="button">終了済みへ移動</button><small id="settingsMoveFinishedHelp">この商品の一覧上の移動です。CP全体の終了確定はCP連携で行います。</small></div><button id="settingsReassign" class="secondary" type="button">キャンペーンカテゴリを変更</button><small id="settingsReassignHelp"></small><div id="settingsRecheckSection" class="hidden"><button id="settingsRecheck" class="secondary" type="button">残高を再解析</button><p class="meta">抽出済みでも、正の残高があれば未抽出に戻ります。次の画面で確認してから開始します。</p><p id="settingsRecheckProgress" role="status"></p></div></section>
   <p>抽出済みの記録は、方法を変更しても未抽出には戻りません。</p>
   <section class="folder-setting">
     <h3>表示フォルダ</h3>
@@ -279,6 +279,14 @@
     <button data-output-method="text_single">文字列</button>
   </div>
   <p id="outputMethodMessage" class="result" aria-live="polite"></p>
+</dialog>
+
+<dialog id="unexportedContentsDialog" aria-labelledby="unexportedContentsTitle">
+  <div class="dialog-head"><h2 id="unexportedContentsTitle">未抽出の中身</h2><button id="unexportedContentsClose" class="secondary" type="button">閉じる</button></div>
+  <div id="unexportedContentsContext" class="product-context"></div><p id="unexportedContentsSummary" class="meta"></p>
+  <p class="meta">方式未設定・対象外も含む、保管中の未抽出データです。閲覧・コピーでは抽出済みになりません。</p>
+  <div id="unexportedContentsList" class="unexported-contents-list"></div>
+  <p id="unexportedContentsMessage" class="result" role="status"></p><button id="unexportedContentsMore" class="secondary hidden" type="button">続きを表示</button><button id="unexportedContentsRefresh" class="secondary" type="button">最初から再読み込み</button>
 </dialog>
 
 <dialog id="exportActionDialog" aria-labelledby="exportActionTitle">
@@ -351,7 +359,7 @@
   <p id="trialResetMessage" class="result" aria-live="polite"></p>
   <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
-<script type="module" src="/app.js?v=20261025-approved-ui"></script>
+<script type="module" src="/app.js?v=20261025-settings-contents"></script>
 </body>
 </html>
 

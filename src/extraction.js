@@ -48,9 +48,10 @@ export async function listWinningLists(env) {
   const currentMonth = `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, "0")}`;
   const rows = await env.DB.prepare(`SELECT p.product_id,p.campaign_id,p.product_name,p.redemption_place,p.product_spec,
     COALESCE(NULLIF(TRIM(pm.display_name),''),p.product_name) display_name,pm.required_conditions,
-    p.valid_until,p.output_method,p.show_in_permanent,p.unit_price,p.assigned_at,c.campaign_name,c.lottery_start_date,c.status campaign_status,
+    p.valid_until,p.output_method,p.show_in_permanent,p.unit_price,p.assigned_at,COALESCE(us.manual_finished,0) manual_finished,c.campaign_name,c.lottery_start_date,c.status campaign_status,
     r.month revenue_month,r.winner_count revenue_winner_count,r.amount current_month_revenue,r.sync_status revenue_sync_status,
     COUNT(a.item_id) total_count,
+    COALESCE(SUM(CASE WHEN a.exported_at IS NULL THEN 1 ELSE 0 END),0) raw_unexported_count,
     COALESCE(SUM(CASE WHEN a.exported_at IS NOT NULL THEN 1 ELSE 0 END),0) exported_count,
     COALESCE(SUM(CASE WHEN a.exported_at IS NULL AND (
       p.output_method='text_single' OR
@@ -71,6 +72,7 @@ export async function listWinningLists(env) {
     FROM ledger_products p
     LEFT JOIN cards card ON card.id=p.card_id
     LEFT JOIN product_master pm ON pm.id=card.product_id
+    LEFT JOIN ui_product_settings us ON us.product_id=p.product_id
     JOIN item_campaign_assignments a ON a.product_id=p.product_id
     JOIN items i ON i.id=a.item_id AND i.status='active'
     LEFT JOIN vault_campaigns c ON c.campaign_id=p.campaign_id
@@ -80,6 +82,43 @@ export async function listWinningLists(env) {
     ORDER BY CASE c.status WHEN 'active' THEN 0 WHEN 'closing' THEN 1 WHEN 'correcting' THEN 2 ELSE 3 END,
       c.lottery_start_date DESC,p.assigned_at DESC`).bind(currentMonth).all();
   return rows.results || [];
+}
+
+// Read-only inspection includes unset/unsupported records, never an export.
+export async function inspectUnexportedItems(env, productId, cursor = null) {
+  const model = await product(env,productId);
+  if (model.is_archived) throw new VaultLedgerError('商品が見つかりません',404,'PRODUCT_NOT_FOUND');
+  const compatible = compatibleWhere(model.output_method);
+  const counts = await env.DB.prepare(`SELECT COUNT(*) total,
+    COALESCE(SUM(CASE WHEN ${compatible} THEN 1 ELSE 0 END),0) compatible_count
+    FROM item_campaign_assignments a JOIN items i ON i.id=a.item_id
+    WHERE a.product_id=? AND a.exported_at IS NULL AND i.status='active'`).bind(productId).first();
+  if (cursor && (typeof cursor.t !== 'string' || typeof cursor.id !== 'string'))
+    throw new VaultLedgerError('続きを読み込めません。最初から再読み込みしてください',400,'INVALID_CURSOR');
+  const rows = await env.DB.prepare(`SELECT i.id,i.value,i.value_type,i.received_at,
+    CASE WHEN ${compatible} THEN 1 ELSE 0 END compatible
+    FROM item_campaign_assignments a JOIN items i ON i.id=a.item_id
+    WHERE a.product_id=? AND a.exported_at IS NULL AND i.status='active'
+    ${cursor ? 'AND (i.received_at>? OR (i.received_at=? AND i.id>?))' : ''}
+    ORDER BY i.received_at,i.id LIMIT 51`)
+    .bind(...(cursor ? [productId,cursor.t,cursor.t,cursor.id] : [productId])).all();
+  const items = (rows.results || []).slice(0,50).map(row=>({...row,value:lawsonLoginUrl(row.value) || row.value}));
+  const last = items.at(-1);
+  return {product_id:productId,total:Number(counts.total),compatible_count:Number(counts.compatible_count),
+    output_method:model.output_method,items,
+    nextCursor:rows.results.length>50 && last ? btoa(JSON.stringify({t:last.received_at,id:last.id})) : null};
+}
+
+export async function setManualFinished(env,productId,finished) {
+  if (typeof finished !== 'boolean') throw new VaultLedgerError('移動先が不正です',400,'INVALID_LIST_STATE');
+  const model = await product(env,productId);
+  if (model.is_archived) throw new VaultLedgerError('商品が見つかりません',404,'PRODUCT_NOT_FOUND');
+  if (!finished && model.campaign_status === 'closed')
+    throw new VaultLedgerError('CPが終了済みです。CP連携の訂正手続きから変更してください',409,'CAMPAIGN_CLOSED');
+  await env.DB.prepare(`INSERT INTO ui_product_settings(product_id,manual_finished,updated_at) VALUES (?,?,?)
+    ON CONFLICT(product_id) DO UPDATE SET manual_finished=excluded.manual_finished,updated_at=excluded.updated_at`)
+    .bind(productId,finished?1:0,new Date().toISOString()).run();
+  return {product_id:productId,manual_finished:finished};
 }
 
 export async function setFolderVisibility(env, productId, enabled) {

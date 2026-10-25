@@ -75,11 +75,13 @@ export function matchesWinningItem(item, view, now = new Date()) {
   if (view.status === 'due') { const days = expiryDays(item,now); if (days === null || days > 7) return false; }
   return true;
 }
+export function isFinished(item) { return item.campaign_status === 'closed' || item.manual_finished === true || item.manual_finished === 1; }
 export function selectWinningItems(items, view, now = new Date()) {
-  const closed = items.filter(item => item.campaign_status === 'closed');
+  const closed = items.filter(isFinished);
   const filtered = items.filter(item => matchesWinningItem(item,view,now));
-  return { active:filtered.filter(item => item.campaign_status !== 'closed'), closed:filtered.filter(item => item.campaign_status === 'closed'),
+  return { active:filtered.filter(item => !isFinished(item)), closed:filtered.filter(isFinished),
     closedRemaining:closed.reduce((sum,item) => sum + Number(item.unexported_count || 0),0),
-    filteredClosedRemaining:filtered.filter(item => item.campaign_status === 'closed').reduce((sum,item) => sum + Number(item.unexported_count || 0),0),
+    filteredClosedRemaining:filtered.filter(isFinished).reduce((sum,item) => sum + Number(item.unexported_count || 0),0),
+    closedRawRemaining:closed.reduce((sum,item)=>sum+Number(item.raw_unexported_count ?? item.unexported_count ?? 0),0),
     closedCount:closed.length, total:items.length, filteredCount:filtered.length };
 }

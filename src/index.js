@@ -21,10 +21,10 @@ import {
 import {
   cancelExportBatch, completeExportBatch, completeExportItem, getExportBatch,
   getPendingExportBatch, listWinningLists, nextExportItem, setOutputMethod,
-  startExportBatch, undoExportBatch, setFolderVisibility
+  startExportBatch, undoExportBatch, setFolderVisibility, inspectUnexportedItems, setManualFinished
 } from "./extraction.js";
 
-const VERSION = "0.9.5";
+const VERSION = "0.9.6";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -1051,6 +1051,19 @@ export default {
       }
       if (url.pathname === "/api/winning-lists" && request.method === "GET") {
         return json({ ok: true, products: await listWinningLists(env) });
+      }
+      const contentsRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/unexported-items$/i);
+      if (contentsRoute && request.method === 'GET') {
+        const rawCursor = url.searchParams.get('cursor');
+        const cursor = rawCursor ? decodeCursor(rawCursor) : null;
+        if (rawCursor && !cursor) return json({ok:false,error:'続きの位置が不正です',code:'INVALID_CURSOR'},400);
+        return json({ok:true,...await inspectUnexportedItems(env,contentsRoute[1],cursor)});
+      }
+      const listStateRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/list-state$/i);
+      if (listStateRoute && request.method === 'POST') {
+        if (request.headers.get('origin') !== url.origin) return json({ok:false,error:'管理画面から操作してください',code:'SCOPE_DENIED'},403);
+        const body = await request.json().catch(()=>({}));
+        return json({ok:true,...await setManualFinished(env,listStateRoute[1],body.finished)});
       }
       const reassignRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/reassign$/i);
       if (reassignRoute && request.method === "GET") {

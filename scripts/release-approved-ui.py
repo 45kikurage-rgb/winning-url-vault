@@ -1,6 +1,6 @@
 """Single Vault release guards. Private settings are never printed or uploaded.
 
-Only DB mutation: CREATE TABLE IF NOT EXISTS ui_display_names, from reviewed 0010.
+Only DB mutation: CREATE TABLE IF NOT EXISTS ui_product_settings, from reviewed 0011.
 No migrations apply, data copying, account-wide operations, or auth changes.
 """
 import sys,os,json,hashlib,urllib.request,urllib.error,tempfile
@@ -11,7 +11,7 @@ from email import policy
 ACCOUNT='02100d2235d6f7d7f893b4217b58b902'
 WORKER='winning-url-vault'
 DB='1d3e496f-3d8c-49d7-892a-d32ea5661e0c'
-BASE='a74bb94b-1308-4b88-aa66-88df4818fe4d'
+BASE='5cd6ded0-44ab-4b51-8776-f49e679ca279'
 ROOT='https://winning-url-vault.45kikurage.workers.dev'
 API='https://api.cloudflare.com/client/v4/'
 STATE=Path(os.environ.get('RUNNER_TEMP',tempfile.gettempdir()))/'vault-ui-release-private.json'
@@ -51,7 +51,7 @@ def schedules():
     return sorted(row['cron'] for row in (data if isinstance(data,list) else data.get('schedules',[])))
 def db_query(sql):
     r=call(f'accounts/{ACCOUNT}/d1/database/{DB}/query',{'sql':sql});require(all(x.get('success') for x in r),'D1_QUERY_FAILED');return r[0].get('results',[])
-def schema():return db_query("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'ui_display_names%' ORDER BY type,name")
+def schema():return db_query("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'ui_product_settings%' ORDER BY type,name")
 def public(path):
     req=urllib.request.Request(ROOT+path,headers={'User-Agent':'ARUNO-Approved-UI-Release','Cache-Control':'no-cache'})
     try:
@@ -85,22 +85,22 @@ def preflight():
     config=deployment_config(settings,subdomain)
     Path('.release-wrangler.json').write_text(json.dumps(config))
     hashes,source=code_hashes()
-    require(b'const unitPrice = Number(value)' in source,'LIVE_PRICE_SOURCE_NOT_CONFIRMED')
+    require(b'const unitPrice = value' in source and b'INVALID_UNIT_PRICE' in source,'LIVE_PRICE_SOURCE_NOT_CONFIRMED')
     before_schema=schema()
     state={'settings':runtime(settings),'before_schema':before_schema,'schedules':schedules(),'subdomain':subdomain,'base_version':BASE}
     STATE.write_text(json.dumps(state));STATE.chmod(0o600)
-    write({'source_sha':os.environ['GITHUB_SHA'],'base_version':BASE,'live_price_coercion_confirmed':True,'before_code_sha256':hashes,'stage':'preflight_passed','before_schema_sha256':digest(before_schema),'real_device_test':'pending'})
+    write({'source_sha':os.environ['GITHUB_SHA'],'base_version':BASE,'strict_price_source_confirmed':True,'before_code_sha256':hashes,'stage':'preflight_passed','before_schema_sha256':digest(before_schema),'real_device_test':'pending'})
     print('Preflight passed; original runtime snapshot retained privately.')
 
 def add_table():
-    sql=Path('migrations/0010_ui_display_names.sql').read_text()
-    require(sql.count(';')==1 and 'CREATE TABLE IF NOT EXISTS ui_display_names' in sql and all(word not in sql.upper() for word in ('DELETE ','DROP ','ALTER ','UPDATE ','INSERT ')),'MIGRATION_SCOPE_MISMATCH')
+    sql=Path('migrations/0011_ui_product_settings.sql').read_text()
+    require(sql.count(';')==1 and 'CREATE TABLE IF NOT EXISTS ui_product_settings' in sql and all(word not in sql.upper() for word in ('DELETE ','DROP ','ALTER ','UPDATE ','INSERT ')),'MIGRATION_SCOPE_MISMATCH')
     db_query(sql)
     state=json.loads(STATE.read_text());require(schema()==state['before_schema'],'EXISTING_SCHEMA_CHANGED')
-    columns=db_query('PRAGMA table_info(ui_display_names)')
-    require([c['name'] for c in columns]==['scope','target_id','display_name','updated_at'],'ALIAS_SCHEMA_MISMATCH')
-    report=json.loads(OUT.read_text());report.update(stage='alias_table_ready',existing_schema_unchanged=True,db_mutation='CREATE TABLE IF NOT EXISTS ui_display_names only');write(report)
-    print('Reviewed alias table ready; all existing schema unchanged.')
+    columns=db_query('PRAGMA table_info(ui_product_settings)')
+    require([c['name'] for c in columns]==['product_id','manual_finished','updated_at'],'LIST_SETTINGS_SCHEMA_MISMATCH')
+    report=json.loads(OUT.read_text());report.update(stage='list_settings_table_ready',existing_schema_unchanged=True,db_mutation='CREATE TABLE IF NOT EXISTS ui_product_settings only');write(report)
+    print('Reviewed product list settings table ready; all existing schema unchanged.')
 
 def verify():
     state=json.loads(STATE.read_text());settings=get_settings()
@@ -109,7 +109,7 @@ def verify():
     require(call(endpoint('/subdomain'))==state['subdomain'],'PUBLICATION_SCOPE_CHANGED')
     require(schema()==state['before_schema'],'EXISTING_SCHEMA_CHANGED')
     version=active();require(version!=BASE,'VERSION_NOT_UPDATED')
-    hashes,source=code_hashes();require(b'const unitPrice = Number(value)' not in source and b'INVALID_DISPLAY_NAME' in source,'NEW_WORKER_CODE_MISMATCH')
+    hashes,source=code_hashes();require(b'const unitPrice = Number(value)' not in source and b'INVALID_LIST_STATE' in source and b'inspectUnexportedItems' in source,'NEW_WORKER_CODE_MISMATCH')
     require(len(hashes)==1,'UNEXPECTED_MODULE_COUNT')
     expected=hashlib.sha256(Path('release-bundle/index.js').read_bytes()).hexdigest()
     require(hashes==[expected],'DOWNLOADED_WORKER_DIFFERS_FROM_BUILD')
@@ -122,7 +122,7 @@ def verify():
         assets.append({'path':'/'+name,'sha256':hashlib.sha256(data).hexdigest()})
     status,data=public('/api/auth/status');auth=json.loads(data)
     require(status==200 and auth.get('authenticated') is False and auth.get('deviceOnlyMode') is True and auth.get('mode')=='production','AUTH_STATE_CHANGED')
-    for path in ('/api/cards','/api/winning-lists','/api/display-names'):
+    for path in ('/api/cards','/api/winning-lists','/api/display-names','/api/products/00000000-0000-0000-0000-000000000000/unexported-items','/api/products/00000000-0000-0000-0000-000000000000/list-state'):
         require(public(path)[0]==401,'AUTH_GUARD_FAILED')
     report=json.loads(OUT.read_text());report.update(stage='published_verified',version=version,traffic_percent=100,runtime_settings_unchanged=True,cron_unchanged=True,publication_scope_unchanged=True,downloaded_worker_matches_build=True,after_code_sha256=hashes,assets=assets,anonymous_guards_passed=True,real_device_test='pending');write(report)
     print('Production Worker bytes, assets, authentication guards, and runtime preservation verified.')

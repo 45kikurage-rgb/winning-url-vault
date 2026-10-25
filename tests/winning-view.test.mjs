@@ -57,3 +57,11 @@ test('壊れた保存値を既定へ戻し、認めた表示設定だけを採�
   for(const value of [null,[],42,'invalid']) assert.deepEqual(normalizeView(value),DEFAULT_VIEW);
   assert.deepEqual(normalizeView({sort:'DROP',status:'complete',showCampaign:'false',relativeDates:true,unexpected:'x'}),{...DEFAULT_VIEW,relativeDates:true});
 });
+
+test('手動終了を商品単位で区切り、CP状態や対応件数を変更せず通常へ戻せる',()=>{
+ const a=product('a',{manual_finished:1,raw_unexported_count:108,output_method:'unset',unexported_count:0}),b=product('b',{campaign_status:'closing'}),c=product('c',{campaign_status:'closed',manual_finished:0});
+ const before=structuredClone([a,b,c]);const selected=selectWinningItems([a,b,c],DEFAULT_VIEW);
+ assert.deepEqual(selected.active.map(x=>x.product_id),['b']);assert.deepEqual(selected.closed.map(x=>x.product_id),['a','c']);
+ assert.equal(selected.closedRawRemaining,108);assert.equal(selected.closedRemaining,0);assert.deepEqual([a,b,c],before);
+ assert.deepEqual(selectWinningItems([{...a,manual_finished:0},b,c],DEFAULT_VIEW).active.map(x=>x.product_id),['a','b']);
+});
