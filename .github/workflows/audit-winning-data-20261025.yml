@@ -1,0 +1,25 @@
+name: Read-only campaign and winning list data audit
+on:
+  push:
+    branches: [diagnose/airwallet-list-20261025]
+    paths: [.github/workflows/audit-winning-data-20261025.yml, scripts/audit-winning-data-20261025.py]
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read aggregate data only, without coupon values or credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/audit-winning-data-20261025.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winning-data-audit-${{ github.run_id }}
+          path: audit-results.json
+          retention-days: 7
+          if-no-files-found: error
