@@ -1,16 +1,18 @@
-const CACHE = "winning-url-vault-pwa-20261023-device-login-v1";
+const CACHE = "winning-url-vault-pwa-20261025-approved-ui";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
-  "/styles.css",
-  "/app.js?v=20261023-device-login-v1",
+  "/styles.css?v=20261025-approved-ui",
+  "/app.js?v=20261025-approved-ui",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
   "/device-login.js",
   "/assignment-prediction.js",
   "/winning-folders.js",
+  "/winning-view.js",
+  "/display-name.js",
   "/share.js",
   "/manifest.json",
   "/manifest.webmanifest",

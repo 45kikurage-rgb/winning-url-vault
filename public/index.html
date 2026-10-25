@@ -11,12 +11,12 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icon-any-192.png">
   <link rel="icon" type="image/png" href="/icon-any-192.png">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=20261025-approved-ui">
 </head>
 <body>
 <section id="loginScreen" class="login-screen">
   <form id="loginForm" class="login-card">
-    <p>WINNING URL VAULT</p>
+
     <h1>当選URL管理</h1>
     <span class="mode-badge">正式運用中</span>
     <label>アクセスパスワード
@@ -45,7 +45,7 @@
 
 <main id="app" class="hidden">
   <header>
-    <div class="header-brand"><p>WINNING URL VAULT</p><h1>当選URL管理</h1></div>
+    <div class="header-brand"><h1>当選URL管理</h1></div>
     <div class="header-side">
       <section id="headerRevenue" class="header-revenue" aria-label="収益">
         <div><span>当月収益</span><strong id="headerMonthlyRevenue">—</strong></div>
@@ -56,12 +56,13 @@
   </header>
 
   <nav class="main-tabs" aria-label="当選URL管理メニュー">
-    <button class="tab-button active" data-tab="receive" type="button">URL受信</button>
-    <button class="tab-button" data-tab="sorting" type="button">仕分け用 <span id="sortingTabCount" class="tab-count">0</span></button>
-    <button class="tab-button" data-tab="winning" type="button">当選リスト <span id="winningTabCount" class="tab-count">0</span></button>
+    <button class="tab-button active" data-tab="receive" type="button">受信</button>
+    <button class="tab-button" data-tab="sorting" type="button">仕分け <span id="sortingTabCount" class="tab-count hidden" aria-hidden="true"></span></button>
+    <button class="tab-button" data-tab="winning" type="button">当選リスト <span id="winningTabCount" class="tab-count hidden" aria-hidden="true"></span></button>
     <button class="tab-button" data-tab="campaigns" type="button">CP連携</button>
   </nav>
 
+  <p id="revenueNotice" class="revenue-notice hidden" role="status"></p>
   <section class="trial-notice">
     <div><strong>試用運用中</strong>
     <span>正式運用と同じ条件で確認しています。商品マスターを残したまま、試用URLを全件削除できます。</span></div>
@@ -71,8 +72,10 @@
   <section id="tabReceive" class="tab-page">
   <section class="receive panel">
     <div><h2>URL・コード受信</h2><p>全件を先に受け付け、貼付内重複と既登録を分けてからバックグラウンド解析します。</p></div>
+    <p id="receiveContext" class="meta" aria-live="polite">受信先を確認中…</p>
+    <div class="input-title"><label for="receiveInput">URL・コード</label><button id="clear" class="secondary" type="button">入力をクリア</button></div>
     <textarea id="receiveInput" rows="4" placeholder="クーポンURL / QUOカードPay URL / Coke ONコード / PayPayコード"></textarea>
-    <div class="actions"><button id="paste" class="secondary">貼り付け</button><button id="clear" class="secondary">クリア</button><button id="receive">解析して保管</button></div>
+    <div class="actions"><button id="paste" class="secondary">貼り付け</button><button id="receive">解析して保管</button></div>
     <div id="receiveProgress" class="receive-progress hidden" aria-live="polite">
       <div class="progress-head"><strong id="progressStatus">解析中</strong><span id="progressCount">0 / 0件</span></div>
       <progress id="progressBar" max="1" value="0"></progress>
@@ -88,7 +91,7 @@
     <article><span>未判定</span><strong id="unknown">—</strong></article>
   </section>
   <section class="panel provisional-mode-panel" aria-label="受信先の選択">
-    <h2>受信先を選択</h2>
+    <h2>受信先 <small>全端末共通</small></h2>
     <p>ARUNOMATICからの転送を含む全受信に適用されます。初期状態は通常です。</p>
     <div class="provisional-mode-grid" role="group" aria-label="受信先">
       <button type="button" data-provisional-mode="A" aria-pressed="false">暫定A</button>
@@ -103,9 +106,11 @@
   </section>
 
   <section id="tabSorting" class="tab-page hidden">
+  <p id="sortingMetric" class="page-metric">未仕分けを読み込み中…</p>
+  <button id="pendingBanner" type="button" class="secondary hidden"></button>
   <section class="panel provisional-sorting-panel">
     <div class="row"><h2>暫定A〜E の解析結果</h2><button class="secondary" id="refreshProvisional" type="button">再読み込み</button></div>
-    <p>暫定保管したコードやURLを表示します。期限が同じでも別の保管箱は自動統合しません。入力欄は空でもカード化できます。</p>
+    <p>暫定保管したコードやURLを表示します。別の保管箱は自動統合しません。</p><details><summary>説明</summary><p>期限が同じでも別の保管箱は自動統合しません。入力欄は空でもカード化できます。</p></details><p class="hidden"></p>
     <div id="provisionalSortingResults"><p>読み込み待ち</p></div>
   </section>
   <section id="pendingSection" class="panel hidden">
@@ -130,9 +135,14 @@
   </section>
 
   <section id="tabWinning" class="tab-page hidden">
+    <p id="winningMetric" class="page-metric">当選商品を読み込み中…</p>
     <section class="panel winning-panel">
-      <div class="row"><div><h2>当選リスト</h2><p>キャンペーンへ振り分けた商品を、カードごとの抽出方法で管理します。</p></div><div class="winning-head-actions"><button id="undoLastExport" class="secondary hidden">直前の抽出を取消</button></div></div>
-      <div id="winningLists" class="winning-list"><div class="empty">当選リスト読み込み待ち</div></div>
+      <h2 class="sr-only">当選リスト</h2>
+      <div class="winning-toolbar"><label class="sr-only" for="winningSearch">商品・キャンペーンを検索</label><input id="winningSearch" type="search" placeholder="商品・キャンペーンを検索" autocomplete="off"><button id="openWinningFilters" class="secondary" type="button">詳細</button></div>
+      <div class="winning-quick"><button id="winningRemaining" class="secondary" type="button" aria-pressed="false">未抽出あり</button><button id="winningAttention" class="secondary" type="button" aria-pressed="false">要確認</button><button id="clearWinningFilters" class="secondary hidden" type="button">解除</button><small id="winningListCount"></small></div>
+      <p id="winningLoadStatus" class="result" role="status"></p><button id="retryWinningLoad" class="secondary hidden" type="button">再読み込み</button>
+      <button id="undoLastExport" class="secondary hidden" type="button">直前の抽出を取消</button>
+      <div id="winningLists" class="winning-list"><div id="winningActive" class="winning-products"></div><details id="winningClosed" class="winning-closed"><summary><span id="winningClosedTitle">終了したキャンペーン</span></summary><p id="winningClosedCounts" class="meta"></p><div id="winningClosedProducts" class="winning-products"></div></details></div>
     </section>
   </section>
   <section id="tabCampaigns" class="tab-page hidden">
@@ -140,11 +150,22 @@
     <div class="row"><div><h2>キャンペーン連携</h2><p>中央管理台帳のキャンペーンと同期します。表示はキャンペーン名＋抽選開始日、関連付けはcampaign_idです。</p></div>
       <button id="refreshCampaigns" class="secondary">再読込</button></div>
     <div id="ledgerSyncStatus" class="sync-summary">同期状態を確認中…</div>
+    <label for="campaignSearch" class="sr-only">キャンペーンを検索</label><input id="campaignSearch" type="search" placeholder="キャンペーンを検索" autocomplete="off">
+    <div id="campaignFilters" class="campaign-filters"><button data-cp-filter="all" aria-pressed="true">すべて</button><button data-cp-filter="active" class="secondary" aria-pressed="false">実施中</button><button data-cp-filter="attention" class="secondary" aria-pressed="false">要対応</button><button data-cp-filter="closed" class="secondary" aria-pressed="false">終了済み</button></div><p id="campaignMetric" class="meta"></p>
     <div id="campaigns" class="campaign-list"></div>
   </section>
 
   </section>
 </main>
+
+<dialog id="displayNameDialog" aria-labelledby="displayNameTitle">
+  <div class="dialog-head"><h2 id="displayNameTitle">表示名を変更</h2><button id="displayNameClose" type="button" class="secondary">閉じる</button></div>
+  <p id="displayNameFormal" class="meta"></p>
+  <label for="displayNameInput">表示名（全角14文字相当以内）</label><input id="displayNameInput" autocomplete="off" maxlength="28">
+  <p class="meta">半角は0.5文字。現在の一覧欄の幅で検査します。正式名・商品ID・他の表示箇所は変更しません。プレビューは横に動かして全文を確認できます。</p>
+  <div id="displayNamePreview" class="display-name-preview"><h3></h3></div>
+  <p id="displayNameMessage" role="status"></p><button id="displayNameSave" type="button" disabled>表示名を保存</button>
+</dialog>
 
 <dialog id="sendingTokensDialog">
   <div class="dialog-head"><h2>送信端末設定</h2><button id="sendingTokensClose" type="button" class="secondary">閉じる</button></div>
@@ -213,8 +234,28 @@
   <small>終了済みのキャンペーン・確定収益・設定が異なる既存商品は安全のため変更できません。</small>
 </dialog>
 
-<dialog id="outputMethodDialog">
-  <div class="dialog-head"><div><small>カード設定</small><h2 id="outputMethodTitle">抽出方法を選択</h2></div><button id="outputMethodClose" class="secondary">閉じる</button></div>
+<dialog id="winningFiltersDialog" aria-labelledby="winningFiltersTitle">
+  <div class="dialog-head"><h2 id="winningFiltersTitle">絞り込み・表示</h2><button id="winningFiltersClose" class="secondary" type="button">閉じる</button></div>
+  <form id="winningFiltersForm" class="winning-filter-form">
+    <label>状態<select id="winningStatus"><option value="all">すべて</option><option value="remaining">未抽出あり</option><option value="attention">要確認</option><option value="zero">未抽出0件</option><option value="due">期限経過・7日以内</option></select></label>
+    <p class="meta">要確認：方式未設定・対象外あり・単価未設定・終了確認待ち・訂正中・状態未取得。期限の警告ではありません。</p>
+    <label>引換先<select id="winningPlace"></select></label><label>開始月<select id="winningMonth"></select></label>
+    <label>並び順<select id="winningSort"><option value="recommended">標準（方式未設定→未抽出あり→要確認の0件→その他）</option><option value="name">商品名</option><option value="remaining">未抽出が多い順</option><option value="expiry">期限順</option></select></label>
+    <p class="meta">抽出中は行の位置を保ちます。「適用」で現在の件数から並べ直します。</p>
+    <label>一覧の区切り<select id="winningGrouping"><option value="flat">商品をまとめて表示</option><option value="month">開始月・常設フォルダ</option></select></label>
+    <label class="check-label"><input id="winningPermanent" type="checkbox">常設のみ</label><label class="check-label"><input id="winningShowCampaign" type="checkbox">全商品にキャンペーン名を表示</label><label class="check-label"><input id="winningRelativeDates" type="checkbox">期限の残日数も表示</label>
+    <div class="confirm-actions"><button type="button" id="winningFiltersReset" class="secondary">初期表示に戻す</button><button type="submit">適用・並べ直す</button></div>
+  </form>
+</dialog>
+<dialog id="balanceRecheckDialog" aria-labelledby="balanceRecheckTitle">
+  <div class="dialog-head"><h2 id="balanceRecheckTitle">残高を再解析</h2><button id="balanceRecheckClose" class="secondary" type="button">閉じる</button></div>
+  <div id="balanceRecheckContext" class="product-context"></div><p>過去のURLを5件ずつ確認します。抽出済みでも、残高が正のURLは未抽出に戻ります。残高不明のURLを使用済みとは判定しません。</p><p>処理中は画面を閉じずにお待ちください。中断は処理中の5件の応答後に反映します。</p>
+  <button id="balanceRecheckConfirm" type="button">確認して再解析を開始</button>
+</dialog>
+<dialog id="outputMethodDialog" aria-labelledby="outputMethodTitle">
+  <div class="dialog-head"><div><small>商品設定</small><h2 id="outputMethodTitle">抽出方法を選択</h2></div><button id="outputMethodClose" class="secondary">閉じる</button></div>
+  <div id="outputMethodContext" class="product-context"></div><div id="outputMethodCounts" class="settings-counts"></div><small class="meta">未抽出は現在の抽出方式に対応する件数です。対象外は抽出済みを含むため、各数は単純に加算できません。</small><p id="outputMethodRevenue" class="meta"></p>
+  <section class="settings-operations"><button id="settingsReassign" class="secondary" type="button">キャンペーンカテゴリを変更</button><small id="settingsReassignHelp"></small><div id="settingsRecheckSection" class="hidden"><button id="settingsRecheck" class="secondary" type="button">残高を再解析</button><p class="meta">抽出済みでも、正の残高があれば未抽出に戻ります。次の画面で確認してから開始します。</p><p id="settingsRecheckProgress" role="status"></p></div></section>
   <p>抽出済みの記録は、方法を変更しても未抽出には戻りません。</p>
   <section class="folder-setting">
     <h3>表示フォルダ</h3>
@@ -223,8 +264,9 @@
     <small>開始月は保持されます。常設を解除すると元の年月フォルダへ戻ります。</small>
     <button id="saveFolderVisibility" class="secondary" type="button">表示フォルダを保存</button>
   </section>
+  <section class="name-setting"><button id="editWinningName" type="button" class="secondary">表示名を変更（14文字以内）</button></section>
   <section class="price-setting">
-    <label for="unitPriceInput">商品単価（円）</label>
+    <label for="unitPriceInput">商品単価（1件あたり・円）</label>
     <div><input id="unitPriceInput" type="number" min="0" step="1" inputmode="numeric" placeholder="例：150"><button id="saveUnitPrice" class="secondary" type="button">単価を保存</button></div>
     <small id="unitPriceHelp">未設定の月は0円として確定せず、「単価未設定」と表示します。</small>
   </section>
@@ -239,8 +281,9 @@
   <p id="outputMethodMessage" class="result" aria-live="polite"></p>
 </dialog>
 
-<dialog id="exportActionDialog">
+<dialog id="exportActionDialog" aria-labelledby="exportActionTitle">
   <div class="dialog-head"><div><small>データ抽出</small><h2 id="exportActionTitle">抽出方法</h2></div><button id="exportActionClose" class="secondary">閉じる</button></div>
+  <div id="exportActionContext" class="product-context"></div>
   <div id="exportActionSummary" class="export-summary"></div>
   <p id="exportActionMessage" class="result" aria-live="polite"></p>
   <div id="paypayKindChooser" class="paypay-kind-chooser hidden">
@@ -256,6 +299,7 @@
 
 <dialog id="exportItemDialog">
   <div class="dialog-head"><div><small>1件ずつ抽出</small><h2 id="exportItemTitle">データ抽出</h2></div></div>
+  <div id="exportItemContext" class="product-context"></div>
   <div id="exportItemRemaining" class="export-summary">確認中…</div>
   <div id="exportItemValue" class="export-value">データを確認しています…</div>
   <button id="exportItemOpen" class="export-main" disabled>開く</button>
@@ -265,6 +309,7 @@
 
 <dialog id="exportBatchDialog">
   <div class="dialog-head"><div><small>一括抽出</small><h2>データをコピーしました</h2></div></div>
+  <div id="exportBatchContext" class="product-context"></div>
   <div id="exportBatchSummary" class="export-summary"></div>
   <p>スプレッドシートなどへの貼り付け完了後に「抽出済みにする」を押してください。キャンセルすると未抽出のまま残ります。</p>
   <div class="batch-actions"><button id="exportBatchAgain" class="secondary">もう一度コピー</button><button id="exportBatchCancel" class="secondary">キャンセル</button><button id="exportBatchComplete">抽出済みにする</button></div>
@@ -306,7 +351,7 @@
   <p id="trialResetMessage" class="result" aria-live="polite"></p>
   <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
-<script type="module" src="/app.js?v=20261023-device-login-v1"></script>
+<script type="module" src="/app.js?v=20261025-approved-ui"></script>
 </body>
 </html>
 

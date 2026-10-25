@@ -390,11 +390,15 @@ export async function cardAssignments(env) {
 }
 
 export async function enrichCards(env, cards) {
+  if (!cards.length) return cards;
   const assignments = await cardAssignments(env);
+  const rows = await env.DB.prepare(`SELECT i.card_id,COUNT(*) count FROM items i
+    WHERE i.card_id IS NOT NULL AND i.status='active'
+      AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)
+    GROUP BY i.card_id`).all();
+  const unassignedCounts = new Map((rows.results || []).map(row => [row.card_id, Number(row.count || 0)]));
   for (const card of cards) {
-    const row = await env.DB.prepare(`SELECT COUNT(*) count FROM items i WHERE i.card_id=? AND i.status='active'
-      AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)`).bind(card.id).first();
-    card.unassigned_count = Number(row?.count || 0);
+    card.unassigned_count = unassignedCounts.get(card.id) || 0;
     card.assignments = assignments.get(card.id) || [];
   }
   return cards;
@@ -454,8 +458,8 @@ export async function retryOutbox(env) {
 }
 
 export async function setUnitPrice(env, productId, value) {
-  const unitPrice = Number(value);
-  if (!Number.isSafeInteger(unitPrice) || unitPrice < 0) {
+  const unitPrice = value;
+  if (typeof unitPrice !== 'number' || !Number.isSafeInteger(unitPrice) || unitPrice < 0) {
     throw new VaultLedgerError("単価は0円以上の整数で入力してください", 400, "INVALID_UNIT_PRICE");
   }
   const model = await env.DB.prepare("SELECT product_id FROM ledger_products WHERE product_id=?").bind(productId).first();

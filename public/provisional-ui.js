@@ -22,6 +22,7 @@ function renderOverview(data) {
   $("receive").textContent = data.mode === "normal" ? "解析して保管" : "暫定" + data.mode + "に保管";
   $("provisionalModeStatus").textContent = "現在の受信先： " + (data.mode === "normal" ? "通常" : "暫定" + data.mode) +
     "（ARUNOMATICを含む全端末共通）";
+  $("receiveContext").textContent = $("provisionalModeStatus").textContent;
   const container = $("provisionalSortingResults");
   if (!container) return;
   const buckets = (data.buckets || []).filter(bucket => bucket.count > 0);

@@ -1,4 +1,5 @@
 import { isEraberuPay } from "../public/analysis-amount.js";
+import { listDisplayNames, saveDisplayName } from './display-names.js';
 import { balanceRecheckOverview, recheckBalances } from "./balance-recheck.js";
 import { summarizeAnalysisAmounts } from "./analysis-amount.js";
 import { usageOverview, recheckUsage, deleteUsed, markUsed } from './usage.js';
@@ -23,7 +24,7 @@ import {
   startExportBatch, undoExportBatch, setFolderVisibility
 } from "./extraction.js";
 
-const VERSION = "0.9.4";
+const VERSION = "0.9.5";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -1023,6 +1024,14 @@ export default {
       if (url.pathname === "/api/jobs/latest" && request.method === "GET") return latestJob(env);
       const jobStatus = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
       if (jobStatus && request.method === "GET") return getJob(env, jobStatus[1]);
+      if (url.pathname === '/api/display-names' && request.method === 'GET')
+        return json({ok:true,names:await listDisplayNames(env)});
+      const displayNameRoute = url.pathname.match(/^\/api\/display-names\/(sorting|winning)\/([0-9a-f-]+)$/i);
+      if (displayNameRoute && request.method === 'POST') {
+        if (request.headers.get('origin') !== url.origin) return json({ok:false,error:'管理画面から操作してください',code:'SCOPE_DENIED'},403);
+        const body = await request.json().catch(()=>({}));
+        return json({ok:true,...await saveDisplayName(env,displayNameRoute[1],displayNameRoute[2],body.display_name)});
+      }
       if (url.pathname === "/api/cards" && request.method === "GET") return listCards(env);
       if (url.pathname === "/api/usage" && request.method === "GET") return json({ok:true,...await usageOverview(env)});
       if (url.pathname === "/api/usage/recheck" && request.method === "POST") {
