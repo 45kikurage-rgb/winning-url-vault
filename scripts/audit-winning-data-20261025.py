@@ -64,7 +64,12 @@ for name,sql in queries.items():
     req=urllib.request.Request(f'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/d1/database/{DB}/query',data=json.dumps({'sql':sql}).encode(),headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json','User-Agent':'ARUNO-ReadOnly-Data-Audit'})
     try:
         with urllib.request.urlopen(req,timeout=45) as r:payload=json.load(r)
-    except urllib.error.HTTPError as e:raise SystemExit('CF_HTTP_'+str(e.code))
+    except urllib.error.HTTPError as e:
+        try:errors=json.load(e).get('errors',[])
+        except Exception:errors=[]
+        result[name]={'error':'CF_HTTP_'+str(e.code),'details':[{'code':x.get('code'),'message':str(x.get('message',''))[:240]} for x in errors]}
+        print('Audit query failed:',name,json.dumps(result[name]))
+        continue
     assert payload.get('success') is True,'CF_QUERY_FAILED'
     row=payload['result'][0];assert row.get('success') is True,'D1_QUERY_FAILED'
     result[name]={'rows':row.get('results',[]),'rows_read':row.get('meta',{}).get('rows_read')}
