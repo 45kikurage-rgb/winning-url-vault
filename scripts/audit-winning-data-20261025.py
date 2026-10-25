@@ -62,7 +62,7 @@ queries={
 result={}
 selected = {os.environ['AUDIT_QUERY']:queries[os.environ['AUDIT_QUERY']]} if os.environ.get('AUDIT_QUERY') else queries
 for name,sql in selected.items():
-    assert sql.lstrip().upper().startswith('SELECT ') and ';' not in sql
+    assert sql.lstrip().split(None,1)[0].upper() == 'SELECT' and ';' not in sql
     req=urllib.request.Request(f'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/d1/database/{DB}/query',data=json.dumps({'sql':sql}).encode(),headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json','User-Agent':'ARUNO-ReadOnly-Data-Audit'})
     try:
         with urllib.request.urlopen(req,timeout=45) as r:payload=json.load(r)
