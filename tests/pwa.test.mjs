@@ -57,23 +57,19 @@ test("both launch pages register or reference the PWA", async () => {
   assert.match(share, /src="\/icon-any-512\.png"/);
 });
 
-test("当選リストは未設定・処理中・完了を分離し、固定下部タブとsafe-areaを使う", async () => {
-  const index = await text("index.html");
-  const app = await text("app.js");
-  const styles = await text("styles.css");
+test("スマホ一覧は独立した未抽出ボタン・設定・終了領域と固定タブを備える", async () => {
+  const index = await text("index.html"), app = await text("app.js"), styles = await text("styles.css"), sw = await text("sw.js");
+  for (const id of ['winningSearch','winningClosed','winningClosedCounts','winningFiltersDialog','settingsReassign','settingsRecheck','balanceRecheckDialog','exportActionContext','exportItemContext','exportBatchContext','unitPriceInput']) assert.ok(index.includes(`id="${id}"`));
   assert.match(index, /class="main-tabs"/);
-  assert.match(index, /id="unitPriceInput"/);
-  assert.match(app, /item\.output_method === "unset" \? 0/);
-  assert.match(app, /class="needs-setting">要設定/);
-  assert.match(app, /未設定なので、まだ出せません/);
-  assert.match(app, /unset[\s\S]*data-method-product/);
-  assert.doesNotMatch(app, /\$\{unset \? "抽出方法を設定" : "抽出"\}/);
-  assert.match(app, /class="winning-card \$\{unset \? "is-unset" : complete \? "is-complete"/);
-  assert.match(app, /meta = `\$\{esc\(item\.redemption_place[\s\S]*\/ 期限/);
+  assert.match(app, /<span>未抽出<\/span><strong>/);
+  assert.match(app, /data-method-product/);
+  assert.match(app, /抽出済み.*exported_count/);
+  assert.match(app, /Boolean\(winningView.query.trim\(\) && selected.closed.length\)/);
+  assert.match(app, /前回取得した一覧を表示しています/);
   assert.match(styles, /\.main-tabs\{position:fixed;[\s\S]*bottom:0/);
   assert.match(styles, /env\(safe-area-inset-bottom/);
-  assert.match(styles, /\.winning-actions\{display:grid;grid-template-columns:1fr auto/);
-  assert.match(styles, /\.winning-card\.is-complete\{opacity:/);
+  assert.match(styles, /\.product-actions button\{min-height:44px/);
+  assert.match(sw, /winning-view.js/);
 });
 
 test("全タブ共通の固定ヘッダーと中央スクロール、コンパクトなURL入力欄を備える", async () => {

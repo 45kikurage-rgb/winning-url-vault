@@ -1,3 +1,5 @@
+import { nameUnits, validateDisplayName, nameFits } from './display-name.js';
+import { DEFAULT_VIEW, normalizeView, attentionReasons, orderWinningItems, expiryLabel, selectWinningItems } from './winning-view.js';
 import { currentWinningMonth, winningMonth, winningMonthLabel, groupWinningFolders } from './winning-folders.js';
 import { predictAssignmentCampaign } from './assignment-prediction.js';
 import { analysisAmount, isEraberuPay } from './analysis-amount.js';
@@ -9,6 +11,65 @@ const $ = id => document.getElementById(id);
 const winningFolderOpen = new Map();
 const balanceRechecks = new Map();
 let winningFolderMonth = currentWinningMonth();
+const WINNING_VIEW_KEY = 'winning-url-vault:winning-view';
+let winningView = { ...DEFAULT_VIEW };
+try { winningView = normalizeView(JSON.parse(localStorage.getItem(WINNING_VIEW_KEY) || '{}')); } catch {}
+let winningOrder = [], winningRequest = 0, winningLoaded = false, closedManuallyOpen = false;
+let recheckConfirmProductId = null;
+const displayNames = new Map();
+let displayNamesLoaded, editingName, campaignFilter = 'all';
+function displayLabel(scope,id,fallback) { return displayNames.get(`${scope}:${id}`) || fallback || '商品名未取得'; }
+async function loadDisplayNames() {
+  if (!displayNamesLoaded) displayNamesLoaded = api('/api/display-names').then(result => {
+    for (const row of result.names || []) displayNames.set(`${row.scope}:${row.target_id}`,row.display_name);
+  }).catch(error => { displayNamesLoaded = null; throw error; });
+  return displayNamesLoaded;
+}
+function tabDot(id,count,label) {
+  $(id).classList.toggle('hidden',count === 0);
+  $(id).closest('button').setAttribute('aria-label',`${label}${count > 0 ? '・項目あり' : '・項目なし'}`);
+}
+function displayNameField(scope,id) {
+  return [...document.querySelectorAll('[data-name-scope]')].find(el => el.dataset.nameScope === scope && el.dataset.nameId === id);
+}
+async function openDisplayName(scope,id) {
+  const item = scope === 'sorting' ? state.cards.get(id) : winningProduct(id);
+  const field = displayNameField(scope,id);
+  if (!item || !field?.getClientRects().length) return;
+  editingName = {scope,id};
+  $('displayNameTitle').textContent = scope === 'sorting' ? '仕分けの表示名' : '当選の表示名';
+  $('displayNameFormal').textContent = `正式名：${item.raw_name || item.product_name || item.display_name}`;
+  $('displayNameInput').value = displayLabel(scope,id,item.display_name || item.product_name);
+  $('displayNameDialog').showModal();
+  await document.fonts.ready;
+  checkDisplayName();
+}
+function checkDisplayName() {
+  if (!editingName) return false;
+  const value = $('displayNameInput').value.trim(), field = displayNameField(editingName.scope,editingName.id);
+  const preview = $('displayNamePreview').firstElementChild;
+  preview.textContent = value;
+  const style = field && getComputedStyle(field);
+  if (style) { preview.style.font = style.font; preview.style.letterSpacing = style.letterSpacing; }
+  const error = validateDisplayName(value) || (!nameFits(field,value) ? '現在の一覧の幅に収まりません。表示名を短くしてください。' : '');
+  // The preview uses its own real dimensions; it never ellipsizes to imply a pass.
+  $('displayNameMessage').textContent = error || `${nameUnits(value)}／14文字相当・一覧の1行幅に収まります。`;
+  $('displayNameSave').disabled = Boolean(error);
+  return !error;
+}
+async function saveDisplayAlias() {
+  await document.fonts.ready;
+  if (!checkDisplayName()) return;
+  const {scope,id} = editingName, value = $('displayNameInput').value.trim();
+  $('displayNameSave').disabled = true;
+  try {
+    await api(`/api/display-names/${scope}/${id}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({display_name:value})});
+    displayNames.set(`${scope}:${id}`,value);
+    $('displayNameDialog').close();
+    if (scope === 'winning') renderWinningLists(); else await load();
+  } catch(error) { $('displayNameMessage').textContent = error.message; $('displayNameSave').disabled = false; }
+}
+const winningNodes = new Map(), winningGroups = new Map();
 const PENDING_SHARE_KEY = "winning-url-vault:pending-share";
 const LAST_EXPORT_BATCH_KEY = "winning-url-vault:last-export-batch";
 const OUTPUT_METHOD_LABELS = { unset:"未設定", normal:"通常URL", cokeon:"コークオン",
@@ -66,11 +127,15 @@ async function loadRevenueSummary() {
     $("headerDailyRevenue").textContent = `${Number(result.daily_revenue || 0).toLocaleString()}円`;
     const unpriced = Number(result.unpriced_month_count || 0);
     panel.classList.toggle("has-unpriced", unpriced > 0);
+    $('revenueNotice').textContent = unpriced > 0 ? `単価未設定 ${unpriced.toLocaleString()}件：収益に未計上の分があります。` : '';
+    $('revenueNotice').classList.toggle('hidden',unpriced === 0);
     panel.title = unpriced > 0 ? `単価未設定 ${unpriced.toLocaleString()}件は収益に含まれていません` : `${result.month} / ${result.date}（JST）`;
   } catch (error) {
     $("headerMonthlyRevenue").textContent = "—";
     $("headerDailyRevenue").textContent = "—";
     panel.classList.add("is-error");
+    $('revenueNotice').textContent = `収益を取得できませんでした：${error.message}`;
+    $('revenueNotice').classList.remove('hidden');
     panel.title = error.message;
   }
 }
@@ -279,16 +344,35 @@ function cardHtml(card) {
     <small class="sync-${esc(item.sync_status || "pending")}">${item.sync_status === "sent" ? "同期済み" : item.sync_status === "failed" ? "同期失敗" : "同期待ち"}</small>
   </div>`).join("");
   return `<article class="coupon">
-    <div><h3>${esc(card.display_name)}</h3><div class="meta">${esc(card.redeem_place)}${card.specification ? ` / ${esc(card.specification)}` : ""}</div>
-    ${isEraberuPay(card) ? "" : `<div class="meta">期限 ${esc(card.expires_on || "期限なし")}</div>`}${assignments ? `<div class="assignment-list">${assignments}</div>` : '<div class="unassigned-label">解析済み・未仕分け</div>'}</div>
+    <div><h3 data-name-scope="sorting" data-name-id="${esc(card.id)}" title="${esc(card.raw_name || card.display_name)}">${esc(displayLabel('sorting',card.id,card.display_name))}</h3><div class="meta sorting-spec">${esc(card.specification || '規格未設定')}／${esc(card.redeem_place)}</div>
+    ${isEraberuPay(card) ? "" : `<div class="meta">期限 ${esc(card.expires_on || "期限なし")}</div>`}${(card.assignments || []).some(row=>row.sync_status==='failed') ? '<p class="sync-error">同期失敗あり：割当内訳を確認してください。</p>' : ''}${assignments ? `<details class="assignment-list"><summary>割当済み${(card.assignments || []).reduce((sum,row)=>sum+Number(row.current_winner_count || 0),0).toLocaleString()}件／${esc(card.assignments[0].campaign_name || card.assignments[0].campaign_id)}</summary>${assignments}</details>` : '<div class="unassigned-label">解析済み・未仕分け</div>'}</div>
     <div class="coupon-foot"><div class="card-actions">
       ${Number(card.unassigned_count || 0) > 0 ? `<button data-assign-card="${esc(card.id)}" data-title="${esc(card.display_name)}">振り分け（${Number(card.unassigned_count).toLocaleString()}）</button>` : ""}
-      <button class="secondary" data-card="${esc(card.id)}" data-title="${esc(card.display_name)}">内容</button></div></div>
+      <button class="secondary" data-edit-sorting-name="${esc(card.id)}">表示名</button><button class="secondary" data-card="${esc(card.id)}" data-title="${esc(card.display_name)}">内容</button></div></div>
   </article>`;
 }
 
+function renderSortingCards(cards) {
+  const container = $('cards'), port = $('tabSorting'), scrollTop = port.scrollTop;
+  const current = new Map([...container.querySelectorAll(':scope > [data-sorting-card]')].map(node=>[node.dataset.sortingCard,node]));
+  const next = cards.map(card=>{
+    let node = current.get(card.id);
+    const html = cardHtml(card);
+    if (!node) {node=document.createElement('div');node.dataset.sortingCard=card.id;}
+    if (node._cardHtml !== html) {
+      const opened = Boolean(node.querySelector('.assignment-list')?.open);
+      node.innerHTML = html;node._cardHtml=html;
+      if (opened && node.querySelector('.assignment-list')) node.querySelector('.assignment-list').open=true;
+    }
+    return node;
+  });
+  if (next.length) syncWinningChildren(container,next);
+  else container.innerHTML='<div class="empty">仕分け待ちのカードはありません</div>';
+  port.scrollTop=scrollTop;
+}
 async function load() {
   try {
+    await loadDisplayNames();
     const [cards, pending, unresolved, usage] = await Promise.all([api("/api/cards"), api("/api/pending"), api("/api/unresolved"), api("/api/usage")]);
     renderUsedCount(usage.usedIds);
     const total = cards.cards.reduce((sum, card) => sum + Number(card.count || 0), 0);
@@ -299,11 +383,14 @@ async function load() {
     const sortingCards = cards.cards.filter(card => Number(card.unassigned_count || 0) > 0);
     state.cards = new Map(cards.cards.map(card => [card.id, card]));
     const sortingCount = sortingCards.reduce((sum, card) => sum + Number(card.unassigned_count || 0), 0);
-    $("sortingTabCount").textContent = sortingCount.toLocaleString();
-    $("cards").innerHTML = sortingCards.length ? sortingCards.map(cardHtml).join("") : '<div class="empty">仕分け待ちのカードはありません</div>';
+    tabDot('sortingTabCount',sortingCount,'仕分け');
+    $('sortingMetric').textContent = `未仕分け ${sortingCount.toLocaleString()}件（URL・コード）`;
+    $('pendingBanner').classList.toggle('hidden',pending.items.length === 0);
+    $('pendingBanner').textContent = `初回確認 ${pending.items.length.toLocaleString()}グループを確認する`;
+    renderSortingCards(sortingCards);
     $("pendingSection").classList.toggle("hidden", pending.items.length === 0);
     state.pendingItems = new Map(pending.items.map(item => [item.id, item]));
-    $("pendingList").innerHTML = pending.items.map(pendingCard).join("");
+    if (!$("pendingList").querySelector(".editing")) $("pendingList").innerHTML = pending.items.map(pendingCard).join("");
     $("unknownList").innerHTML = unresolved.items.map(item => {
       const openUrl = item.openUrl || item.value;
       const open = /^https?:\/\//i.test(openUrl)
@@ -463,66 +550,122 @@ function methodLabel(method) {
 }
 
 function winningCardHtml(item) {
-  const total = Number(item.total_count || 0);
-  const remaining = Number(item.unexported_count || 0);
-  const exported = Number(item.exported_count || 0);
-  const unmatched = Number(item.unmatched_count || 0);
-  const unset = item.output_method === "unset";
-  const complete = !unset && remaining === 0;
-  const unitPrice = item.unit_price === null || item.unit_price === undefined ? null : Number(item.unit_price);
-  const revenue = item.current_month_revenue === null || item.current_month_revenue === undefined ? null : Number(item.current_month_revenue);
-  const revenueMonth = String(item.revenue_month || "");
-  const monthLabel = revenueMonth ? `${Number(revenueMonth.slice(5, 7))}月収益` : "当月収益";
-  const statusLabels = { active:"実施中", closing:"終了確認待ち", correcting:"訂正中", closed:"終了済み" };
-  const meta = `${esc(item.redemption_place || "利用先未設定")}${item.product_spec ? ` / ${esc(item.product_spec)}` : ""}${isEraberuPay(item) ? "" : ` / 期限 ${esc(item.valid_until || "なし")}`}`;
+  const id = esc(item.product_id), remaining = Number(item.unexported_count || 0);
+  const unset = !item.output_method || item.output_method === 'unset';
   const recheck = balanceRechecks.get(item.product_id);
-  const priceLine = unitPrice === null
-    ? `<span class="price-unset">単価未設定</span><span>${esc(monthLabel)} —</span>`
-    : `<span>単価 ¥${unitPrice.toLocaleString()}</span><span>${esc(monthLabel)} ¥${Number(revenue || 0).toLocaleString()}</span>`;
-  return `<article class="winning-card ${unset ? "is-unset" : complete ? "is-complete" : "is-active"}" data-product-id="${esc(item.product_id)}">
-    <div class="winning-campaign"><span>${esc(item.campaign_name || item.campaign_id)}　${esc(item.lottery_start_date || "")}</span><span class="campaign-card-tools"><span>${esc(statusLabels[item.campaign_status] || item.campaign_status || "")}</span><button class="secondary campaign-change" data-reassign-product="${esc(item.product_id)}" type="button">変更</button></span></div>
-    <div class="winning-title"><h3>${esc(item.display_name || item.product_name)}</h3>${unset ? '<strong class="needs-setting">要設定</strong>' : ""}</div>
-    <div class="meta winning-meta">${meta}</div>
-    <div class="method-name">${esc(methodLabel(item.output_method))}</div>
-    <div class="revenue-line">${priceLine}</div>
-    ${unset
-      ? `<div class="unset-status"><span>登録 <strong>${total.toLocaleString()}件</strong></span><p>未設定なので、まだ出せません</p></div>`
-      : `<div class="winning-stats"><span>登録<strong>${total.toLocaleString()}件</strong></span><span class="remaining">未抽出<strong>${remaining.toLocaleString()}件</strong></span><span>抽出済み<strong>${exported.toLocaleString()}件</strong></span></div>`}
-    ${unmatched ? `<div class="unmatched-note">現在の抽出方法では対象外 ${unmatched.toLocaleString()}件</div>` : ""}
-    ${unset
-      ? `<div class="winning-actions unset-actions"><button class="method-button setup-button" data-method-product="${esc(item.product_id)}">抽出方法を設定</button></div>`
-      : `<div class="winning-actions"><button class="extract-button" data-export-product="${esc(item.product_id)}" ${complete ? "disabled" : ""}>抽出 <strong>${remaining.toLocaleString()}件</strong></button><button class="method-button" data-method-product="${esc(item.product_id)}">設定</button></div>`}
-    ${isEraberuPay(item) ? `<div class="balance-recheck">
-      <button class="secondary" data-balance-product="${esc(item.product_id)}" ${recheck?.running ? "disabled" : ""}>${recheck?.running ? "再解析中…" : "再解析"}</button>
-      <p class="meta" data-balance-message="${esc(item.product_id)}" role="status">${esc(recheck?.message || "過去のURLも確認し、残高があれば未抽出に戻します")}</p>
-    </div>` : ""}
-  </article>`;
+  const reasons = attentionReasons(item);
+  const name = displayLabel('winning',item.product_id,item.display_name || item.product_name);
+  return `<div class="product-heading"><h3 data-name-scope="winning" data-name-id="${id}" title="${esc(item.product_name || name)}">${esc(name)}</h3><span class="product-total">合計${Number(item.total_count || 0).toLocaleString()}件</span></div>
+    ${winningView.showCampaign ? `<div class="product-campaign">${esc(item.campaign_name || item.campaign_id)} · ${esc(item.lottery_start_date || '開始日未取得')}</div>` : ''}
+    <div class="product-body"><div class="product-meta"><span class="product-spec-place">${esc(item.product_spec || '規格未設定')}／${esc(item.redemption_place || '引換先未取得')}</span><span>${esc(expiryLabel(item,winningView.relativeDates))}</span>${item.show_in_permanent ? '<span>常設</span>' : ''}</div>
+    <div class="product-controls"><small class="product-method">${esc(methodLabel(item.output_method))}</small><div class="product-actions"><button class="extract-button${remaining > 999 ? ' wide-count' : ''}" data-export-product="${id}" ${unset || remaining === 0 ? 'disabled' : ''}><span>未抽出</span><strong>${remaining.toLocaleString()}</strong><span>件</span></button><button class="secondary product-settings" data-method-product="${id}" aria-label="${esc(name)}の設定">設定</button></div></div></div>
+    ${reasons.length ? `<div class="product-notes">${esc(reasons.join(' / '))}</div>` : ''}
+    ${isEraberuPay(item) ? `<div class="product-recheck"><span data-balance-message="${id}" role="status">${esc(recheck?.message || '再解析は設定から')}</span>${recheck?.running ? `<button class="secondary" data-stop-recheck="${id}">再解析を中断</button>` : ''}</div>` : ''}`;
 }
 
+function productContext(item) {
+  if (!item) return '商品情報を取得できません。一覧を再読み込みしてください。';
+  return [item.display_name || item.product_name, item.product_spec, item.redemption_place || '引換先未取得', expiryLabel(item), `CP：${item.campaign_name || item.campaign_id}`, `開始日：${item.lottery_start_date || '未取得'}`].filter(Boolean).join(' / ');
+}
+
+function syncWinningChildren(parent, nodes) {
+  nodes.forEach((node,index) => { if (parent.children[index] !== node) parent.insertBefore(node,parent.children[index] || null); });
+  while (parent.children.length > nodes.length) parent.lastElementChild.remove();
+}
+function renderWinningSection(parent, items, scope) {
+  const row = item => {
+    let node = winningNodes.get(item.product_id);
+    if (!node) { node = document.createElement('article'); node.dataset.productId = item.product_id; winningNodes.set(item.product_id,node); }
+    node.className = `winning-card winning-product-row${item.output_method === 'unset' ? ' is-unset' : ''}`;
+    const html = winningCardHtml(item);
+    if (node._winningHtml !== html) { node.innerHTML = html; node._winningHtml = html; }
+    return node;
+  };
+  if (!items.length) {
+    let empty = parent.querySelector(':scope > .empty');
+    if (!empty) { empty = document.createElement('div'); empty.className = 'empty'; }
+    empty.textContent = winningLoaded ? '該当する商品はありません' : '当選リスト読み込み待ち';
+    syncWinningChildren(parent,[empty]); return;
+  }
+  if (winningView.grouping !== 'month') { syncWinningChildren(parent,items.map(row)); return; }
+  const groups = groupWinningFolders(items).filter(folder => folder.items.length).map(folder => {
+    const key = `${scope}:${folder.key}`;
+    let group = winningGroups.get(key);
+    if (!group) {
+      group = document.createElement('details'); group.className = 'winning-folder';
+      const summary = document.createElement('summary'), content = document.createElement('div');
+      content.className = 'winning-folder-content'; group.append(summary,content); winningGroups.set(key,group);
+      group.addEventListener('toggle',() => { if (!winningView.query.trim()) winningFolderOpen.set(key,group.open); });
+    }
+    group.firstElementChild.textContent = `${folder.label} · ${folder.items.length}商品`;
+    group.open = Boolean(winningView.query.trim()) || (winningFolderOpen.get(key) ?? folder.open);
+    syncWinningChildren(group.lastElementChild,folder.items.map(row)); return group;
+  });
+  syncWinningChildren(parent,groups);
+}
+function renderWinningLists() {
+  const port = $('tabWinning'), top = port.getBoundingClientRect().top;
+  const anchor = [...port.querySelectorAll('[data-product-id]')].find(node => node.getBoundingClientRect().bottom > top && node.getClientRects().length);
+  const anchorTop = anchor?.getBoundingClientRect().top;
+  const focused = document.activeElement;
+  const focusKey = ['methodProduct','exportProduct','stopRecheck'].filter(key => focused?.dataset[key]).map(key => [key,focused.dataset[key]])[0];
+  const ordered = orderWinningItems(state.winningLists,winningOrder,winningView.sort);
+  winningOrder = ordered.map(item => item.product_id);
+  const selected = selectWinningItems(ordered.map(item => ({...item,display_name:displayLabel('winning',item.product_id,item.display_name || item.product_name)})),winningView);
+  renderWinningSection($('winningActive'),selected.active,'active');
+  renderWinningSection($('winningClosedProducts'),selected.closed,'closed');
+  $('winningClosed').open = closedManuallyOpen || Boolean(winningView.query.trim() && selected.closed.length);
+  $('winningClosedTitle').textContent = `終了したキャンペーン · ${selected.closed.length}/${selected.closedCount}商品`;
+  $('winningClosedCounts').textContent = `終了全体の未抽出残 ${selected.closedRemaining.toLocaleString()}件 / 絞込内 ${selected.filteredClosedRemaining.toLocaleString()}件`;
+  $('winningListCount').textContent = `${selected.filteredCount}/${selected.total}商品`;
+  $('winningRemaining').setAttribute('aria-pressed',String(winningView.status === 'remaining'));
+  $('winningAttention').setAttribute('aria-pressed',String(winningView.status === 'attention'));
+  $('clearWinningFilters').classList.toggle('hidden',!winningView.query && winningView.status === 'all' && !winningView.place && !winningView.month && !winningView.permanent);
+  for (const [id,node] of winningNodes) if (!state.winningLists.some(item => item.product_id === id)) { node.remove(); winningNodes.delete(id); }
+  bindWinningControls();
+  if (anchor?.isConnected && anchor.getClientRects().length) port.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
+  if (focusKey && !focused.isConnected) {
+    const replacement = [...port.querySelectorAll('button')].find(button => button.dataset[focusKey[0]] === focusKey[1]);
+    const target = replacement && !replacement.disabled ? replacement : winningNodes.get(focusKey[1])?.querySelector('[data-method-product]');
+    target?.focus({preventScroll:true});
+  }
+  try { $('undoLastExport').classList.toggle('hidden',!localStorage.getItem(LAST_EXPORT_BATCH_KEY)); } catch {}
+}
+function applyWinningView(update, resetOrder = false) {
+  winningView = normalizeView({...winningView,...update});
+  if (resetOrder) winningOrder = orderWinningItems(state.winningLists,[],winningView.sort,true).map(item => item.product_id);
+  try { const {query,status,place,month,permanent,...display} = winningView; localStorage.setItem(WINNING_VIEW_KEY,JSON.stringify(display)); } catch {}
+  $('winningSearch').value = winningView.query;
+  renderWinningLists();
+}
+function openWinningFilters() {
+  $('winningStatus').value = winningView.status;
+  for (const [id,field,values,label] of [ ['winningPlace','place',[...new Set(state.winningLists.map(item=>item.redemption_place).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ja')),value=>value], ['winningMonth','month',[...new Set(state.winningLists.map(winningMonth))].sort().reverse(),winningMonthLabel] ]) {
+    $(id).replaceChildren(...['',...values].map(value => { const option=document.createElement('option'); option.value=value; option.textContent=value ? label(value) : 'すべて'; return option; }));
+    $(id).value=winningView[field];
+  }
+  $('winningSort').value=winningView.sort; $('winningGrouping').value=winningView.grouping;
+  $('winningPermanent').checked=winningView.permanent; $('winningShowCampaign').checked=winningView.showCampaign; $('winningRelativeDates').checked=winningView.relativeDates;
+  $('winningFiltersDialog').showModal();
+}
 async function loadWinningLists() {
+  const request = ++winningRequest;
   try {
-    const result = await api("/api/winning-lists");
-    state.winningLists = (result.products || []).sort((left, right) => {
-      const rank = item => item.output_method === "unset" ? 0 : Number(item.unexported_count || 0) > 0 ? 1 : 2;
-      return rank(left) - rank(right) || String(left.display_name || left.product_name || "").localeCompare(String(right.display_name || right.product_name || ""), "ja");
-    });
-    $("winningTabCount").textContent = state.winningLists.length.toLocaleString();
+    await loadDisplayNames();
+    const result = await api('/api/winning-lists');
+    if (request !== winningRequest) return;
+    state.winningLists = result.products || []; winningLoaded = true;
+    tabDot('winningTabCount',state.winningLists.length,'当選リスト');
+    $('winningMetric').textContent = `当選 ${state.winningLists.length.toLocaleString()}商品`;
     const month = currentWinningMonth();
     if (month !== winningFolderMonth) { winningFolderOpen.clear(); winningFolderMonth = month; }
-    $("winningLists").innerHTML = groupWinningFolders(state.winningLists, month).map(folder => {
-      const open = winningFolderOpen.has(folder.key) ? winningFolderOpen.get(folder.key) : folder.open;
-      return `<details class="winning-folder" data-winning-folder="${esc(folder.key)}" ${open ? "open" : ""}>
-        <summary><span>${esc(folder.label)}</span><small>${folder.items.length}カード</small></summary>
-        <div class="winning-folder-content">${folder.items.length ? folder.items.map(winningCardHtml).join("") : '<div class="empty">カードの「設定」から常設にも表示できます</div>'}</div>
-      </details>`;
-    }).join("");
-    document.querySelectorAll("[data-winning-folder]").forEach(folder => {
-      folder.ontoggle = () => winningFolderOpen.set(folder.dataset.winningFolder, folder.open);
-    });
-    bindWinningControls();
-    try { $("undoLastExport").classList.toggle("hidden", !localStorage.getItem(LAST_EXPORT_BATCH_KEY)); } catch {}
+    $('winningLoadStatus').textContent = ''; $('retryWinningLoad').classList.add('hidden');
+    renderWinningLists();
+    if ($('outputMethodDialog').open) updateOutputSettings();
   } catch (error) {
-    $("winningLists").innerHTML = `<div class="empty error">${esc(error.message)}</div>`;
+    if (request !== winningRequest) return;
+    $('winningLoadStatus').textContent = `更新できませんでした。${winningLoaded ? '前回取得した一覧を表示しています。' : ''}${error.message}`;
+    $('retryWinningLoad').classList.remove('hidden');
   }
 }
 
@@ -534,7 +677,7 @@ function bindWinningControls() {
   document.querySelectorAll("[data-method-product]").forEach(button => button.onclick = () => openOutputMethod(button.dataset.methodProduct));
   document.querySelectorAll("[data-reassign-product]").forEach(button => button.onclick = () => openReassignment(button.dataset.reassignProduct));
   document.querySelectorAll("[data-export-product]").forEach(button => button.onclick = () => openExportAction(button.dataset.exportProduct));
-  document.querySelectorAll("[data-balance-product]").forEach(button => button.onclick = () => recheckWinningBalances(button.dataset.balanceProduct));
+  document.querySelectorAll("[data-stop-recheck]").forEach(button => button.onclick = () => { const progress=balanceRechecks.get(button.dataset.stopRecheck); if (progress) { progress.stopRequested=true; button.disabled=true; button.textContent="応答後に中断します"; } });
 }
 
 async function openReassignment(productId) {
@@ -595,19 +738,16 @@ async function confirmReassignment(){
 function updateBalanceRecheck(productId, update) {
   const progress = { ...balanceRechecks.get(productId), ...update };
   balanceRechecks.set(productId, progress);
-  document.querySelectorAll("[data-balance-product]").forEach(button => {
-    if (button.dataset.balanceProduct !== productId) return;
-    button.disabled = progress.running;
-    button.textContent = progress.running ? "再解析中…" : "再解析";
-  });
   document.querySelectorAll("[data-balance-message]").forEach(element => {
     if (element.dataset.balanceMessage === productId) element.textContent = progress.message;
   });
+  renderWinningLists();
+  if ($("outputMethodDialog").open) updateOutputSettings();
 }
 
 async function recheckWinningBalances(productId) {
   if (balanceRechecks.get(productId)?.running || !isEraberuPay(winningProduct(productId))) return;
-  updateBalanceRecheck(productId, { running: true, message: "再解析するURLを確認中…" });
+  updateBalanceRecheck(productId, { running: true, stopRequested:false, message: "再解析するURLを確認中…" });
   const counts = { checked: 0, restored: 0, positive: 0, zero: 0, unknown: 0, skipped: 0 };
   let done = 0;
   let total = 0;
@@ -617,6 +757,7 @@ async function recheckWinningBalances(productId) {
     total = overview.ids.length;
     counts.skipped = overview.unsupported;
     for (let offset = 0; offset < total; offset += 5) {
+      if (balanceRechecks.get(productId)?.stopRequested) throw new Error("利用者が中断しました。");
       updateBalanceRecheck(productId, { message: `再解析中 ${done}/${total}件。${summary()}。画面を閉じずにお待ちください。` });
       const ids = overview.ids.slice(offset, offset + 5);
       const result = await api(`/api/products/${productId}/balance-recheck`, {
@@ -636,15 +777,37 @@ async function recheckWinningBalances(productId) {
   }
 }
 
+function updateOutputSettings() {
+  const item = winningProduct(state.outputProductId);
+  $('outputMethodContext').textContent = productContext(item);
+  if (!item) { $('settingsReassign').disabled=true; $('settingsRecheck').disabled=true; return; }
+  $('outputMethodCounts').textContent = `合計 ${Number(item.total_count || 0).toLocaleString()}件 / 抽出済み ${Number(item.exported_count || 0).toLocaleString()}件 / 対応未抽出 ${Number(item.unexported_count || 0).toLocaleString()}件 / 対象外 ${Number(item.unmatched_count || 0).toLocaleString()}件`;
+  const price = item.unit_price == null ? '単価未設定' : `単価 ${Number(item.unit_price).toLocaleString()}円`;
+  $('outputMethodRevenue').textContent = `${price} / ${item.revenue_month || '当月'}収益 ${item.unit_price == null ? '—（単価未設定）' : item.current_month_revenue == null ? '未取得' : `${Number(item.current_month_revenue).toLocaleString()}円`}（収益月は受信月基準） / 現在の方式：${methodLabel(item.output_method)}`;
+  $('settingsReassign').disabled = !['active','closing','correcting'].includes(item.campaign_status);
+  $('settingsReassignHelp').textContent = $('settingsReassign').disabled ? '終了済みの変更はCP連携の訂正手続きから行ってください。状態未取得の場合は再読み込みしてください。' : '';
+  $('settingsRecheckSection').classList.toggle('hidden',!isEraberuPay(item));
+  $('settingsRecheck').disabled = Boolean(balanceRechecks.get(item.product_id)?.running);
+  $('settingsRecheckProgress').textContent = balanceRechecks.get(item.product_id)?.message || '';
+}
 function openOutputMethod(productId) {
   const item = winningProduct(productId);
+  if (!item) return;
   state.outputProductId = productId;
-  $("outputMethodTitle").textContent = `${item?.display_name || item?.product_name || "当選カード"} の抽出方法`;
-  $("unitPriceInput").value = item?.unit_price === null || item?.unit_price === undefined ? "" : String(item.unit_price);
-  $("monthlyFolderLabel").textContent = winningMonthLabel(winningMonth(item || {}));
-  $("showInPermanent").checked = Boolean(item?.show_in_permanent);
-  $("outputMethodMessage").textContent = "";
-  $("outputMethodDialog").showModal();
+  $('outputMethodTitle').textContent = `${item.display_name || item.product_name} の設定`;
+  $('unitPriceInput').value = item.unit_price == null ? '' : String(item.unit_price);
+  $('monthlyFolderLabel').textContent = winningMonthLabel(winningMonth(item));
+  $('showInPermanent').checked = Boolean(item.show_in_permanent);
+  $('outputMethodMessage').textContent = '';
+  updateOutputSettings();
+  $('outputMethodDialog').showModal();
+}
+function openBalanceRecheckConfirmation() {
+  const item = winningProduct(state.outputProductId);
+  if (!isEraberuPay(item) || balanceRechecks.get(item.product_id)?.running) return;
+  recheckConfirmProductId = item.product_id;
+  $('balanceRecheckContext').textContent=productContext(item);
+  $('outputMethodDialog').close(); $('balanceRecheckDialog').showModal();
 }
 
 async function saveFolderVisibility() {
@@ -680,22 +843,28 @@ async function saveUnitPrice() {
   finally { $("saveUnitPrice").disabled = false; }
 }
 
+let outputMethodSaving = false;
 async function saveOutputMethod(method) {
-  if (!state.outputProductId) return;
-  $("outputMethodMessage").textContent = "保存中…";
+  if (!state.outputProductId || outputMethodSaving) return;
+  const productId = state.outputProductId;
+  outputMethodSaving = true;
+  document.querySelectorAll('[data-output-method]').forEach(button => button.disabled=true);
+  $('outputMethodMessage').textContent = '保存中…';
   try {
-    await api(`/api/products/${state.outputProductId}/output-method`, {
-      method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify({ output_method:method })
+    await api(`/api/products/${productId}/output-method`, {
+      method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({output_method:method})
     });
-    $("outputMethodDialog").close();
+    if (state.outputProductId === productId) $('outputMethodDialog').close();
     await loadWinningLists();
-  } catch (error) { $("outputMethodMessage").textContent = error.message; }
+  } catch (error) { if (state.outputProductId === productId) $('outputMethodMessage').textContent=error.message; }
+  finally { outputMethodSaving=false; document.querySelectorAll('[data-output-method]').forEach(button => button.disabled=false); }
 }
 
 function openExportAction(productId) {
   const item = winningProduct(productId);
   if (!item) return;
   if (item.output_method === "unset") return openOutputMethod(productId);
+  $("exportActionContext").textContent = productContext(item);
   state.exportProductId = productId;
   state.exportPaypayKind = null;
   $("exportActionTitle").textContent = `${item.display_name || item.product_name} を抽出`;
@@ -751,6 +920,7 @@ function batchText(batch) {
 }
 
 function showExportBatch(batch) {
+  $("exportBatchContext").textContent = productContext(winningProduct(batch.product_id));
   state.exportBatch = batch;
   if (batch.status === "pending") state.pendingExportBatch = batch;
   const kind = batch.paypay_kind === "url" ? " / PayPay URL" : batch.paypay_kind === "code" ? " / PayPayコード" : "";
@@ -839,6 +1009,7 @@ async function openSingleExport() {
 }
 
 async function loadNextExportItem(productId) {
+  $("exportItemContext").textContent = productContext(winningProduct(productId));
   $("exportItemRemaining").textContent = "確認中…";
   $("exportItemValue").textContent = "データを確認しています…";
   $("exportItemOpen").disabled = true; $("exportItemComplete").disabled = true;
@@ -897,10 +1068,20 @@ function campaignHtml(campaign) {
     : campaign.status === "closed"
       ? `<button class="secondary" data-correct-campaign="${esc(campaign.campaign_id)}">訂正</button>` : "";
   return `<article class="campaign-row status-${esc(campaign.status)}">
-    <div><strong>${esc(campaignLabel(campaign))}</strong><small>${esc(labels[campaign.status] || campaign.status)} / ${Number(count || 0).toLocaleString()}件</small></div>${action}
+    <div><strong>${esc(campaign.campaign_name)}</strong><small><span>開始 ${esc(campaign.lottery_start_date || '未取得')}</span><span>${esc(labels[campaign.status] || campaign.status)}</span><span>${campaign.status === 'closed' ? '確定当選' : '当選'}${Number(count || 0).toLocaleString()}件${campaign.status === 'closed' ? '' : '（URL・コード）'}</span></small></div><div class="campaign-actions">${action}</div>
   </article>`;
 }
 
+function renderCampaigns() {
+  const groups = {all:state.campaigns,active:state.campaigns.filter(c=>c.status==='active'),attention:state.campaigns.filter(c=>['closing','correcting'].includes(c.status)),closed:state.campaigns.filter(c=>c.status==='closed')};
+  const query = $('campaignSearch').value.trim().toLocaleLowerCase();
+  const shown = groups[campaignFilter].filter(c=>(c.campaign_name+' '+c.lottery_start_date).toLocaleLowerCase().includes(query));
+  const labels = {all:'すべて',active:'実施中',attention:'要対応',closed:'終了済み'};
+  document.querySelectorAll('[data-cp-filter]').forEach(b=>{b.textContent=`${labels[b.dataset.cpFilter]} ${groups[b.dataset.cpFilter].length}`;b.setAttribute('aria-pressed',String(b.dataset.cpFilter===campaignFilter));});
+  $('campaignMetric').textContent = `表示 ${shown.length}件／全体 ${state.campaigns.length}件（CP）`;
+  $('campaigns').innerHTML = shown.length ? shown.map(campaignHtml).join('') : '<div class="empty">該当するキャンペーンはありません</div>';
+  bindCampaignControls();
+}
 async function loadOutbox() {
   try {
     const status = await api("/api/ledger/outbox");
@@ -908,7 +1089,7 @@ async function loadOutbox() {
     $("ledgerSyncStatus").className = status.failed ? "sync-summary sync-error" : "sync-summary";
     $("ledgerSyncStatus").textContent = message;
     if (status.failed) {
-      $("ledgerSyncStatus").insertAdjacentHTML("beforeend", ' <button id="retryLedgerSync" class="secondary mini">再送</button>');
+      $("ledgerSyncStatus").insertAdjacentHTML("beforeend", ' <button id="retryLedgerSync" class="secondary">再送</button>');
       $("retryLedgerSync").onclick = async () => { await api("/api/ledger/outbox/retry", { method: "POST" }); await Promise.all([load(), loadOutbox()]); };
     }
   } catch (error) {
@@ -922,9 +1103,7 @@ async function loadCampaigns() {
   try {
     const result = await api("/api/ledger/campaigns");
     state.campaigns = result.campaigns || [];
-    $("campaigns").innerHTML = state.campaigns.length
-      ? state.campaigns.map(campaignHtml).join("")
-      : '<div class="empty">中央管理台帳にキャンペーンがありません</div>';
+    renderCampaigns();
     if (result.stale) $("ledgerSyncStatus").textContent = `キャッシュ表示中：${result.warning}`;
     bindCampaignControls();
     await loadOutbox();
@@ -1048,7 +1227,7 @@ async function confirmClose() {
     });
     if (!result.delivery?.ok) throw new Error("終了要求は保存されましたが中央台帳への送信に失敗しました。自動再送します。");
     $("closeDialog").close();
-    await loadCampaigns();
+    await Promise.all([loadCampaigns(),loadWinningLists()]);
   } catch (error) {
     $("closeMessage").textContent = error.message;
     $("closeConfirm").disabled = false;
@@ -1074,13 +1253,14 @@ async function confirmCorrection() {
     });
     if (!result.delivery?.ok) throw new Error("訂正要求は保存されましたが中央台帳への送信に失敗しました。自動再送します。");
     $("correctionDialog").close();
-    await loadCampaigns();
+    await Promise.all([loadCampaigns(),loadWinningLists()]);
   } catch (error) {
     $("correctionMessage").textContent = error.message;
   } finally { $("correctionConfirm").disabled = false; }
 }
 
 function bindDynamic() {
+  document.querySelectorAll('[data-edit-sorting-name]').forEach(button => button.onclick = () => openDisplayName('sorting',button.dataset.editSortingName));
   document.querySelectorAll("[data-card]").forEach(button => button.onclick = () => openItems(button.dataset.card, button.dataset.title));
   document.querySelectorAll("[data-assign-card]").forEach(button => button.onclick = () => openAssignment(button.dataset.assignCard, button.dataset.title));
   document.querySelectorAll("[data-pending]").forEach(bindPendingControls);
@@ -1097,13 +1277,7 @@ function syncPendingDialog(items) {
       bindPendingControls($("pendingDialogContent").querySelector("[data-pending]"));
     }
   }
-  if (!$("pendingDialog").open && items.length) {
-    const item = items[0];
-    state.dialogPendingId = item.id;
-    $("pendingDialogContent").innerHTML = pendingCard(item);
-    bindPendingControls($("pendingDialogContent").querySelector("[data-pending]"));
-    $("pendingDialog").showModal();
-  }
+
 }
 
 function bindPendingControls(card) {
@@ -1359,6 +1533,14 @@ async function loadItems() {
   } catch (error) { $("itemList").textContent = error.message; }
 }
 
+$('displayNameClose').onclick = () => $('displayNameDialog').close();
+$('displayNameInput').oninput = checkDisplayName;
+$('displayNameSave').onclick = saveDisplayAlias;
+$('editWinningName').onclick = () => openDisplayName('winning',state.outputProductId);
+window.addEventListener('resize',()=>{if($('displayNameDialog').open)checkDisplayName();});
+$('pendingBanner').onclick = () => {$('pendingSection').scrollIntoView({block:'start'});};
+$('campaignSearch').oninput = renderCampaigns;
+$('campaignFilters').onclick = event => {const b=event.target.closest('[data-cp-filter]');if(b){campaignFilter=b.dataset.cpFilter;renderCampaigns();}};
 $("receive").onclick = receive;
 $("clear").onclick = clearReceive;
 $("retry").onclick = retry;
@@ -1436,6 +1618,25 @@ $("trialResetConfirmation").oninput = event => {
 $("confirmTrialReset").onclick = resetTrialData;
 document.querySelectorAll("[data-tab]").forEach(button => button.onclick = () => switchTab(button.dataset.tab));
 $("refreshWinningLists")?.addEventListener("click", loadWinningLists);
+$('winningSearch').value = winningView.query;
+$('winningSearch').oninput = event => applyWinningView({query:event.target.value});
+$('winningRemaining').onclick = () => applyWinningView({status:winningView.status === 'remaining' ? 'all' : 'remaining'});
+$('winningAttention').onclick = () => applyWinningView({status:winningView.status === 'attention' ? 'all' : 'attention'});
+$('clearWinningFilters').onclick = () => applyWinningView({query:'',status:'all',place:'',month:'',permanent:false});
+$('retryWinningLoad').onclick = loadWinningLists;
+$('winningClosed').addEventListener('toggle', () => { if (!winningView.query.trim()) closedManuallyOpen=$('winningClosed').open; });
+$('openWinningFilters').onclick = openWinningFilters;
+$('winningFiltersClose').onclick = () => $('winningFiltersDialog').close();
+$('winningFiltersReset').onclick = () => { applyWinningView(DEFAULT_VIEW,true); $('winningFiltersDialog').close(); };
+$('winningFiltersForm').onsubmit = event => {
+  event.preventDefault();
+  applyWinningView({status:$('winningStatus').value,place:$('winningPlace').value,month:$('winningMonth').value,sort:$('winningSort').value,grouping:$('winningGrouping').value,permanent:$('winningPermanent').checked,showCampaign:$('winningShowCampaign').checked,relativeDates:$('winningRelativeDates').checked},true);
+  $('winningFiltersDialog').close();
+};
+$('settingsReassign').onclick = () => { const id=state.outputProductId; $('outputMethodDialog').close(); openReassignment(id); };
+$('settingsRecheck').onclick = openBalanceRecheckConfirmation;
+$('balanceRecheckClose').onclick = () => $('balanceRecheckDialog').close();
+$('balanceRecheckConfirm').onclick = () => { const id=recheckConfirmProductId; recheckConfirmProductId=null; $('balanceRecheckDialog').close(); if (id) void recheckWinningBalances(id); };
 $("undoLastExport").onclick = undoLastExport;
 $("outputMethodClose").onclick = () => $("outputMethodDialog").close();
 $("reassignClose").onclick = () => $("reassignDialog").close();

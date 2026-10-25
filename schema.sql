@@ -345,3 +345,11 @@ CREATE TABLE IF NOT EXISTS vault_login_nonces (
   expires_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_vault_login_nonces_expiry ON vault_login_nonces(expires_at);
+-- UI aliases only. No existing rows, identities, prices, or revenue are changed.
+CREATE TABLE IF NOT EXISTS ui_display_names (
+  scope TEXT NOT NULL CHECK(scope IN ('sorting','winning')),
+  target_id TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(scope,target_id)
+);

@@ -1471,3 +1471,43 @@ test("キャンペーン変更は古い確認・終了済みキャンペーン�
   assert.equal((await finalized.json()).code,"REVENUE_FINALIZED");
   assert.equal((await DB.prepare("SELECT COUNT(*) n FROM item_campaign_assignments WHERE product_id=?").bind(source.product_id).first()).n,1);
 });
+
+test('UI display aliases persist independently and never change product identity or totals; strict numeric unit-price contract',async t=>{
+  const {mf,analyzer,worker,DB}=await createRuntime();t.after(()=>cleanup(mf,analyzer));
+  await request(worker,'/api/ledger/campaigns');
+  const card=await createConfirmedCard(worker,'ui-alias-contract');
+  const assigned=await request(worker,`/api/cards/${card.id}/assign`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign_id:'campaign-active-a'})});
+  const productId=assigned.product_id;
+  const beforeMaster=await DB.prepare('SELECT * FROM product_master').all();
+  const beforeItems=await DB.prepare('SELECT * FROM items').all();
+  const beforeList=(await request(worker,'/api/winning-lists')).products;
+  const save=(scope,id,name,origin='https://vault.test')=>worker.fetch(`https://vault.test/api/display-names/${scope}/${id}`,{method:'POST',headers:{cookie:authCookies.get(worker),origin,'content-type':'application/json'},body:JSON.stringify({display_name:name})});
+  assert.equal((await worker.fetch('https://vault.test/api/display-names')).status,401);
+  assert.equal((await save('sorting',card.id,'茶','https://other.test')).status,403);
+  assert.equal((await save('sorting',card.id,'茶'.repeat(15))).status,400);
+  assert.equal((await save('sorting',card.id,'仕分け用の名前')).status,200);
+  assert.equal((await save('winning',productId,'当選用の名前')).status,200);
+  assert.equal((await save('winning',productId,'当選用の変更名')).status,200);
+  const names=(await request(worker,'/api/display-names')).names;
+  assert.equal(names.length,2);
+  assert.equal(names.find(row=>row.scope==='sorting').display_name,'仕分け用の名前');
+  assert.equal(names.find(row=>row.scope==='winning').display_name,'当選用の変更名');
+  assert.deepEqual((await request(worker,'/api/winning-lists')).products,beforeList);
+  assert.deepEqual((await DB.prepare('SELECT * FROM product_master').all()).results,beforeMaster.results);
+  assert.deepEqual((await DB.prepare('SELECT * FROM items').all()).results,beforeItems.results);
+  const price=value=>worker.fetch(`https://vault.test/api/products/${productId}/unit-price`,{method:'POST',headers:{cookie:authCookies.get(worker),'content-type':'application/json'},body:JSON.stringify({unit_price:value})});
+  for(const value of [null,'',' ',false,[],'80.0','1e3','0x10',-1,1.5]){
+    const response=await price(value);assert.equal(response.status,400);assert.equal((await response.json()).code,'INVALID_UNIT_PRICE');
+  }
+  assert.equal((await DB.prepare('SELECT unit_price FROM ledger_products WHERE product_id=?').bind(productId).first()).unit_price,null);
+  for(const value of [0,80]){
+    assert.equal((await price(value)).status,200);
+    assert.equal((await DB.prepare('SELECT unit_price FROM ledger_products WHERE product_id=?').bind(productId).first()).unit_price,value);
+    const row=await DB.prepare('SELECT winner_count,unit_price,amount FROM product_monthly_revenue WHERE product_id=?').bind(productId).first();
+    assert.equal(row.unit_price,value);assert.equal(row.amount,row.winner_count*value);
+  }
+  await DB.prepare("UPDATE product_monthly_revenue SET finalized_at='2026-10-25' WHERE product_id=?").bind(productId).run();
+  const finalized=await DB.prepare('SELECT * FROM product_monthly_revenue WHERE product_id=?').bind(productId).all();
+  assert.equal((await price(150)).status,200);
+  assert.deepEqual((await DB.prepare('SELECT * FROM product_monthly_revenue WHERE product_id=?').bind(productId).all()).results,finalized.results);
+});

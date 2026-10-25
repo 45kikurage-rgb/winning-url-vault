@@ -458,8 +458,8 @@ export async function retryOutbox(env) {
 }
 
 export async function setUnitPrice(env, productId, value) {
-  const unitPrice = Number(value);
-  if (!Number.isSafeInteger(unitPrice) || unitPrice < 0) {
+  const unitPrice = value;
+  if (typeof unitPrice !== 'number' || !Number.isSafeInteger(unitPrice) || unitPrice < 0) {
     throw new VaultLedgerError("単価は0円以上の整数で入力してください", 400, "INVALID_UNIT_PRICE");
   }
   const model = await env.DB.prepare("SELECT product_id FROM ledger_products WHERE product_id=?").bind(productId).first();
