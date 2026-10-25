@@ -1,0 +1,69 @@
+{
+  "source_sha": "2b89f97f42bdcc09b1e8cde69d0b6caf27ae8b92",
+  "base_version": "a74bb94b-1308-4b88-aa66-88df4818fe4d",
+  "live_price_coercion_confirmed": true,
+  "before_code_sha256": [
+    "39eac78b4ec9000a24fb9defbd0ae2a2a78465770b53b3bfcd15cff2703a0697"
+  ],
+  "stage": "published_verified",
+  "before_schema_sha256": "180fe5b1f18216bf65e255d979428b2ff2c24bf85c5d6543ffc69eda1304a028",
+  "real_device_test": "pending",
+  "existing_schema_unchanged": true,
+  "db_mutation": "CREATE TABLE IF NOT EXISTS ui_display_names only",
+  "version": "5cd6ded0-44ab-4b51-8776-f49e679ca279",
+  "traffic_percent": 100,
+  "runtime_settings_unchanged": true,
+  "cron_unchanged": true,
+  "publication_scope_unchanged": true,
+  "downloaded_worker_matches_build": true,
+  "after_code_sha256": [
+    "97e1be2534f31aca7567c71e224775af27d2c6b41adf85969a7d8e7c55bc62bc"
+  ],
+  "assets": [
+    {
+      "path": "/index.html",
+      "sha256": "c9f88692a843ef060a174efddfd842a2b45a747af87a3c18c2f98a4d7d742103"
+    },
+    {
+      "path": "/styles.css",
+      "sha256": "f6daa9df5cd7708055b1cce8bff35a192905a48d956232854ef79a9a32633404"
+    },
+    {
+      "path": "/app.js",
+      "sha256": "a8a8fa79b610ef874c0242b826e8cddb928b401011a1c2a23173fea0597850bd"
+    },
+    {
+      "path": "/sw.js",
+      "sha256": "691b4c4f16af84eb1c846ab1b9e244cb03035b487926eea3261c785ac315af92"
+    },
+    {
+      "path": "/display-name.js",
+      "sha256": "b6f91ad0bda27b72279c6a26302055a94159bcf3c03fa373447635b50f2bfda0"
+    },
+    {
+      "path": "/winning-view.js",
+      "sha256": "5d7b13b67ae8cb8c266367dbd1edfbcb8a652ec2ff42b80d5e121590234c41ec"
+    },
+    {
+      "path": "/provisional-ui.js",
+      "sha256": "4e9b22bd65aeed97adcb102c885f9177916f34e9227fcc76ccce13ed9cabdf69"
+    },
+    {
+      "path": "/device-login.js",
+      "sha256": "84aeb6dbd295536895575a62e3ce805a8f271a23b274b728c766a40d7c9b46e2"
+    },
+    {
+      "path": "/network-read.js",
+      "sha256": "922389b55ae4760377574d5aefc2ebd657e9527e587efdd3c13c181e91502455"
+    },
+    {
+      "path": "/share.js",
+      "sha256": "c02f9e37216b056af6a190fe814bdbe234cff122fa38400bd6081c112dc8faba"
+    },
+    {
+      "path": "/manifest.json",
+      "sha256": "e8f364a970f00b7affbf0f4b0e5049f67da48e4a33369c8e6f9491697357093b"
+    }
+  ],
+  "anonymous_guards_passed": true
+}
