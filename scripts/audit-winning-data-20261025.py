@@ -37,14 +37,15 @@ queries={
  FROM cards c JOIN product_master p ON p.id=c.product_id
  LEFT JOIN items i ON i.card_id=c.id AND i.status='active'
  LEFT JOIN item_campaign_assignments a ON a.item_id=i.id GROUP BY c.id ORDER BY c.id""",
-'integrity':"""SELECT 'assignment_without_item' check_name,COUNT(*) count FROM item_campaign_assignments a LEFT JOIN items i ON i.id=a.item_id WHERE i.id IS NULL
- UNION ALL SELECT 'assignment_without_product',COUNT(*) FROM item_campaign_assignments a LEFT JOIN ledger_products p ON p.product_id=a.product_id WHERE p.product_id IS NULL
- UNION ALL SELECT 'assignment_campaign_mismatch',COUNT(*) FROM item_campaign_assignments a JOIN ledger_products p ON p.product_id=a.product_id WHERE a.campaign_id<>p.campaign_id
- UNION ALL SELECT 'product_without_campaign',COUNT(*) FROM ledger_products p LEFT JOIN vault_campaigns c ON c.campaign_id=p.campaign_id WHERE c.campaign_id IS NULL
- UNION ALL SELECT 'item_card_mismatch',COUNT(*) FROM item_campaign_assignments a JOIN items i ON i.id=a.item_id JOIN ledger_products p ON p.product_id=a.product_id WHERE i.card_id IS NOT p.card_id
- UNION ALL SELECT 'active_item_without_card',COUNT(*) FROM items WHERE status='active' AND card_id IS NULL
- UNION ALL SELECT 'pending_groups',COUNT(*) FROM pending_confirmations
- UNION ALL SELECT 'unresolved_rows',COUNT(*) FROM unresolved_items""",
+'integrity':"""SELECT
+ (SELECT COUNT(*) FROM item_campaign_assignments a LEFT JOIN items i ON i.id=a.item_id WHERE i.id IS NULL) assignment_without_item,
+ (SELECT COUNT(*) FROM item_campaign_assignments a LEFT JOIN ledger_products p ON p.product_id=a.product_id WHERE p.product_id IS NULL) assignment_without_product,
+ (SELECT COUNT(*) FROM item_campaign_assignments a JOIN ledger_products p ON p.product_id=a.product_id WHERE a.campaign_id<>p.campaign_id) assignment_campaign_mismatch,
+ (SELECT COUNT(*) FROM ledger_products p LEFT JOIN vault_campaigns c ON c.campaign_id=p.campaign_id WHERE c.campaign_id IS NULL) product_without_campaign,
+ (SELECT COUNT(*) FROM item_campaign_assignments a JOIN items i ON i.id=a.item_id JOIN ledger_products p ON p.product_id=a.product_id WHERE i.card_id IS NOT p.card_id) item_card_mismatch,
+ (SELECT COUNT(*) FROM items WHERE status='active' AND card_id IS NULL) active_item_without_card,
+ (SELECT COUNT(*) FROM pending_confirmations) pending_groups,
+ (SELECT COUNT(*) FROM unresolved_items) unresolved_rows""",
 'outbox':"SELECT status,COUNT(*) count FROM ledger_outbox GROUP BY status",
 'revenue':"""SELECT month,COUNT(*) product_rows,SUM(winner_count) winner_count,
  SUM(CASE WHEN unit_price IS NULL THEN winner_count ELSE 0 END) unpriced_winner_count,
@@ -59,7 +60,8 @@ queries={
  GROUP BY a.product_id,i.value_type ORDER BY a.product_id,i.value_type"""
 }
 result={}
-for name,sql in queries.items():
+selected = {os.environ['AUDIT_QUERY']:queries[os.environ['AUDIT_QUERY']]} if os.environ.get('AUDIT_QUERY') else queries
+for name,sql in selected.items():
     assert sql.lstrip().upper().startswith('SELECT ') and ';' not in sql
     req=urllib.request.Request(f'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT}/d1/database/{DB}/query',data=json.dumps({'sql':sql}).encode(),headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json','User-Agent':'ARUNO-ReadOnly-Data-Audit'})
     try:
@@ -74,4 +76,4 @@ for name,sql in queries.items():
     row=payload['result'][0];assert row.get('success') is True,'D1_QUERY_FAILED'
     result[name]={'rows':row.get('results',[]),'rows_read':row.get('meta',{}).get('rows_read')}
 Path('audit-results.json').write_text(json.dumps(result,ensure_ascii=False,indent=2)+'\n')
-print('Read-only aggregate audit completed:',len(queries),'SELECT queries. Coupon values and auth data were not selected.')
+print('Read-only aggregate audit completed:',len(selected),'SELECT queries. Coupon values and auth data were not selected.')
