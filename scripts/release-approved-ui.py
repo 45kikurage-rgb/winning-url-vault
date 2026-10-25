@@ -59,6 +59,20 @@ def public(path):
     except urllib.error.HTTPError as e:return e.code,e.read()
 def write(report):OUT.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n')
 
+def deployment_config(settings,subdomain):
+    config=json.loads(Path('wrangler.jsonc').read_text())
+    require(settings.get('compatibility_date')==config['compatibility_date'],'COMPATIBILITY_DATE_MISMATCH')
+    for key in ('compatibility_flags','observability','limits','logpush','tail_consumers'):
+        if key in settings and settings[key] is not None:config[key]=settings[key]
+    # The API represents default placement as {}. Wrangler requires a mode if
+    # placement is present. usage_model is API metadata, not a Wrangler option.
+    placement=settings.get('placement') or {}
+    if placement.get('mode'):config['placement']=placement
+    config.pop('vars',None)
+    config['workers_dev']=subdomain['enabled']
+    config['preview_urls']=subdomain.get('previews_enabled',False)
+    return config
+
 def preflight():
     require(active()==BASE,'UNEXPECTED_PRODUCTION_VERSION')
     settings=get_settings()
@@ -67,16 +81,8 @@ def preflight():
     require(all(b['type'] in ('secret_text','plain_text','json') or b['name'] in known for b in bindings),'UNDECLARED_RUNTIME_BINDING')
     database=next((b for b in bindings if b['name']=='DB'),{})
     require((database.get('id') or database.get('database_id'))==DB,'DATABASE_MISMATCH')
-    config=json.loads(Path('wrangler.jsonc').read_text())
-    require(settings.get('compatibility_date')==config['compatibility_date'],'COMPATIBILITY_DATE_MISMATCH')
-    # Preserve all supported runtime settings, including sampling configuration.
-    for key in ('compatibility_flags','observability','limits','logpush','placement','tail_consumers','usage_model'):
-        if key in settings:config[key]=settings[key]
-    # Keep dashboard vars through --keep-vars; never echo their values via Wrangler.
-    config.pop('vars',None)
     subdomain=call(endpoint('/subdomain'))
-    config['workers_dev']=subdomain['enabled']
-    config['preview_urls']=subdomain.get('previews_enabled',False)
+    config=deployment_config(settings,subdomain)
     Path('.release-wrangler.json').write_text(json.dumps(config))
     hashes,source=code_hashes()
     require(b'const unitPrice = Number(value)' in source,'LIVE_PRICE_SOURCE_NOT_CONFIRMED')
