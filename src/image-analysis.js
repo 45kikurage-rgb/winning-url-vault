@@ -60,7 +60,7 @@ export function normalizeImageProposal(value) {
   let specification = clean(source.specification, 80);
   if (/^(?:ローソン|lawson)$/i.test(redeemPlace)) {
     const volume = proposalVolume(source, productName, displayName, specification);
-    if (volume && (!printedVolume(specification) || /無料|値引|クーポン|税込/.test(specification))) {
+    if (volume && (printedVolume(specification) !== volume || /無料|値引|クーポン|税込/.test(specification))) {
       specification = volume;
     } else if (!volume && /^(?:(?:税込)?\d+円[・、\s/]*)?\d+本無料(?:クーポン)?$/.test(specification)) {
       // A free-item count is not a size. Leave it blank for human verification.
