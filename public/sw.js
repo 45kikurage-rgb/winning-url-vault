@@ -1,10 +1,10 @@
-const CACHE = "winning-url-vault-pwa-20261025-settings-contents";
+const CACHE = "winning-url-vault-pwa-20261026-provisional-controls";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
-  "/styles.css?v=20261025-settings-contents",
-  "/app.js?v=20261025-settings-contents",
+  "/styles.css?v=20261026-provisional-controls",
+  "/app.js?v=20261026-provisional-controls",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
@@ -66,4 +66,5 @@ self.addEventListener("fetch", event => {
     }
   })());
 });
+
 

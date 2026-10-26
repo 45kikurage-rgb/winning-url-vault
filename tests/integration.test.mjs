@@ -1567,3 +1567,60 @@ test('商品単位の終了済み移動を永続化・解除でき、CP・元デ
  await DB.prepare("UPDATE vault_campaigns SET status='closed' WHERE campaign_id='campaign-active-a'").run();
  assert.equal((await move(false)).status,409);
 });
+
+
+test('暫定の個別削除は認証・対象箱・受信完了を検証し、再送・カード化から除外する', async t => {
+  const { mf, analyzer, worker, DB } = await createRuntime();
+  t.after(() => cleanup(mf, analyzer));
+  const headers = { 'content-type':'application/json', origin:'https://vault.test' };
+  const choose = mode => request(worker,'/api/receive-mode',{method:'POST',headers,body:JSON.stringify({mode})});
+  const input = { values:['DELETE-ME-123','KEEP-ME-456'],clientRequestId:crypto.randomUUID() };
+  const send = () => request(worker,'/api/receive',{method:'POST',headers,body:JSON.stringify(input)});
+  await choose('A'); await send();
+  const box = (await request(worker,'/api/provisional')).buckets.find(row=>row.slot==='A');
+  const item = box.items.find(row=>row.value==='DELETE-ME-123');
+  const path = `/api/provisional/A/items/${item.id}`;
+  const body = JSON.stringify({bucket_id:box.bucketId,confirmation:'暫定から削除'});
+  const remove = (url=path,extra={}) => worker.fetch('https://vault.test'+url,{
+    method:'DELETE',headers:{...headers,cookie:authCookies.get(worker),...extra},body
+  });
+  assert.equal((await remove(path,{cookie:''})).status,401);
+  assert.equal((await remove(path,{origin:'https://other.test'})).status,403);
+  assert.equal((await remove(path,{origin:''})).status,403);
+  const token = await request(worker,'/api/sending-tokens',{method:'POST',headers,body:JSON.stringify({deviceId:'03'})});
+  assert.equal((await remove(path,{authorization:'Bearer '+token.token})).status,403);
+  assert.equal((await remove(`/api/provisional/B/items/${item.id}`)).status,409);
+  const unconfirmed = await worker.fetch('https://vault.test'+path,{method:'DELETE',headers:{...headers,cookie:authCookies.get(worker)},body:JSON.stringify({bucket_id:box.bucketId})});
+  assert.equal(unconfirmed.status,400);
+  await DB.prepare("UPDATE provisional_receipts SET status='receiving' WHERE bucket_id=?").bind(box.bucketId).run();
+  assert.equal((await remove()).status,409);
+  await DB.prepare("UPDATE provisional_receipts SET status='stored' WHERE bucket_id=?").bind(box.bucketId).run();
+  assert.equal((await remove()).status,200);
+  assert.equal((await remove()).status,409);
+  const after = (await request(worker,'/api/provisional')).buckets.find(row=>row.slot==='A');
+  assert.equal(after.count,1); assert.equal(after.items.length,1); assert.equal(after.items[0].value,'KEEP-ME-456');
+  const row = await DB.prepare('SELECT status,canonical_value FROM items WHERE id=?').bind(item.id).first();
+  assert.equal(row.status,'provisional_deleted'); assert.ok(row.canonical_value);
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM audit_log WHERE item_id=? AND action='provisional_deleted'").bind(item.id).first()).n,1);
+  const retry = await send(); assert.equal(retry.stored,true);
+  assert.equal((await request(worker,'/api/provisional')).buckets.find(row=>row.slot==='A').count,1);
+  const newRequest = await request(worker,'/api/receive',{method:'POST',headers,body:JSON.stringify({values:input.values,clientRequestId:crypto.randomUUID()})});
+  assert.equal(newRequest.duplicate,2);
+  const published = await request(worker,'/api/provisional/A/publish',{method:'POST',headers,body:JSON.stringify({bucket_id:box.bucketId})});
+  assert.equal(published.count,1);
+  assert.equal((await remove()).status,409);
+  const cardItems = await request(worker,`/api/cards/${published.cardId}/items`);
+  assert.equal(cardItems.items.length,1); assert.equal(cardItems.items[0].value,'KEEP-ME-456');
+  const keepPath = `/api/provisional/A/items/${after.items[0].id}`;
+  assert.equal((await remove(keepPath)).status,409,'カード化後の古い一覧からは削除できない');
+  assert.equal((await DB.prepare('SELECT status FROM items WHERE id=?').bind(item.id).first()).status,'provisional_deleted');
+  await choose('normal');
+  const normal = await request(worker,'/api/receive',{method:'POST',headers,body:JSON.stringify({values:['DELETE-ME-123']})});
+  assert.equal(normal.duplicate,1);
+  await choose('B');
+  await request(worker,'/api/receive',{method:'POST',headers,body:JSON.stringify({values:['ONLY-ITEM-789']})});
+  const B=(await request(worker,'/api/provisional')).buckets.find(row=>row.slot==='B');
+  await request(worker,`/api/provisional/B/items/${B.items[0].id}`,{method:'DELETE',headers,body:JSON.stringify({bucket_id:B.bucketId,confirmation:'暫定から削除'})});
+  const empty=(await request(worker,'/api/provisional')).buckets.find(row=>row.slot==='B');
+  assert.equal(empty.count,0); assert.equal(empty.items.length,0);
+});

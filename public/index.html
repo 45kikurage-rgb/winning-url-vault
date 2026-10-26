@@ -11,7 +11,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icon-any-192.png">
   <link rel="icon" type="image/png" href="/icon-any-192.png">
-  <link rel="stylesheet" href="/styles.css?v=20261025-settings-contents">
+  <link rel="stylesheet" href="/styles.css?v=20261026-provisional-controls">
 </head>
 <body>
 <section id="loginScreen" class="login-screen">
@@ -108,11 +108,12 @@
   <section id="tabSorting" class="tab-page hidden">
   <p id="sortingMetric" class="page-metric">未仕分けを読み込み中…</p>
   <button id="pendingBanner" type="button" class="secondary hidden"></button>
-  <section class="panel provisional-sorting-panel">
-    <div class="row"><h2>暫定A〜E の解析結果</h2><button class="secondary" id="refreshProvisional" type="button">再読み込み</button></div>
+  <details id="provisionalSortingPanel" class="panel provisional-sorting-panel">
+    <summary>暫定A〜E の解析結果 <span id="provisionalTotalCount"></span></summary>
+    <button class="secondary" id="refreshProvisional" type="button">再読み込み</button>
     <p>暫定保管したコードやURLを表示します。別の保管箱は自動統合しません。</p><details><summary>説明</summary><p>期限が同じでも別の保管箱は自動統合しません。入力欄は空でもカード化できます。</p></details><p class="hidden"></p>
     <div id="provisionalSortingResults"><p>読み込み待ち</p></div>
-  </section>
+  </details>
   <section id="pendingSection" class="panel hidden">
     <h2>初回確認</h2>
     <p>初めての商品・期限だけ確認します。確定後のカードは自動再判定しません。</p>
@@ -359,7 +360,8 @@
   <p id="trialResetMessage" class="result" aria-live="polite"></p>
   <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
-<script type="module" src="/app.js?v=20261025-settings-contents"></script>
+<script type="module" src="/app.js?v=20261026-provisional-controls"></script>
 </body>
 </html>
+
 

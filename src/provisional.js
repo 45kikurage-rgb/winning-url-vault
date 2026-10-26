@@ -68,7 +68,7 @@ async function state(env) {
 export async function modeInfo(env) {
   const mode = (await state(env))?.mode || "normal";
   const rows = await env.DB.prepare(
-    "SELECT s.slot,s.active_bucket_id bucket_id,COUNT(e.item_id) count " +
+    "SELECT s.slot,s.active_bucket_id bucket_id,COUNT(i.id) count " +
     "FROM provisional_slots s LEFT JOIN provisional_entries e ON e.bucket_id=s.active_bucket_id " +
     "LEFT JOIN items i ON i.id=e.item_id AND i.status='provisional' " +
     "GROUP BY s.slot ORDER BY s.slot"
@@ -183,6 +183,35 @@ export async function provisionalOverview(env) {
   return { mode: current.mode, buckets };
 }
 
+// Keep the canonical value and receipt for durable duplicate detection. A deleted
+// provisional item is excluded from lists and publish, never physically erased.
+export async function deleteProvisionalItem(env, slot, bucketId, itemId) {
+  if (!slotValid(slot) || !/^[a-zA-Z0-9-]{3,80}$/.test(String(bucketId || "")) ||
+      !/^[0-9a-f-]{36}$/i.test(String(itemId || ""))) throw invalid("削除対象が不正です");
+  const tick = now();
+  const result = await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE items SET status='provisional_deleted',classified_at=? " +
+      "WHERE id=? AND status='provisional' AND card_id IS NULL AND pending_id IS NULL " +
+      "AND NOT EXISTS (SELECT 1 FROM item_campaign_assignments WHERE item_id=items.id) " +
+      "AND EXISTS (SELECT 1 FROM provisional_entries e " +
+      "JOIN provisional_receipts r ON r.id=e.receipt_id " +
+      "JOIN provisional_buckets b ON b.id=e.bucket_id " +
+      "JOIN provisional_slots s ON s.active_bucket_id=b.id " +
+      "WHERE e.item_id=items.id AND b.id=? AND s.slot=? AND b.status='open' AND r.status='stored')"
+    ).bind(tick, itemId, bucketId, slot),
+    env.DB.prepare(
+      "INSERT INTO audit_log(id,item_id,action,detail) " +
+      "SELECT ?,id,'provisional_deleted',? FROM items " +
+      "WHERE id=? AND status='provisional_deleted' AND classified_at=? " +
+      "AND NOT EXISTS (SELECT 1 FROM audit_log WHERE item_id=? AND action='provisional_deleted')"
+    ).bind(uid(), JSON.stringify({ slot, bucketId }), itemId, tick, itemId)
+  ]);
+  if (Number(result[0]?.meta?.changes || 0) !== 1)
+    throw invalid("対象が更新されています。最新の一覧を読み込んでください", 409, "PROVISIONAL_CHANGED");
+  return { ok: true, deleted: 1, itemId };
+}
+
 function dateValid(value) {
   if (!value) return true;
   if (!/^20\d{2}-\d{2}-\d{2}$/.test(value)) return false;
@@ -255,3 +284,4 @@ export async function publishBucket(env, slot, bucketId, form) {
   return { ok: true, slot, cardId: card.id, count: Number(count.n), priceRecorded: amount !== null,
     warning: amount !== null ? "入力金額は暫定メモです。収益単価はキャンペーンへ仕分け後に確認・設定してください。" : "" };
 }
+

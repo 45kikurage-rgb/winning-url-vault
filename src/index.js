@@ -5,7 +5,7 @@ import { summarizeAnalysisAmounts } from "./analysis-amount.js";
 import { usageOverview, recheckUsage, deleteUsed, markUsed } from './usage.js';
 import {IntakeError,sendingIdentity,limitSending,listSendingTokens,issueSendingToken,revokeSendingToken} from './sending-auth.js';
 import {readIntake,beginIntake,materializeIntake,dispatchIntake,recoverIntakes} from './intake.js';
-import { modeInfo, changeMode, maybeReceiveProvisional, provisionalOverview, publishBucket } from "./provisional.js";
+import { modeInfo, changeMode, maybeReceiveProvisional, provisionalOverview, publishBucket, deleteProvisionalItem } from "./provisional.js";
 import { lawsonLoginUrl } from './lawson-url.js';
 import { registeredDevice, deviceSessionValid, newDeviceCookie, enrollDevice, challengeDevice, verifyDevice } from './device-auth.js';
 import { analyzeCouponImage } from './image-analysis.js';
@@ -1012,6 +1012,14 @@ export default {
       }
       if (url.pathname === "/api/provisional" && request.method === "GET")
         return json({ok:true,...await provisionalOverview(env)});
+      const provisionalDelete = url.pathname.match(/^\/api\/provisional\/([A-E])\/items\/([0-9a-f-]{36})$/i);
+      if (provisionalDelete && request.method === "DELETE") {
+        if (request.headers.get("origin") !== url.origin)
+          return json({ok:false,error:"管理画面から操作してください",code:"SCOPE_DENIED"},403);
+        const body = await request.json().catch(()=>({}));
+        if (body.confirmation !== "暫定から削除") return json({ok:false,error:"削除確認が必要です"},400);
+        return json(await deleteProvisionalItem(env,provisionalDelete[1],body.bucket_id,provisionalDelete[2]));
+      }
       const publishSlot=url.pathname.match(/^\/api\/provisional\/([A-E])\/publish$/);
       if (publishSlot && request.method === "POST") {
         if (request.headers.get("origin") !== url.origin)
@@ -1229,4 +1237,5 @@ export default {
     })());
   }
 };
+
 
