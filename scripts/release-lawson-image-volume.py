@@ -99,7 +99,7 @@ def verify():
     require(call(endpoint('/subdomain'))==state['subdomain'],'PUBLICATION_SCOPE_CHANGED')
     require(schema()==state['before_schema'],'EXISTING_SCHEMA_CHANGED')
     version=active();require(version!=BASE,'VERSION_NOT_UPDATED')
-    hashes,source=code_hashes();require(b'const unitPrice = Number(value)' not in source and b'INVALID_LIST_STATE' in source and b'inspectUnexportedItems' in source and b'provisional_deleted' in source and b'deleteProvisionalItem' in source and b'coupon_title' in source and b'1\\xe6\\x9c\\xac\\xe7\\x84\\xa1\\xe6\\x96\\x99' in source,'NEW_WORKER_CODE_MISMATCH')
+    hashes,source=code_hashes();require(b'const unitPrice = Number(value)' not in source and b'INVALID_LIST_STATE' in source and b'inspectUnexportedItems' in source and b'provisional_deleted' in source and b'deleteProvisionalItem' in source and b'coupon_title' in source and b'printedVolume' in source,'NEW_WORKER_CODE_MISMATCH')
     require(len(hashes)==1,'UNEXPECTED_MODULE_COUNT')
     expected=hashlib.sha256(Path('release-bundle/index.js').read_bytes()).hexdigest()
     require(hashes==[expected],'DOWNLOADED_WORKER_DIFFERS_FROM_BUILD')
