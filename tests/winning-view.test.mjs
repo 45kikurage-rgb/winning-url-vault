@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_VIEW, normalizeView, attentionReasons, recommendedRank, orderWinningItems, expiryDays, expiryLabel, matchesWinningItem, selectWinningItems } from '../public/winning-view.js';
+import { DEFAULT_VIEW, normalizeView, attentionReasons, orderWinningItems, expiryDays, expiryLabel, matchesWinningItem, selectWinningItems } from '../public/winning-view.js';
 const product = (product_id, extra={}) => ({product_id,display_name:product_id,output_method:'normal',campaign_status:'active',unit_price:100,total_count:17,exported_count:12,unexported_count:0,unmatched_count:5,...extra});
 
 test('対応未抽出0と終了を分離し、APIの独立集計を変更しない',()=>{
@@ -27,16 +27,20 @@ test('要確認は理由を明示し、0円を単価未設定にしない',()=>{
   assert.ok(attentionReasons(product('a',{output_method:'unset'})).includes('方式未設定'));
   assert.ok(attentionReasons(product('a',{unit_price:null})).includes('単価未設定'));
 });
-test('初回は方式未設定→対応未抽出→要確認の0件→その他、作業後は位置固定',()=>{
-  const data=[product('done',{unmatched_count:0}),product('attention'),product('remaining',{unexported_count:8}),product('unset',{output_method:'unset'})];
+test('標準は対応未抽出が多い順、同数はキャンペーン抽選開始日が新しい順、作業後は位置固定',()=>{
+  const data=[
+    product('old-many',{unexported_count:8,lottery_start_date:'2026-04-01'}),
+    product('new-few',{unexported_count:3,lottery_start_date:'2026-10-01'}),
+    product('new-many',{unexported_count:8,lottery_start_date:'2026-10-01'}),
+    product('unset-zero',{output_method:'unset',unexported_count:0,unmatched_count:0,lottery_start_date:'2026-10-01'}),
+  ];
   const first=orderWinningItems(data).map(p=>p.product_id);
-  assert.deepEqual(first,['unset','remaining','attention','done']);
-  const updated=data.map(p=>p.product_id==='remaining'?{...p,unexported_count:0,unmatched_count:0}:p);
+  assert.deepEqual(first,['new-many','old-many','new-few','unset-zero']);
+  const updated=data.map(p=>p.product_id==='new-many'?{...p,unexported_count:0}:p);
   assert.deepEqual(orderWinningItems(updated,first).map(p=>p.product_id),first);
-  assert.deepEqual(orderWinningItems(updated,first,'recommended',true).map(p=>p.product_id),['unset','attention','done','remaining']);
-  const next=orderWinningItems([...updated,product('new',{output_method:'unset'})],first);
+  assert.deepEqual(orderWinningItems(updated,first,'recommended',true).map(p=>p.product_id),['old-many','new-few','new-many','unset-zero']);
+  const next=orderWinningItems([...updated,product('new',{output_method:'unset',unexported_count:1,lottery_start_date:'2026-10-02'})],first);
   assert.equal(next.at(-1).product_id,'new');
-  assert.equal(recommendedRank(product('x',{unexported_count:0})),2);
 });
 test('標準期限は日付のみ、不明を期限なしと断定しない。JSTの任意フィルター',()=>{
   const now=new Date('2026-10-24T16:00:00Z');
