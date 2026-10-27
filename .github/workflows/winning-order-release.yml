@@ -1,0 +1,73 @@
+name: Winning list order production release
+on:
+  push:
+    branches: [main]
+    paths: [docs/releases/winning-order-20261027.md]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: winning-url-vault-production
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Require successful CI for exactly this main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json, os, time, urllib.request
+          url = f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/ci.yml/runs?head_sha={os.environ['GITHUB_SHA']}"
+          for _ in range(36):
+              req = urllib.request.Request(url, headers={
+                  'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                  'Accept': 'application/vnd.github+json'})
+              runs = json.load(urllib.request.urlopen(req))['workflow_runs']
+              matching = [r for r in runs if r['head_sha'] == os.environ['GITHUB_SHA'] and r['event'] == 'push']
+              if matching and matching[0]['status'] == 'completed':
+                  assert matching[0]['conclusion'] == 'success', 'CI_FAILED'
+                  print('Exact main SHA CI succeeded')
+                  break
+              time.sleep(5)
+          else:
+              raise SystemExit('CI_TIMEOUT')
+          PY
+      - name: Verify winning list ordering regression tests
+        run: |
+          node --check public/winning-view.js
+          node --test tests/winning-view.test.mjs
+      - name: Build reviewed Worker without Cloudflare credentials
+        run: npx wrangler deploy --dry-run --outdir release-bundle
+      - name: Read-only production preflight and runtime snapshot
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-winning-order.py preflight
+      - name: Publish winning list order without D1 migrations
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy --config .release-wrangler.json --keep-vars --message "Winning list order $GITHUB_SHA"
+      - name: Verify production bytes, access guards and retained runtime
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-winning-order.py verify
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: winning-order-release-${{ github.run_id }}
+          path: winning-order-evidence.json
+          if-no-files-found: warn
+          retention-days: 14
