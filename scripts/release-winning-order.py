@@ -3,14 +3,14 @@
 Display-order change only. No database mutations, no migrations, no data
 copying, no account-wide operations, and no auth changes in this release.
 """
-import sys, os, json, re, hashlib, urllib.request, urllib.error, tempfile
+import sys, os, json, hashlib, urllib.request, urllib.error, tempfile
 from pathlib import Path
 from email.parser import BytesParser
 from email import policy
 
 ACCOUNT = '02100d2235d6f7d7f893b4217b58b902'
 WORKER = 'winning-url-vault'
-BASE = '535a212d-586f-41d6-ae38-1949c111d56e'
+BASE = '6953e0aa-32a2-4c8d-b9df-d7ef13c2f6c2'
 ROOT = 'https://winning-url-vault.45kikurage.workers.dev'
 API = 'https://api.cloudflare.com/client/v4/'
 STATE = Path(os.environ.get('RUNNER_TEMP', tempfile.gettempdir())) / 'vault-winning-order-private.json'
@@ -105,10 +105,7 @@ def write(report):
     OUT.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
 
 def load_wrangler_config():
-    text = Path('wrangler.jsonc').read_text()
-    text = re.sub(r'//[^\n]*', '', text)
-    text = re.sub(r',(\s*[}\]])', r'\1', text)
-    return json.loads(text)
+    return json.loads(Path('wrangler.jsonc').read_text())
 
 def deployment_config(settings, subdomain):
     config = load_wrangler_config()
@@ -128,6 +125,8 @@ def preflight():
     require(active() == BASE, 'UNEXPECTED_PRODUCTION_VERSION')
     settings = get_settings()
     db = db_id(settings)
+    config_db = next((d['database_id'] for d in load_wrangler_config()['d1_databases'] if d['binding'] == 'DB'), None)
+    require(db == config_db, 'DATABASE_BINDING_MISMATCH')
     subdomain = call(endpoint('/subdomain'))
     Path('.release-wrangler.json').write_text(json.dumps(deployment_config(settings, subdomain)))
     status, served = public('/winning-view.js')
@@ -163,6 +162,12 @@ def verify():
         require(served == Path('public', name).read_bytes(), 'STATIC_DIFFERS_' + name)
     status, served = public('/winning-view.js')
     require(b'campaignDate' in served and b'recommendedRank' not in served, 'NEW_ORDER_NOT_LIVE')
+    status, auth_body = public('/api/auth/status')
+    require(status == 200, 'AUTH_STATUS_UNAVAILABLE')
+    auth = json.loads(auth_body)
+    require(auth.get('authenticated') is False and auth.get('deviceOnlyMode') is True and auth.get('mode') == 'production', 'AUTH_STATE_CHANGED')
+    for path in ('/api/cards', '/api/winning-lists'):
+        require(public(path)[0] == 401, 'ANONYMOUS_GUARD_FAILED')
     write({'source_sha': os.environ['GITHUB_SHA'], 'base_version': BASE, 'new_version': version,
            'stage': 'verified', 'after_code_sha256': hashes, 'real_device_test': 'pending'})
     print('Verify passed; production bytes match the reviewed build.')
