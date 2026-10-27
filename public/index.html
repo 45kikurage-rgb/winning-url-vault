@@ -241,7 +241,7 @@
     <label>状態<select id="winningStatus"><option value="all">すべて</option><option value="remaining">未抽出あり</option><option value="attention">要確認</option><option value="zero">未抽出0件</option><option value="due">期限経過・7日以内</option></select></label>
     <p class="meta">要確認：方式未設定・対象外あり・単価未設定・終了確認待ち・訂正中・状態未取得。期限の警告ではありません。</p>
     <label>引換先<select id="winningPlace"></select></label><label>開始月<select id="winningMonth"></select></label>
-    <label>並び順<select id="winningSort"><option value="recommended">標準（方式未設定→未抽出あり→要確認の0件→その他）</option><option value="name">商品名</option><option value="remaining">未抽出が多い順</option><option value="expiry">期限順</option></select></label>
+    <label>並び順<select id="winningSort"><option value="recommended">標準（未抽出が多い順→キャンペーン抽選開始日が新しい順）</option><option value="name">商品名</option><option value="remaining">未抽出が多い順</option><option value="expiry">期限順</option></select></label>
     <p class="meta">抽出中は行の位置を保ちます。「適用」で現在の件数から並べ直します。</p>
     <label>一覧の区切り<select id="winningGrouping"><option value="flat">商品をまとめて表示</option><option value="month">開始月・常設フォルダ</option></select></label>
     <label class="check-label"><input id="winningPermanent" type="checkbox">常設のみ</label><label class="check-label"><input id="winningShowCampaign" type="checkbox">全商品にキャンペーン名を表示</label><label class="check-label"><input id="winningRelativeDates" type="checkbox">期限の残日数も表示</label>

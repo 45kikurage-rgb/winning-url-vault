@@ -23,16 +23,16 @@ export function attentionReasons(item) {
   else if (!['active','closed'].includes(item.campaign_status)) reasons.push('状態未取得');
   return reasons;
 }
-export function recommendedRank(item) {
-  if (!item.output_method || item.output_method === 'unset') return 0;
-  if (Number(item.unexported_count) > 0) return 1;
-  return attentionReasons(item).length ? 2 : 3;
+export function campaignDate(item) {
+  const value = String(item.lottery_start_date || '').slice(0,10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : '0000-00-00';
 }
 export function orderWinningItems(items, previousIds = [], sort = 'recommended', reset = false) {
   const previous = new Map(previousIds.map((id, index) => [id,index]));
   const name = item => String(item.display_name || item.product_name || '');
   const compare = (a,b) => {
-    if (sort === 'recommended') return recommendedRank(a) - recommendedRank(b);
+    if (sort === 'recommended') return Number(b.unexported_count || 0) - Number(a.unexported_count || 0)
+      || campaignDate(b).localeCompare(campaignDate(a));
     if (sort === 'remaining') return Number(b.unexported_count || 0) - Number(a.unexported_count || 0);
     if (sort === 'expiry') return (expiryDate(a) || '9999').localeCompare(expiryDate(b) || '9999');
     return 0;
