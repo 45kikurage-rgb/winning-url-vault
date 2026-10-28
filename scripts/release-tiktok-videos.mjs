@@ -58,19 +58,39 @@ if(process.argv[2]==='prepare') {
   const beforeSchema=await schema();
   assert.equal((await sql("SELECT name FROM sqlite_master WHERE name IN ('tiktok_video_links','tiktok_video_batches')")).length,0,'REVIEW_EXISTING_VIDEO_TABLES');
   assert.equal((await github('', 'GET')).private,true,'BACKUP_REPOSITORY_MUST_BE_PRIVATE');
-  let exported=await api('/d1/database/'+database+'/export',{output_format:'polling'});
-  for(let i=0;i<180 && exported.status!=='complete';i++){
-    assert(exported.at_bookmark,'D1_EXPORT_BOOKMARK_MISSING');
-    if(i%20===0)console.log('D1 export pending; status='+exported.status+'; bookmark retained.');
-    assert.notEqual(exported.status,'error','D1_EXPORT_FAILED');
-    await new Promise(r=>setTimeout(r,1000));
-    exported=await api('/d1/database/'+database+'/export',{output_format:'polling',current_bookmark:exported.at_bookmark});
+  // Export only records this feature can change, plus all referenced rows.
+  // Full-database export stalled; targeted SQL reads keep normal receiving available.
+  const records=await sql(`SELECT * FROM items i WHERE i.value LIKE 'https://lite.tiktok.com/t/%'
+    AND i.status IN ('received','queued','unresolved','pending_confirmation','active')
+    AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)`);
+  const candidates=records.filter(row=>isTikTokLongVideo(row.value));
+  const literal=value=>value===null?'NULL':typeof value==='number'?String(value):"'"+String(value).replaceAll("'","''")+"'";
+  const related=async(table,column,values)=>{
+    const result=[];const unique=[...new Set(values.filter(Boolean))];
+    for(let start=0;start<unique.length;start+=50){const group=unique.slice(start,start+50);result.push(...await sql('SELECT * FROM '+table+' WHERE '+column+' IN ('+group.map(()=>'?').join(',')+')',group));}
+    return result;
+  };
+  const cards=await related('cards','id',candidates.map(row=>row.card_id));
+  const snapshot={
+    product_master:await related('product_master','id',cards.map(row=>row.product_id)),
+    cards,
+    pending_confirmations:await related('pending_confirmations','id',candidates.map(row=>row.pending_id)),
+    items:candidates,
+    unresolved_items:await related('unresolved_items','item_id',candidates.map(row=>row.id))
+  };
+  let dump='PRAGMA foreign_keys=OFF;\n';
+  for(const type of ['table','index','trigger','view'])for(const definition of beforeSchema.filter(row=>row.type===type&&row.sql))dump+=definition.sql+';\n';
+  for(const [table,rows] of Object.entries(snapshot))for(const row of rows){
+    const columns=Object.keys(row);assert(columns.every(name=>/^[a-zA-Z0-9_]+$/.test(name)));
+    dump+='INSERT INTO '+table+' ('+columns.join(',')+') VALUES ('+columns.map(name=>literal(row[name])).join(',')+');\n';
   }
-  assert.equal(exported.status,'complete');
-  const exportUrl=new URL(exported.result.signed_url);assert.equal(exportUrl.protocol,'https:');
-  const response=await fetch(exportUrl,{redirect:'error',signal:AbortSignal.timeout(60000)});assert(response.ok);
-  const dump=await response.text();assert(dump.length>0 && dump.length<150*1024*1024);
+  const exported={at_bookmark:null};
   const restored=new DatabaseSync(':memory:');restored.exec(dump);
+  for(const [table,rows] of Object.entries(snapshot)){
+    const restoredRows=restored.prepare('SELECT * FROM '+table).all();
+    const byId=new Map(restoredRows.map(row=>[row.id||row.item_id,row]));
+    for(const row of rows)assert.equal(canonical(byId.get(row.id||row.item_id)),canonical(row),'TARGETED_RESTORE_ROW_MISMATCH');
+  }
   const check=restored.prepare('PRAGMA integrity_check').get();assert.equal(Object.values(check)[0],'ok');
   const tableCounts={};
   for(const table of restored.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'").all()){
@@ -81,7 +101,7 @@ if(process.argv[2]==='prepare') {
   assert.equal(restored.prepare('PRAGMA foreign_key_check').all().length,0);
   restored.close();
   const beforeCode=await getCode();
-  const privateState={before,beforeSchema,baseline,beforeCode,dump,bookmark:exported.at_bookmark,tableCounts};
+  const privateState={before,beforeSchema,baseline,beforeCode,dump,bookmark:exported.at_bookmark,tableCounts,backupScope:'candidate_video_records_and_references',snapshot};
   const raw=Buffer.from(JSON.stringify(privateState));
   const key=randomBytes(32),iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);
   const ciphertext=Buffer.concat([cipher.update(raw),cipher.final()]),tag=cipher.getAuthTag();
@@ -94,8 +114,8 @@ if(process.argv[2]==='prepare') {
   const saved=await github('/contents/backups/tiktok-videos/pre-release.enc.json','PUT',{branch,message:'Encrypted pre-release database backup [skip ci]',content:Buffer.from(envelope).toString('base64')});
   assert(saved.content?.sha && saved.commit?.sha,'BACKUP_COMMIT_MISSING');
   writeFileSync(statePath,JSON.stringify(privateState),{mode:0o600});
-  proof({source_sha:process.env.GITHUB_SHA,stage:'backup_restored_and_saved',base_version:baseline,backup_branch:branch,backup_commit:saved.commit.sha,backup_sha256:sha(envelope),restore_integrity:true,foreign_key_check:true,table_counts:tableCounts,bookmark:exported.at_bookmark,real_device_test:'pending'});
-  console.log('Full D1 export restored with integrity/FK checks; encrypted backup committed. No production mutation yet.');
+  proof({source_sha:process.env.GITHUB_SHA,stage:'backup_restored_and_saved',base_version:baseline,backup_branch:branch,backup_commit:saved.commit.sha,backup_sha256:sha(envelope),restore_integrity:true,foreign_key_check:true,backup_scope:'candidate_video_records_and_references',candidate_count:candidates.length,table_counts:tableCounts,bookmark:exported.at_bookmark,real_device_test:'pending'});
+  console.log('Candidate video records and referenced data restored exactly with integrity/FK checks; encrypted private backup committed. Production unchanged.');
 } else if(process.argv[2]==='add-tables') {
   const state=JSON.parse(readFileSync(statePath));assert.equal(await version(),baseline);
   const current=await runtime();assert.equal(canonical(current),canonical(state.before));
