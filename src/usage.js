@@ -6,7 +6,8 @@ export function usageVerdict(result, value) {
   return 'unknown';
 }
 
-const unassigned = `NOT EXISTS (SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=items.id)`;
+const unassigned = `NOT EXISTS (SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=items.id)
+  AND NOT EXISTS (SELECT 1 FROM tiktok_video_links v WHERE v.item_id=items.id)`;
 const eligible = `status IN ('active','pending_confirmation','unresolved') AND ${unassigned}`;
 
 export async function usageOverview(env) {
@@ -75,3 +76,4 @@ export async function deleteUsed(env, ids) {
   }
   return {ok:true,deleted};
 }
+

@@ -1,10 +1,10 @@
-const CACHE = "winning-url-vault-pwa-20261026-provisional-controls";
+const CACHE = "winning-url-vault-pwa-20261028-tiktok-videos";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
-  "/styles.css?v=20261026-provisional-controls",
-  "/app.js?v=20261026-provisional-controls",
+  "/styles.css?v=20261028-tiktok-videos",
+  "/app.js?v=20261028-tiktok-videos",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
@@ -12,6 +12,8 @@ const ASSETS = [
   "/assignment-prediction.js",
   "/winning-folders.js",
   "/winning-view.js",
+  "/tiktok-video.js",
+  "/tiktok-videos-ui.js",
   "/display-name.js",
   "/share.js",
   "/manifest.json",
@@ -66,5 +68,6 @@ self.addEventListener("fetch", event => {
     }
   })());
 });
+
 
 

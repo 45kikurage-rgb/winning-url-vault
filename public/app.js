@@ -1,3 +1,5 @@
+import { isTikTokVideoCard } from './tiktok-video.js';
+import { tikTokVideoCardHtml, initTikTokVideosUI } from './tiktok-videos-ui.js';
 import { nameUnits, validateDisplayName, nameFits } from './display-name.js';
 import { DEFAULT_VIEW, normalizeView, attentionReasons, orderWinningItems, expiryLabel, selectWinningItems } from './winning-view.js';
 import { currentWinningMonth, winningMonth, winningMonthLabel, groupWinningFolders } from './winning-folders.js';
@@ -550,7 +552,10 @@ function methodLabel(method) {
   return OUTPUT_METHOD_LABELS[method] || method || "未設定";
 }
 
+const tikTokVideoUI = initTikTokVideosUI({api,writeClipboard,refresh:loadWinningLists});
+
 function winningCardHtml(item) {
+  if (isTikTokVideoCard(item)) return tikTokVideoCardHtml(item);
   const id = esc(item.product_id), remaining = Number(item.unexported_count || 0);
   const unset = !item.output_method || item.output_method === 'unset';
   const recheck = balanceRechecks.get(item.product_id);
@@ -675,6 +680,8 @@ function winningProduct(productId) {
 }
 
 function bindWinningControls() {
+  document.querySelectorAll("[data-tiktok-copy]").forEach(button=>button.onclick=()=>tikTokVideoUI.open());
+  document.querySelectorAll("[data-tiktok-undo]").forEach(button=>button.onclick=()=>tikTokVideoUI.undo());
   document.querySelectorAll("[data-method-product]").forEach(button => button.onclick = () => openOutputMethod(button.dataset.methodProduct));
   document.querySelectorAll("[data-reassign-product]").forEach(button => button.onclick = () => openReassignment(button.dataset.reassignProduct));
   document.querySelectorAll("[data-export-product]").forEach(button => button.onclick = () => openExportAction(button.dataset.exportProduct));
@@ -1825,3 +1832,4 @@ async function deleteUsedCoupons() {
 $("recheckUsage").onclick=recheckSortingUsage;
 $("retrySortingLoad").onclick = () => { void refreshVisibleData(); };
 $("deleteUsed").onclick=deleteUsedCoupons;
+

@@ -1,3 +1,4 @@
+import { isTikTokVideoCard } from './tiktok-video.js';
 import { winningMonth } from './winning-folders.js';
 
 export const DEFAULT_VIEW = Object.freeze({ query:'', status:'all', place:'', month:'', permanent:false, sort:'recommended', grouping:'flat', showCampaign:false, relativeDates:false });
@@ -14,6 +15,7 @@ export function normalizeView(value = {}) {
     showCampaign:source.showCampaign === true, relativeDates:source.relativeDates === true };
 }
 export function attentionReasons(item) {
+  if (isTikTokVideoCard(item)) return [];
   const reasons = [];
   if (!item.output_method || item.output_method === 'unset') reasons.push('方式未設定');
   if (Number(item.unmatched_count) > 0) reasons.push(`対象外 ${Number(item.unmatched_count).toLocaleString()}件`);
@@ -57,7 +59,7 @@ export function expiryDays(item, now = new Date()) {
 }
 export function expiryLabel(item, relative = false, now = new Date()) {
   const date = expiryDate(item);
-  if (!date) return '期限未取得';
+  if (!date) return isTikTokVideoCard(item) ? '期限指定なし' : '期限未取得';
   if (!relative) return `期限 ${date}`;
   const days = expiryDays(item,now);
   return `期限 ${date}（${days < 0 ? '期限経過' : days === 0 ? '本日' : `あと${days}日`}）`;
@@ -85,3 +87,4 @@ export function selectWinningItems(items, view, now = new Date()) {
     closedRawRemaining:closed.reduce((sum,item)=>sum+Number(item.raw_unexported_count ?? item.unexported_count ?? 0),0),
     closedCount:closed.length, total:items.length, filteredCount:filtered.length };
 }
+

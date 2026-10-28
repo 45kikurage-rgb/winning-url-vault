@@ -1,3 +1,5 @@
+import { isTikTokLongVideo } from '../public/tiktok-video.js';
+import { classifyTikTokVideos, recoverTikTokVideos, tikTokVideoSummary, tikTokVideoRoute } from './tiktok-videos.js';
 import { isEraberuPay } from "../public/analysis-amount.js";
 import { listDisplayNames, saveDisplayName } from './display-names.js';
 import { balanceRecheckOverview, recheckBalances } from "./balance-recheck.js";
@@ -396,7 +398,7 @@ async function stageJobBatch(env, jobId, batchNo, scheduleFinalize = true) {
   ]);
 
   const staged = [];
-  const urls = items.filter(item => item.value_type === "url");
+  const urls = items.filter(item => item.value_type === "url" && !isTikTokLongVideo(item.value));
   let results = [];
   let analyzerError = "";
   if (urls.length) {
@@ -407,6 +409,10 @@ async function stageJobBatch(env, jobId, batchNo, scheduleFinalize = true) {
   const byLabel = new Map(results.filter(result => result?.label).map(result => [String(result.label), result]));
   let urlIndex = 0;
   for (const item of items) {
+    if (isTikTokLongVideo(item.value)) {
+      staged.push({item,result:{localTikTokVideo:true},error:""});
+      continue;
+    }
     if (["cokeon", "paypay", "quocardpay"].includes(item.value_type)) {
       staged.push({ item, result: { localCodeType: item.value_type }, error: "" });
       continue;
@@ -526,6 +532,10 @@ async function finalizeJob(env, jobId) {
     for (const row of rows.results || []) {
       let result = null;
       try { result = row.result_json ? JSON.parse(row.result_json) : null; } catch {}
+      if (isTikTokLongVideo(row.value)) {
+        await classifyTikTokVideos(env,[row]);
+        continue;
+      }
       if (result?.status === "used" && result.url === row.value) {
         await markUsed(env, row.item_id, result);
         continue;
@@ -652,7 +662,10 @@ async function retryUnresolved(env) {
     await env.DB.prepare("UPDATE unresolved_items SET retry_count=retry_count+1,updated_at=? WHERE item_id=?")
       .bind(nowSql(), item.id).run();
     const classified = classifyValue(item.value, env.COKEON_REDEEM_BASE_URL);
-    if (classified && ["cokeon", "paypay", "quocardpay"].includes(classified.type)) {
+    if (isTikTokLongVideo(item.value)) {
+      await classifyTikTokVideos(env,[item]);
+      output.push({id:item.id,status:"active"});
+    } else if (classified && ["cokeon", "paypay", "quocardpay"].includes(classified.type)) {
       const cardId = await ensureCodeCard(env, classified.type);
       output.push(await assignCard(env, item.id, cardId));
     } else if (classified?.type === "url") urlItems.push(item);
@@ -1058,7 +1071,12 @@ export default {
         return json({ ok: true, ...await getRevenueSummary(env) });
       }
       if (url.pathname === "/api/winning-lists" && request.method === "GET") {
-        return json({ ok: true, products: await listWinningLists(env) });
+        const products = await listWinningLists(env);
+        const videos = await tikTokVideoSummary(env);
+        return json({ ok: true, products: videos ? [...products,videos] : products });
+      }
+      if (url.pathname.startsWith('/api/tiktok-videos/')) {
+        return json({ok:true,...await tikTokVideoRoute(request,env,url.pathname)});
       }
       const contentsRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/unexported-items$/i);
       if (contentsRoute && request.method === 'GET') {
@@ -1232,10 +1250,12 @@ export default {
   async scheduled(_controller, env, ctx) {
     ctx.waitUntil((async () => {
       await recoverIntakes(env,processJobFully);
+      await recoverTikTokVideos(env);
       await processOutbox(env, { limit: 50 });
       await processRevenueOutbox(env, { limit: 20 });
     })());
   }
 };
+
 
 
