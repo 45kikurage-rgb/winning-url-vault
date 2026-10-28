@@ -57,8 +57,11 @@ if(process.argv[2]==='prepare') {
   writeFileSync('.release-wrangler.json',JSON.stringify(config));
   const beforeSchema=await schema();
   assert.equal((await sql("SELECT name FROM sqlite_master WHERE name IN ('tiktok_video_links','tiktok_video_batches')")).length,0,'REVIEW_EXISTING_VIDEO_TABLES');
+  assert.equal((await github('', 'GET')).private,true,'BACKUP_REPOSITORY_MUST_BE_PRIVATE');
   let exported=await api('/d1/database/'+database+'/export',{output_format:'polling'});
-  for(let i=0;i<40 && exported.status!=='complete';i++){
+  for(let i=0;i<180 && exported.status!=='complete';i++){
+    assert(exported.at_bookmark,'D1_EXPORT_BOOKMARK_MISSING');
+    if(i%20===0)console.log('D1 export pending; status='+exported.status+'; bookmark retained.');
     assert.notEqual(exported.status,'error','D1_EXPORT_FAILED');
     await new Promise(r=>setTimeout(r,1000));
     exported=await api('/d1/database/'+database+'/export',{output_format:'polling',current_bookmark:exported.at_bookmark});
