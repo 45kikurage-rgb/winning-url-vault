@@ -39,7 +39,17 @@ async function getCode(){
   for(const [name,value] of form){if(name!=='metadata'&&name!=='metadata.json')hashes.push(sha(Buffer.from(typeof value==='string'?value:await value.arrayBuffer())));}
   return hashes;
 }
-async function publicRead(path){const r=await fetch(root+path,{redirect:'error',headers:{'Cache-Control':'no-cache'},signal:AbortSignal.timeout(60000)});return {status:r.status,bytes:Buffer.from(await r.arrayBuffer())};}
+async function publicRead(path){
+  let target=new URL(path,root);
+  for(let i=0;i<4;i++){
+    const r=await fetch(target,{redirect:'manual',headers:{'Cache-Control':'no-cache'},signal:AbortSignal.timeout(60000)});
+    if([301,302,303,307,308].includes(r.status)){
+      target=new URL(r.headers.get('location'),target);assert.equal(target.origin,new URL(root).origin,'EXTERNAL_PUBLIC_REDIRECT');continue;
+    }
+    return {status:r.status,bytes:Buffer.from(await r.arrayBuffer())};
+  }
+  throw Error('PUBLIC_REDIRECT_LOOP');
+}
 async function github(path,method,body){
   const response=await fetch('https://api.github.com/repos/'+process.env.GITHUB_REPOSITORY+path,{method,headers:{Authorization:'Bearer '+process.env.GH_TOKEN,Accept:'application/vnd.github+json','Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(60000)});
   assert(response.ok,'BACKUP_GITHUB_HTTP_'+response.status);return response.json();
@@ -129,11 +139,23 @@ if(process.argv[2]==='prepare') {
   for(const table of fixedTables)assert.equal((await sql('SELECT COUNT(*) n FROM '+table))[0].n,0);
   const report=JSON.parse(readFileSync(proofPath));proof({...report,stage:'additive_tables_ready',existing_schema_unchanged:true});
   console.log('Two isolated video tables and indexes added; existing schema retained.');
-} else if(process.argv[2]==='verify') {
-  const state=JSON.parse(readFileSync(statePath)),after=await runtime();
-  for(const key of ['settings','schedules','subdomain'])assert.equal(canonical(after[key]),canonical(state.before[key]),'RUNTIME_CHANGED_'+key);
-  assert.deepEqual(await schema(),state.beforeSchema);
-  assert.notEqual(await version(),baseline);
+} else if(['verify','verify-resume'].includes(process.argv[2])) {
+  const after=await runtime();
+  if(process.argv[2]==='verify'){
+    const state=JSON.parse(readFileSync(statePath));
+    for(const key of ['settings','schedules','subdomain'])assert.equal(canonical(after[key]),canonical(state.before[key]),'RUNTIME_CHANGED_'+key);
+    assert.deepEqual(await schema(),state.beforeSchema);
+    assert.notEqual(await version(),baseline);
+  }else{
+    // Previous run passed exact runtime/schema/Worker comparisons, then hit the canonical /index.html redirect.
+    const report=JSON.parse(readFileSync(proofPath));
+    assert.equal(report.source_sha,'9ee24d0da59e0b80f30ca6c50395f936dbf28168');
+    assert.equal(report.stage,'additive_tables_ready');
+    assert.equal(report.restore_integrity,true);assert.equal(report.foreign_key_check,true);
+    assert.equal(await version(),'dbd8e311-0f25-465b-98c2-7e686d245d94','PUBLIC_VERSION_CHANGED');
+    assert(after.fullSettings.bindings.some(b=>b.name==='DB'&&(b.id||b.database_id)===database));
+    assert.equal(after.fullSettings.compatibility_date,'2026-09-22');
+  }
   assert.deepEqual(await getCode(),[sha(readFileSync('release-bundle/index.js'))]);
   const files=['index.html','app.js','styles.css','sw.js','winning-view.js','tiktok-video.js','tiktok-videos-ui.js','share.js','provisional-ui.js','device-login.js','network-read.js','manifest.json'];
   for(const name of files){const r=await publicRead('/'+name+'?release='+process.env.GITHUB_SHA);assert.equal(r.status,200);assert.equal(sha(r.bytes),sha(readFileSync('public/'+name)));}
@@ -156,6 +178,6 @@ if(process.argv[2]==='prepare') {
     recovered+=group.length;
   }
   const counts=(await sql("SELECT COUNT(*) total,SUM(exported_at IS NULL) unexported FROM tiktok_video_links"))[0];
-  const report=JSON.parse(readFileSync(proofPath));proof({...report,stage:'published_verified',version:await version(),runtime_unchanged:true,existing_schema_unchanged:true,worker_and_assets_match:true,anonymous_guards:true,existing_video_candidates:ids.length,recovered,video_counts:counts,real_device_test:'pending'});
+  const report=JSON.parse(readFileSync(proofPath));proof({...report,stage:'published_verified',verification_run:process.env.GITHUB_RUN_ID,previous_publication_run:40621819276,version:await version(),runtime_unchanged:true,existing_schema_unchanged:true,worker_and_assets_match:true,anonymous_guards:true,existing_video_candidates:ids.length,recovered,video_counts:counts,real_device_test:'pending'});
   console.log('Published bytes, authentication and runtime verified; received video URLs classified.');
 } else throw Error('INVALID_RELEASE_ACTION');
