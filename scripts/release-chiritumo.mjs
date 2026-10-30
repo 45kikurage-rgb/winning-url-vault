@@ -23,7 +23,7 @@ async function runtime(){const b='/workers/scripts/'+worker;const [fullSettings,
 async function publicRead(path,options={}){let u=new URL(path,root);for(let i=0;i<4;i++){const r=await fetch(u,{...options,redirect:'manual',signal:AbortSignal.timeout(60000)});if([301,302,303,307,308].includes(r.status)){u=new URL(r.headers.get('location'),u);assert.equal(u.origin,new URL(root).origin);continue}return {status:r.status,bytes:Buffer.from(await r.arrayBuffer())}}throw Error('REDIRECT_LOOP')}
 const tables=['product_master','cards','pending_confirmations','items'];
 async function readTable(table){
- assert(tables.includes(table));const output=[];let cursor=0;const fields=(await sql('PRAGMA table_info('+table+')')).map(c=>c.name);assert(fields.every(name=>/^[a-zA-Z0-9_]+$/.test(name)));const projection=fields.map(name=>['image_data_uri','analysis_json'].includes(name)?'NULL AS '+name:name).join(',');
+ assert(tables.includes(table));const output=[];let cursor=0;const fields=(await sql('PRAGMA table_info('+table+')')).map(c=>c.name);assert(fields.every(name=>/^[a-zA-Z0-9_]+$/.test(name)));const projection=fields.map(name=>name==='analysis_json'?"'{}' AS analysis_json":name==='image_data_uri'?'NULL AS image_data_uri':name).join(',');
  while(true){const rows=await sql(`SELECT rowid AS __backup_rowid,${projection} FROM ${table} WHERE rowid>? ORDER BY rowid LIMIT 200`,[cursor]);if(!rows.length)break;cursor=rows.at(-1).__backup_rowid;for(const row of rows){delete row.__backup_rowid;output.push(row)}await new Promise(resolve=>setTimeout(resolve,150))}
  console.log('Read checkpoint table',table,'rows',output.length);return output;
 }
