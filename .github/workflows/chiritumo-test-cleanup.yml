@@ -1,0 +1,55 @@
+name: Remove identified Chiritumo test coupon
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/chiritumo-test-cleanup.yml]
+permissions:
+  contents: read
+concurrency:
+  group: winning-url-vault-production
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Remove only CHIRITEST0714332 and verify other item identities
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {createHash} from 'node:crypto';
+          const account='02100d2235d6f7d7f893b4217b58b902',db='1d3e496f-3d8c-49d7-892a-d32ea5661e0c';
+          const id='15b4a8f2-a7d2-4587-b048-fc5f44c27f10';
+          const value='https://br.quocardpay.jp/card/CHIRITEST0714332';
+          const base='https://api.cloudflare.com/client/v4/accounts/'+account+'/d1/database/'+db;
+          async function api(path,body){
+            const r=await fetch(base+path,{method:body?'POST':'GET',headers:{Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(45000)});
+            assert(r.ok,'D1 HTTP '+r.status);const data=await r.json();assert(data.success,'D1 request failed');return data.result;
+          }
+          async function sql(query,params=[]){const r=await api('/query',{sql:query,params});assert(r.every(x=>x.success),'D1 SQL failed');return r[0].results||[];}
+          const guard="id=? AND value=? AND intake_source='chiritumo' AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments WHERE item_id=items.id) AND NOT EXISTS(SELECT 1 FROM tiktok_video_links WHERE item_id=items.id) AND NOT EXISTS(SELECT 1 FROM provisional_entries WHERE item_id=items.id)";
+          const target=await sql('SELECT id,value,intake_source,status FROM items WHERE id=?',[id]);
+          if(!target.length){
+            assert.equal((await sql('SELECT COUNT(*) n FROM items WHERE value=?',[value]))[0].n,0);
+            console.log(JSON.stringify({test_item_remaining:0,already_removed:true}));process.exit(0);
+          }
+          assert.equal(target.length,1);assert.equal(target[0].value,value);assert.equal(target[0].intake_source,'chiritumo');
+          assert.equal((await sql('SELECT COUNT(*) n FROM items WHERE '+guard,[id,value]))[0].n,1,'Test item was assigned or changed; refusing removal');
+          const jobs=await sql('SELECT state FROM analysis_job_items WHERE item_id=?',[id]);assert(jobs.every(r=>r.state==='done'),'Analysis still running; refusing removal');
+          const bookmark=await api('/time_travel/bookmark');assert(bookmark.bookmark,'Recovery point required');
+          const fingerprint=async()=> {
+            const r=await sql("SELECT intake_source,COUNT(*) n,GROUP_CONCAT(id,',') ids FROM (SELECT id,intake_source FROM items WHERE id<>? ORDER BY id) GROUP BY intake_source",[id]);
+            return r.map(x=>({source:x.intake_source,count:x.n,sha256:createHash('sha256').update(x.ids||'').digest('hex')}));
+          };
+          const before=await fingerprint();
+          for(const table of ['unresolved_items','analysis_staging','analysis_job_items']){
+            await sql('DELETE FROM '+table+' WHERE item_id IN (SELECT id FROM items WHERE '+guard+')',[id,value]);
+          }
+          const removed=await sql('DELETE FROM items WHERE '+guard+' RETURNING id',[id,value]);
+          assert.deepEqual(removed,[{id}],'Expected exactly one identified test item');
+          assert.equal((await sql('SELECT COUNT(*) n FROM items WHERE id=? OR value=?',[id,value]))[0].n,0);
+          const after=await fingerprint();assert.deepEqual(after,before,'Other item identities/counts changed during cleanup');
+          console.log(JSON.stringify({deleted_test_items:1,test_item_remaining:0,other_item_identities_preserved:true,other_sources:after.map(({source,count})=>({source,count})),application_deployed:false,recovery_bookmark:bookmark.bookmark}));
+          JS
