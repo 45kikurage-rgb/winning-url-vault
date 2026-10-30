@@ -398,3 +398,5 @@ body[data-active-tab="chiritumo"] #tabSorting{display:block}
 .main-tabs .tab-button{min-width:0}
 @media(max-width:380px){.main-tabs .tab-button{font-size:11px;padding-inline:3px}}
 #app .main-tabs{grid-template-columns:repeat(5,minmax(0,1fr));overflow-x:hidden}
+#app .main-tabs{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.35fr) minmax(0,1.65fr) minmax(0,1.2fr)}
+#app .main-tabs .tab-button{font-size:clamp(10px,3.2vw,14px);gap:.12rem}

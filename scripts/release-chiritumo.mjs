@@ -69,3 +69,18 @@ if(process.argv[2]==='prepare'){
  proof({...JSON.parse(readFileSync(proofPath)),stage:'published_verified',deployed_version:await version(),runtime_preserved:true,old_data_preserved:true,served_bytes_verified:true,write_only_intake:true,test_item_id:testRow.id,test_label:'CHIRITEST'+process.env.GITHUB_RUN_ID.slice(-7),test_source:testRow.intake_source,test_request_id:testId,repeat_safe:true,real_device_test:'pending'});
  console.log('Published bytes, retained settings/data, isolated Chiritumo intake and retry verified. Identified test row retained.');
 }
+
+if(process.argv[2]==='static-prepare'){
+ const before=await runtime(),baseline=await version(),config=JSON.parse(readFileSync('wrangler.jsonc','utf8'));
+ assert(before.fullSettings.bindings.some(b=>b.name==='DB'&&(b.id||b.database_id)===database));assert.equal(config.compatibility_date,before.fullSettings.compatibility_date);
+ for(const key of ['compatibility_flags','observability','limits','logpush','tail_consumers'])if(before.fullSettings[key]!=null)config[key]=before.fullSettings[key];
+ if(before.fullSettings.placement?.mode)config.placement=before.fullSettings.placement;
+ delete config.vars;config.workers_dev=before.subdomain.enabled;config.preview_urls=before.subdomain.previews_enabled||false;
+ writeFileSync('.release-wrangler.json',JSON.stringify(config));writeFileSync(statePath,JSON.stringify({before,baseline}),{mode:0o600});
+ console.log('Static layout release: production configuration retained; no database queries or mutations.');
+}else if(process.argv[2]==='static-verify'){
+ const state=JSON.parse(readFileSync(statePath)),after=await runtime();for(const key of ['settings','schedules','subdomain'])assert.equal(canonical(after[key]),canonical(state.before[key]));
+ for(const file of ['index.html','app.js','styles.css','sw.js']){const response=await publicRead('/'+file+'?release='+process.env.GITHUB_SHA);assert.equal(response.status,200);assert.equal(sha(response.bytes),sha(readFileSync('public/'+file)))}
+ proof({stage:'static_layout_published_verified',source_sha:process.env.GITHUB_SHA,deployed_version:await version(),runtime_preserved:true,served_bytes_verified:true,database_mutations:0});
+ console.log('Five-tab phone layout published; bytes and retained runtime configuration verified.');
+}
