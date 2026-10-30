@@ -8,7 +8,14 @@ const sha=x=>createHash('sha256').update(x).digest('hex');
 const canonical=x=>JSON.stringify(x,(_,v)=>v&&!Array.isArray(v)&&typeof v==='object'?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b))):v);
 const statePath='.private/chiritumo-state.json',proofPath='chiritumo-release-evidence.json';mkdirSync('.private',{recursive:true,mode:0o700});
 const proof=x=>writeFileSync(proofPath,JSON.stringify(x,null,2));
-async function api(path,body){const r=await fetch(prefix+path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN,'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(60000)});assert(r.ok,'CF_HTTP_'+r.status);const d=await r.json();assert(d.success,'CF_REQUEST_FAILED');return d.result}
+async function api(path,body){
+ const retrySafe=body===undefined||/^(?:SELECT|PRAGMA|CREATE TABLE IF NOT EXISTS|INSERT OR IGNORE)\b/i.test(String(body?.sql||'').trim());
+ for(let attempt=0;attempt<6;attempt++){
+  const r=await fetch(prefix+path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN,'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(60000)});
+  if(retrySafe&&[429,500,502,503,504].includes(r.status)&&attempt<5){const seconds=Math.min(30,Math.max(1,Number(r.headers.get('retry-after'))||2**attempt));await r.arrayBuffer();console.log('Read/check API temporarily limited; retrying after',seconds,'seconds');await new Promise(resolve=>setTimeout(resolve,seconds*1000));continue}
+  assert(r.ok,'CF_HTTP_'+r.status+' '+path);const d=await r.json();assert(d.success,'CF_REQUEST_FAILED');return d.result;
+ }
+}
 async function sql(query,params=[]){const data=await api('/d1/database/'+database+'/query',{sql:query,params});assert(data.every(r=>r.success),'D1_QUERY_FAILED');return data[0].results||[]}
 async function version(){const d=await api('/workers/scripts/'+worker+'/deployments');assert.equal(d.deployments[0].versions.length,1);assert.equal(d.deployments[0].versions[0].percentage,100);return d.deployments[0].versions[0].version_id}
 async function runtime(){const b='/workers/scripts/'+worker;const [fullSettings,schedules,subdomain]=await Promise.all(['settings','schedules','subdomain'].map(s=>api(b+'/'+s)));const {annotations,assets,main_module,etag,modified_on,created_on,...settings}=fullSettings;settings.bindings.sort((a,b)=>a.name.localeCompare(b.name));return {settings,fullSettings,schedules,subdomain}}
