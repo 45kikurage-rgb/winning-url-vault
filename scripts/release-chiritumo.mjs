@@ -12,7 +12,8 @@ async function api(path,body){
  const retrySafe=body===undefined||/^(?:SELECT|PRAGMA|CREATE TABLE IF NOT EXISTS|INSERT OR IGNORE)\b/i.test(String(body?.sql||'').trim());
  for(let attempt=0;attempt<6;attempt++){
   const r=await fetch(prefix+path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN,'Content-Type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(60000)});
-  if(retrySafe&&[429,500,502,503,504].includes(r.status)&&attempt<5){const seconds=Math.min(30,Math.max(1,Number(r.headers.get('retry-after'))||2**attempt));await r.arrayBuffer();console.log('Read/check API temporarily limited; retrying after',seconds,'seconds');await new Promise(resolve=>setTimeout(resolve,seconds*1000));continue}
+  if(retrySafe&&[429,500,502,503,504].includes(r.status)&&attempt<5){const seconds=Math.min(330,Math.max(1,Number(r.headers.get('retry-after'))||2**attempt));await r.arrayBuffer();console.log('Read/check API temporarily limited; retrying after',seconds,'seconds');await new Promise(resolve=>setTimeout(resolve,seconds*1000));continue}
+  if(!r.ok){const failure=await r.json().catch(()=>({}));console.log('Provider error codes',JSON.stringify((failure.errors||[]).map(e=>({code:e.code,message:String(e.message||'').slice(0,180)}))));}
   assert(r.ok,'CF_HTTP_'+r.status+' '+path);const d=await r.json();assert(d.success,'CF_REQUEST_FAILED');return d.result;
  }
 }
@@ -21,6 +22,11 @@ async function version(){const d=await api('/workers/scripts/'+worker+'/deployme
 async function runtime(){const b='/workers/scripts/'+worker;const [fullSettings,schedules,subdomain]=await Promise.all(['settings','schedules','subdomain'].map(s=>api(b+'/'+s)));const {annotations,assets,main_module,etag,modified_on,created_on,...settings}=fullSettings;settings.bindings.sort((a,b)=>a.name.localeCompare(b.name));return {settings,fullSettings,schedules,subdomain}}
 async function publicRead(path,options={}){let u=new URL(path,root);for(let i=0;i<4;i++){const r=await fetch(u,{...options,redirect:'manual',signal:AbortSignal.timeout(60000)});if([301,302,303,307,308].includes(r.status)){u=new URL(r.headers.get('location'),u);assert.equal(u.origin,new URL(root).origin);continue}return {status:r.status,bytes:Buffer.from(await r.arrayBuffer())}}throw Error('REDIRECT_LOOP')}
 const tables=['product_master','cards','pending_confirmations','items'];
+async function readTable(table){
+ assert(tables.includes(table));const output=[];let cursor=0;
+ while(true){const rows=await sql(`SELECT rowid AS __backup_rowid,* FROM ${table} WHERE rowid>? ORDER BY rowid LIMIT 8`,[cursor]);if(!rows.length)break;cursor=rows.at(-1).__backup_rowid;for(const row of rows){delete row.__backup_rowid;output.push(row)}await new Promise(resolve=>setTimeout(resolve,150))}
+ console.log('Read checkpoint table',table,'rows',output.length);return output;
+}
 if(process.argv[2]==='prepare'){
  const before=await runtime(),baseline=await version();assert(before.fullSettings.bindings.some(b=>b.name==='DB'&&(b.id||b.database_id)===database));
  assert.equal((await sql('PRAGMA table_info(items)')).filter(c=>c.name==='intake_source').length,0,'SOURCE_MIGRATION_ALREADY_PRESENT');
@@ -29,7 +35,7 @@ if(process.argv[2]==='prepare'){
  if(before.fullSettings.placement?.mode)config.placement=before.fullSettings.placement;
  delete config.vars;config.workers_dev=before.subdomain.enabled;config.preview_urls=before.subdomain.previews_enabled||false;writeFileSync('.release-wrangler.json',JSON.stringify(config));
  const snapshot={},definitions={};
- for(const table of tables){definitions[table]=(await sql('SELECT sql FROM sqlite_master WHERE type=? AND name=?',['table',table]))[0].sql;snapshot[table]=[];let cursor=0;while(true){const rows=await sql(`SELECT rowid AS __backup_rowid,* FROM ${table} WHERE rowid>? ORDER BY rowid LIMIT 1000`,[cursor]);if(!rows.length)break;cursor=rows.at(-1).__backup_rowid;for(const row of rows){delete row.__backup_rowid;snapshot[table].push(row)}}}
+ for(const table of tables){definitions[table]=(await sql('SELECT sql FROM sqlite_master WHERE type=? AND name=?',['table',table]))[0].sql;snapshot[table]=await readTable(table);}
  const restored=new DatabaseSync(':memory:');for(const table of tables)restored.exec(definitions[table]);
  for(const table of tables)for(const row of snapshot[table]){const keys=Object.keys(row);restored.prepare(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>row[k]))}
  for(const table of tables){const rows=restored.prepare(`SELECT * FROM ${table}`).all(),map=new Map(rows.map(r=>[r.id,r]));assert.equal(rows.length,snapshot[table].length);for(const row of snapshot[table])assert.equal(canonical(row),canonical(map.get(row.id)))}
@@ -51,7 +57,7 @@ if(process.argv[2]==='prepare'){
  proof({...JSON.parse(readFileSync(proofPath)),stage:'migrated'});
 }else if(process.argv[2]==='verify'){
  const state=JSON.parse(readFileSync(statePath)),after=await runtime();for(const key of ['settings','schedules','subdomain'])assert.equal(canonical(after[key]),canonical(state.before[key]),'RUNTIME_CHANGED_'+key);
- for(const table of tables){const rows=await sql('SELECT * FROM '+table),byId=new Map(rows.map(r=>[r.id,r]));for(const old of state.snapshot[table]){if(table==='pending_confirmations'&&!byId.has(old.id))continue;const row=byId.get(old.id);assert(row,'OLD_ROW_MISSING_'+table);for(const key of table==='items'?['id','value','canonical_value','received_at']:table==='cards'?['id','product_id','expires_on']:['id'])assert.equal(row[key],old[key],'EXISTING_DATA_CHANGED_'+table+'_'+key);if(['items','cards','pending_confirmations'].includes(table))assert.equal(row.intake_source,'arunomatic')}}
+ for(const table of tables){const rows=await readTable(table),byId=new Map(rows.map(r=>[r.id,r]));for(const old of state.snapshot[table]){if(table==='pending_confirmations'&&!byId.has(old.id))continue;const row=byId.get(old.id);assert(row,'OLD_ROW_MISSING_'+table);for(const key of table==='items'?['id','value','canonical_value','received_at']:table==='cards'?['id','product_id','expires_on']:['id'])assert.equal(row[key],old[key],'EXISTING_DATA_CHANGED_'+table+'_'+key);if(['items','cards','pending_confirmations'].includes(table))assert.equal(row.intake_source,'arunomatic')}}
  for(const file of ['index.html','app.js','styles.css','sw.js']){const response=await publicRead('/'+file+'?release='+process.env.GITHUB_SHA);assert.equal(response.status,200);assert.equal(sha(response.bytes),sha(readFileSync('public/'+file)))}
  assert.equal((await publicRead('/api/cards?intake_source=chiritumo')).status,401);assert.equal((await publicRead('/api/chiritumo/receive')).status,405);
  const testId=crypto.randomUUID(),testUrl='https://br.quocardpay.jp/card/CHIRITEST'+process.env.GITHUB_RUN_ID.slice(-7).padStart(7,'0');
