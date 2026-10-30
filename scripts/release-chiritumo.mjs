@@ -37,6 +37,9 @@ if(process.argv[2]==='prepare'){
  const state=JSON.parse(readFileSync(statePath));assert.equal(await version(),state.baseline);assert.equal(canonical((await runtime()).settings),canonical(state.before.settings));
  // Wrangler runs this one additive-column migration transactionally; no business rows are deleted.
  const {execFileSync}=await import('node:child_process');execFileSync('npx',['wrangler','d1','execute','winning-url-vault','--remote','--file=migrations/0013_chiritumo_intake.sql'],{stdio:'inherit'});
+ // Record this explicitly applied migration so later standard deploys do not apply it twice.
+ await sql("CREATE TABLE IF NOT EXISTS d1_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL)");
+ await sql("INSERT OR IGNORE INTO d1_migrations(name) VALUES (?)",['0013_chiritumo_intake.sql']);
  for(const table of ['items','cards','pending_confirmations'])assert((await sql('PRAGMA table_info('+table+')')).some(c=>c.name==='intake_source'));
  proof({...JSON.parse(readFileSync(proofPath)),stage:'migrated'});
 }else if(process.argv[2]==='verify'){
