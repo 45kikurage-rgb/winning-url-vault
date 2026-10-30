@@ -1,5 +1,10 @@
 PRAGMA foreign_keys = ON;
 
+CREATE TABLE IF NOT EXISTS chiritumo_history_hidden (
+  item_id TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+  hidden_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS product_master (
   id TEXT PRIMARY KEY,
   source_type TEXT NOT NULL DEFAULT 'url',

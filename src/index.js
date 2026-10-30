@@ -1,4 +1,5 @@
 import {intakeSource,requestIntakeSource} from './intake-source.js';
+import {chiritumoHistory} from './chiritumo-history.js';
 import { isTikTokLongVideo } from '../public/tiktok-video.js';
 import { classifyTikTokVideos, recoverTikTokVideos, tikTokVideoSummary, tikTokVideoRoute } from './tiktok-videos.js';
 import { isEraberuPay } from "../public/analysis-amount.js";
@@ -960,6 +961,7 @@ export default {
     const url = new URL(request.url);
     env={...env,DB:env.DB?.withSession?env.DB.withSession('first-primary'):env.DB};
     try {
+      if(url.pathname==='/api/chiritumo/history')return await chiritumoHistory(request,env);
       if(url.pathname==='/api/chiritumo/receive'){
         if(request.method!=='POST')return json({ok:false,error:'POSTのみ対応'},405);
         await limitSending(env,'chiritumo:'+await sha256(request.headers.get('cf-connecting-ip')||'relay'));
