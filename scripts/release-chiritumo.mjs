@@ -23,12 +23,13 @@ async function runtime(){const b='/workers/scripts/'+worker;const [fullSettings,
 async function publicRead(path,options={}){let u=new URL(path,root);for(let i=0;i<4;i++){const r=await fetch(u,{...options,redirect:'manual',signal:AbortSignal.timeout(60000)});if([301,302,303,307,308].includes(r.status)){u=new URL(r.headers.get('location'),u);assert.equal(u.origin,new URL(root).origin);continue}return {status:r.status,bytes:Buffer.from(await r.arrayBuffer())}}throw Error('REDIRECT_LOOP')}
 const tables=['product_master','cards','pending_confirmations','items'];
 async function readTable(table){
- assert(tables.includes(table));const output=[];let cursor=0;
- while(true){const rows=await sql(`SELECT rowid AS __backup_rowid,* FROM ${table} WHERE rowid>? ORDER BY rowid LIMIT 8`,[cursor]);if(!rows.length)break;cursor=rows.at(-1).__backup_rowid;for(const row of rows){delete row.__backup_rowid;output.push(row)}await new Promise(resolve=>setTimeout(resolve,150))}
+ assert(tables.includes(table));const output=[];let cursor=0;const fields=(await sql('PRAGMA table_info('+table+')')).map(c=>c.name);assert(fields.every(name=>/^[a-zA-Z0-9_]+$/.test(name)));const projection=fields.map(name=>['image_data_uri','analysis_json'].includes(name)?'NULL AS '+name:name).join(',');
+ while(true){const rows=await sql(`SELECT rowid AS __backup_rowid,${projection} FROM ${table} WHERE rowid>? ORDER BY rowid LIMIT 200`,[cursor]);if(!rows.length)break;cursor=rows.at(-1).__backup_rowid;for(const row of rows){delete row.__backup_rowid;output.push(row)}await new Promise(resolve=>setTimeout(resolve,150))}
  console.log('Read checkpoint table',table,'rows',output.length);return output;
 }
 if(process.argv[2]==='prepare'){
- const before=await runtime(),baseline=await version();assert(before.fullSettings.bindings.some(b=>b.name==='DB'&&(b.id||b.database_id)===database));
+ const before=await runtime(),baseline=await version();
+ const recovery=await api('/d1/database/'+database+'/time_travel/bookmark');assert(recovery.bookmark,'TIME_TRAVEL_BOOKMARK_REQUIRED');assert(before.fullSettings.bindings.some(b=>b.name==='DB'&&(b.id||b.database_id)===database));
  assert.equal((await sql('PRAGMA table_info(items)')).filter(c=>c.name==='intake_source').length,0,'SOURCE_MIGRATION_ALREADY_PRESENT');
  const config=JSON.parse(readFileSync('wrangler.jsonc','utf8'));assert.equal(config.compatibility_date,before.fullSettings.compatibility_date);
  for(const key of ['compatibility_flags','observability','limits','logpush','tail_consumers'])if(before.fullSettings[key]!=null)config[key]=before.fullSettings[key];
@@ -40,12 +41,12 @@ if(process.argv[2]==='prepare'){
  for(const table of tables)for(const row of snapshot[table]){const keys=Object.keys(row);restored.prepare(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(()=>'?').join(',')})`).run(...keys.map(k=>row[k]))}
  for(const table of tables){const rows=restored.prepare(`SELECT * FROM ${table}`).all(),map=new Map(rows.map(r=>[r.id,r]));assert.equal(rows.length,snapshot[table].length);for(const row of snapshot[table])assert.equal(canonical(row),canonical(map.get(row.id)))}
  assert.equal(Object.values(restored.prepare('PRAGMA integrity_check').get())[0],'ok');assert.equal(restored.prepare('PRAGMA foreign_key_check').all().length,0);restored.close();
- const privateState={before,baseline,snapshot,definitions};writeFileSync(statePath,JSON.stringify(privateState),{mode:0o600});
+ const privateState={before,baseline,snapshot,definitions,recovery};writeFileSync(statePath,JSON.stringify(privateState),{mode:0o600});
  const raw=Buffer.from(JSON.stringify(privateState)),key=randomBytes(32),iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv),ciphertext=Buffer.concat([cipher.update(raw),cipher.final()]),tag=cipher.getAuthTag();const decipher=createDecipheriv('aes-256-gcm',key,iv);decipher.setAuthTag(tag);assert.deepEqual(Buffer.concat([decipher.update(ciphertext),decipher.final()]),raw);
  const cert=new X509Certificate(readFileSync('scripts/backup-recipient.crt'));assert.equal(cert.fingerprint256.replaceAll(':','').toLowerCase(),'14e1d564276b56dfbc95888ce8108aafbdaf4da938f7d5b1ed0fb593f274ca3f');
  const envelope={schema:1,algorithm:'RSA-OAEP-SHA256+AES-256-GCM',encryptedKey:publicEncrypt({key:cert.publicKey,oaepHash:'sha256'},key).toString('base64'),iv:iv.toString('base64'),tag:tag.toString('base64'),ciphertext:ciphertext.toString('base64')};key.fill(0);writeFileSync('chiritumo-recovery.enc.json',JSON.stringify(envelope));
- proof({source_sha:process.env.GITHUB_SHA,stage:'prepared',baseline,backup_scope:tables,backup_restore_integrity:true,counts:Object.fromEntries(tables.map(t=>[t,snapshot[t].length])),encrypted_backup_sha256:sha(JSON.stringify(envelope))});
- console.log('Affected tables restored exactly with integrity and foreign-key checks. Encrypted recovery file ready. Production unchanged.');
+ proof({source_sha:process.env.GITHUB_SHA,stage:'prepared',baseline,backup_scope:'URL and intake metadata; full images/analysis retained by D1 Time Travel',tables,time_travel_bookmark:recovery.bookmark,backup_restore_integrity:true,counts:Object.fromEntries(tables.map(t=>[t,snapshot[t].length])),encrypted_backup_sha256:sha(JSON.stringify(envelope))});
+ console.log('Intake metadata restored with integrity/FK checks; full database recovery bookmark and encrypted metadata checkpoint ready. Production unchanged.');
 }else if(process.argv[2]==='migrate'){
  const state=JSON.parse(readFileSync(statePath));assert.equal(await version(),state.baseline);assert.equal(canonical((await runtime()).settings),canonical(state.before.settings));
  // Wrangler runs this one additive-column migration transactionally; no business rows are deleted.
