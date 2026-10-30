@@ -82,9 +82,10 @@ const state = { cursor: null, cardId: null, authenticated: false, cards: new Map
   campaigns: [], assignmentCardId: null, assignmentPreview: null, closeCampaignId: null,
   correctionCampaignId: null, winningLists: [], outputProductId: null, exportProductId: null, reassignProductId:null, reassignPreview:null,
   exportItem: null, exportBatch: null, pendingExportBatch: null, exportPaypayKind: null, deviceOnlyMode: false,
-  unresolvedItems: new Map(), imageAnalysisItemId: null, couponImageData: null, cardsLoaded: false };
+  sortingSource:'arunomatic',sortingLoadSequence:0, unresolvedItems: new Map(), imageAnalysisItemId: null, couponImageData: null, cardsLoaded: false };
 
 async function api(path, options) {
+  if(/^\/api\/(cards|pending|unresolved|usage)(?:[/?]|$)/.test(path))path+=(path.includes('?')?'&':'?')+'intake_source='+state.sortingSource;
   const response = await fetchReadWithRetry(fetch, path, options);
   const payload = await response.json().catch(() => ({}));
   if (response.status === 401 && path !== "/api/auth/login") showLogin(payload.error || "ログインが必要です");
@@ -106,17 +107,24 @@ function setMode(mode) {
 }
 
 function switchTab(name) {
-  const names = ["receive", "sorting", "winning", "campaigns"];
+  const names = ["receive", "sorting", "chiritumo", "winning", "campaigns"];
   const selected = names.includes(name) ? name : "receive";
   document.body.dataset.activeTab = selected;
-  for (const item of names) {
-    $(`tab${item[0].toUpperCase()}${item.slice(1)}`).classList.toggle("hidden", item !== selected);
+  if(['receive','sorting','chiritumo'].includes(selected)){
+    const source=selected==='chiritumo'?'chiritumo':'arunomatic';
+    if(source!==state.sortingSource){state.sortingSource=source;state.cardsLoaded=false;state.pendingItems=new Map();state.unresolvedItems=new Map();$('pendingSection').classList.add('hidden');$('pendingBanner').classList.add('hidden');$('unknownList').replaceChildren();renderUsedCount([]);$('cards').innerHTML='<div class="empty">読み込み中…</div>';if($('pendingDialog').open)$('pendingDialog').close();}
+    $('provisionalSortingPanel').classList.toggle('hidden',source==='chiritumo');
+  }
+  for (const item of names.filter(name=>name!=='chiritumo')) {
+    const visible=item===selected||(item==='sorting'&&selected==='chiritumo');
+    $(`tab${item[0].toUpperCase()}${item.slice(1)}`).classList.toggle('hidden',!visible);
   }
   document.querySelectorAll("[data-tab]").forEach(button => button.classList.toggle("active", button.dataset.tab === selected));
   try { localStorage.setItem("winning-url-vault:tab", selected); } catch {}
+  if(selected==='receive')void load();
   if (selected === "winning") loadWinningLists();
-  if (selected === "sorting") {
-    refreshProvisionalUI().catch(error => console.warn("provisional refresh", error));
+  if (["sorting","chiritumo"].includes(selected)) {
+    if(selected==='sorting')refreshProvisionalUI().catch(error => console.warn("provisional refresh", error));
     void load();
   }
 }
@@ -374,9 +382,11 @@ function renderSortingCards(cards) {
   port.scrollTop=scrollTop;
 }
 async function load() {
+  const source=state.sortingSource,sequence=++state.sortingLoadSequence;
   try {
     await loadDisplayNames();
     const [cards, pending, unresolved, usage] = await Promise.all([api("/api/cards"), api("/api/pending"), api("/api/unresolved"), api("/api/usage")]);
+    if(sequence!==state.sortingLoadSequence||source!==state.sortingSource)return;
     renderUsedCount(usage.usedIds);
     const total = cards.cards.reduce((sum, card) => sum + Number(card.count || 0), 0);
     $("total").textContent = `${total.toLocaleString()}件`;
@@ -386,8 +396,8 @@ async function load() {
     const sortingCards = cards.cards.filter(card => Number(card.unassigned_count || 0) > 0);
     state.cards = new Map(cards.cards.map(card => [card.id, card]));
     const sortingCount = sortingCards.reduce((sum, card) => sum + Number(card.unassigned_count || 0), 0);
-    tabDot('sortingTabCount',sortingCount,'仕分け');
-    $('sortingMetric').textContent = `未仕分け ${sortingCount.toLocaleString()}件（URL・コード）`;
+    tabDot(source==='chiritumo'?'chiritumoTabCount':'sortingTabCount',sortingCount,source==='chiritumo'?'チリツモ':'仕分け');
+    $('sortingMetric').textContent = `${source==='chiritumo'?'チリツモから受信：':''}未仕分け ${sortingCount.toLocaleString()}件（URL・コード）`;
     $('pendingBanner').classList.toggle('hidden',pending.items.length === 0);
     $('pendingBanner').textContent = `初回確認 ${pending.items.length.toLocaleString()}グループを確認する`;
     renderSortingCards(sortingCards);

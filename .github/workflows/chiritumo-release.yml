@@ -1,0 +1,57 @@
+name: Chiritumo source-separated intake release
+on:
+  push:
+    branches: [main]
+    paths: [docs/releases/chiritumo-intake-20261030.md]
+permissions:
+  contents: read
+concurrency:
+  group: winning-url-vault-production
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - name: Restore-check affected data and prepare encrypted recovery copy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/release-chiritumo.mjs prepare
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chiritumo-encrypted-recovery-${{ github.run_id }}
+          path: chiritumo-recovery.enc.json
+          retention-days: 90
+          if-no-files-found: error
+      - name: Add source columns and source-scoped unique indexes
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/release-chiritumo.mjs migrate
+      - name: Deploy existing Worker retaining production settings
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy --config .release-wrangler.json --keep-vars --message "Chiritumo intake $GITHUB_SHA"
+      - name: Verify production intake, retry safety and existing records
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/release-chiritumo.mjs verify
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chiritumo-release-evidence-${{ github.run_id }}
+          path: chiritumo-release-evidence.json
+          if-no-files-found: warn
+          retention-days: 90

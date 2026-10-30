@@ -1,3 +1,4 @@
+import {intakeSource,requestIntakeSource} from './intake-source.js';
 import { isTikTokLongVideo } from '../public/tiktok-video.js';
 import { classifyTikTokVideos, recoverTikTokVideos, tikTokVideoSummary, tikTokVideoRoute } from './tiktok-videos.js';
 import { isEraberuPay } from "../public/analysis-amount.js";
@@ -180,7 +181,7 @@ async function assignCard(env, itemId, cardId, analysis = null) {
   return { id: itemId, status: "active", cardId };
 }
 
-async function ensureCodeCard(env, type) {
+async function ensureCodeCard(env, type, source='arunomatic') {
   const model = codeCard(type);
   if (!model) return null;
   const requiredConditions = stableJson(model.conditions);
@@ -195,11 +196,11 @@ async function ensureCodeCard(env, type) {
         model.displayName, normalizeRedeemPlace(model.redeemPlace), normalizeSpecification(model.specification), requiredConditions, matchKey).run();
     product = await env.DB.prepare("SELECT id FROM product_master WHERE match_key=? AND confirmed=1").bind(matchKey).first();
   }
-  let card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on='' ").bind(product.id).first();
+  let card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on='' AND intake_source=? ").bind(product.id,source).first();
   if (!card) {
     const cardId = id();
-    await env.DB.prepare("INSERT OR IGNORE INTO cards (id,product_id,expires_on,locked) VALUES (?,?,'',1)").bind(cardId, product.id).run();
-    card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on='' ").bind(product.id).first();
+    await env.DB.prepare("INSERT OR IGNORE INTO cards (id,product_id,expires_on,locked,intake_source) VALUES (?,?,'',1,?)").bind(cardId, product.id,source).run();
+    card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on='' AND intake_source=? ").bind(product.id,source).first();
   }
   return card.id;
 }
@@ -231,6 +232,7 @@ async function analyzerRequest(env, values, options = {}) {
 }
 
 async function processAnalysis(env, item, result) {
+  const source=intakeSource(item.intake_source);
   if (result?.status === "used" && result.url === item.value) {
     await markUsed(env, item.id, result);
     return { id:item.id, status:"used" };
@@ -244,28 +246,28 @@ async function processAnalysis(env, item, result) {
   }
 
   const existing = await env.DB.prepare(`SELECT c.id card_id FROM product_master p
-    JOIN cards c ON c.product_id=p.id WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? LIMIT 1`)
-    .bind(normalized.matchKey, normalized.expiresOn).first();
+    JOIN cards c ON c.product_id=p.id WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? AND c.intake_source=? LIMIT 1`)
+    .bind(normalized.matchKey, normalized.expiresOn,source).first();
   if (existing) return assignCard(env, item.id, existing.card_id, result);
 
-  let pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=?")
-    .bind(normalized.matchKey, normalized.expiresOn).first();
+  let pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=? AND intake_source=?")
+    .bind(normalized.matchKey, normalized.expiresOn,source).first();
   let createdPending = false;
   if (!pending) {
     const pendingId = id();
     const inserted = await env.DB.prepare(`INSERT OR IGNORE INTO pending_confirmations
       (id,match_key,expires_on,source_type,raw_name,normalized_name,display_name,redeem_place,specification,
-       required_conditions,image_data_uri,analysis_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+       required_conditions,image_data_uri,analysis_json,intake_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .bind(pendingId, normalized.matchKey, normalized.expiresOn, "url", normalized.rawName, normalized.normalizedName,
         normalized.displayName, normalized.redeemPlace, normalized.specification, normalized.requiredConditions,
-        normalized.imageDataUri, analysisJson).run();
+        normalized.imageDataUri, analysisJson,source).run();
     createdPending = Number(inserted.meta?.changes || 0) > 0;
-    pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=?")
-      .bind(normalized.matchKey, normalized.expiresOn).first();
+    pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=? AND intake_source=?")
+      .bind(normalized.matchKey, normalized.expiresOn,source).first();
     if (!pending) {
       const confirmedDuringAnalysis = await env.DB.prepare(`SELECT c.id card_id FROM product_master p
-        JOIN cards c ON c.product_id=p.id WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? LIMIT 1`)
-        .bind(normalized.matchKey, normalized.expiresOn).first();
+        JOIN cards c ON c.product_id=p.id WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? AND c.intake_source=? LIMIT 1`)
+        .bind(normalized.matchKey, normalized.expiresOn,source).first();
       if (confirmedDuringAnalysis) return assignCard(env, item.id, confirmedDuringAnalysis.card_id, result);
       return markUnresolved(env, item, "確認候補グループを作成できませんでした");
     }
@@ -523,7 +525,7 @@ async function finalizeJob(env, jobId) {
   if (Number(locked.meta?.changes || 0) === 0) return false;
 
   try {
-    const rows = await env.DB.prepare(`SELECT s.item_id,s.result_json,s.error_reason,i.value,i.value_type
+    const rows = await env.DB.prepare(`SELECT s.item_id,s.result_json,s.error_reason,i.value,i.value_type,i.intake_source
       FROM analysis_staging s JOIN items i ON i.id=s.item_id
       WHERE s.job_id=? ORDER BY s.batch_no,s.item_id`).bind(jobId).all();
     const grouped = new Map();
@@ -541,8 +543,9 @@ async function finalizeJob(env, jobId) {
         continue;
       }
       if (result?.localCodeType) {
-        if (!codeGroups.has(result.localCodeType)) codeGroups.set(result.localCodeType, []);
-        codeGroups.get(result.localCodeType).push({ ...row, result });
+        const codeGroupKey=result.localCodeType+'|'+intakeSource(row.intake_source);
+        if (!codeGroups.has(codeGroupKey)) codeGroups.set(codeGroupKey, []);
+        codeGroups.get(codeGroupKey).push({ ...row, result });
         continue;
       }
       if (row.error_reason) {
@@ -554,43 +557,44 @@ async function finalizeJob(env, jobId) {
         unresolved.push({ ...row, result, reason: normalized.reason });
         continue;
       }
-      const groupKey = `${normalized.matchKey}\u001e${normalized.expiresOn}`;
+      const groupKey = `${normalized.matchKey}\u001e${normalized.expiresOn}\u001e${intakeSource(row.intake_source)}`;
       if (!grouped.has(groupKey)) grouped.set(groupKey, { normalized, entries: [] });
       grouped.get(groupKey).entries.push({ ...row, result });
     }
 
     for (const [type, entries] of codeGroups) {
-      const cardId = await ensureCodeCard(env, type);
+      const cardId = await ensureCodeCard(env, type.split('|')[0],intakeSource(entries[0].intake_source));
       await updateItemsAsGroup(env, entries, { status: "active", cardId });
     }
     if (unresolved.length) await updateItemsAsUnresolved(env, unresolved);
 
     for (const group of grouped.values()) {
       const { normalized, entries } = group;
+      const source=intakeSource(entries[0].intake_source);
       let card = await env.DB.prepare(`SELECT c.id FROM product_master p JOIN cards c ON c.product_id=p.id
-        WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? LIMIT 1`)
-        .bind(normalized.matchKey, normalized.expiresOn).first();
+        WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? AND c.intake_source=? LIMIT 1`)
+        .bind(normalized.matchKey, normalized.expiresOn,source).first();
       if (card) {
         await updateItemsAsGroup(env, entries, { status: "active", cardId: card.id });
         continue;
       }
 
-      let pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=?")
-        .bind(normalized.matchKey, normalized.expiresOn).first();
+      let pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=? AND intake_source=?")
+        .bind(normalized.matchKey, normalized.expiresOn,source).first();
       if (!pending) {
         const pendingId = id();
         await env.DB.prepare(`INSERT OR IGNORE INTO pending_confirmations
           (id,match_key,expires_on,source_type,raw_name,normalized_name,display_name,redeem_place,specification,
-           required_conditions,image_data_uri,analysis_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+           required_conditions,image_data_uri,analysis_json,intake_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
           .bind(pendingId, normalized.matchKey, normalized.expiresOn, "url", normalized.rawName,
             normalized.normalizedName, normalized.displayName, normalized.redeemPlace, normalized.specification,
-            normalized.requiredConditions, normalized.imageDataUri, JSON.stringify(entries[0].result)).run();
-        pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=?")
-          .bind(normalized.matchKey, normalized.expiresOn).first();
+            normalized.requiredConditions, normalized.imageDataUri, JSON.stringify(entries[0].result),source).run();
+        pending = await env.DB.prepare("SELECT id,image_data_uri FROM pending_confirmations WHERE match_key=? AND expires_on=? AND intake_source=?")
+          .bind(normalized.matchKey, normalized.expiresOn,source).first();
       }
       card = await env.DB.prepare(`SELECT c.id FROM product_master p JOIN cards c ON c.product_id=p.id
-        WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? LIMIT 1`)
-        .bind(normalized.matchKey, normalized.expiresOn).first();
+        WHERE p.match_key=? AND p.confirmed=1 AND c.expires_on=? AND c.intake_source=? LIMIT 1`)
+        .bind(normalized.matchKey, normalized.expiresOn,source).first();
       if (card) {
         await updateItemsAsGroup(env, entries, { status: "active", cardId: card.id });
         continue;
@@ -628,10 +632,12 @@ async function processJobFully(env, jobId, acceptedCount) {
 async function receive(request, env, identity = {ownerKey:'admin'}) {
   try {
     const input=await readIntake(request,Boolean(identity.deviceId));
+    input.intakeSource=intakeSource(identity.intakeSource);
+    if(input.intakeSource==='chiritumo'&&input.values.some(value=>!/^https?:\/\//i.test(value)))return json({ok:false,stored:false,error:'クーポンURLを入力してください'},400);
     // A replay of a normal receipt must stay normal after the administrator changes mode.
     const normalReceipt=await env.DB.prepare("SELECT job_id FROM intake_receipts WHERE owner_key=? AND client_request_id=?")
       .bind(identity.ownerKey,input.clientRequestId).first();
-    if (!normalReceipt) {
+    if (!normalReceipt && input.intakeSource!=='chiritumo') {
       const held=await maybeReceiveProvisional(env,input,identity.ownerKey);
       if (held) return json({...held,clientRequestId:input.clientRequestId},202);
     }
@@ -653,9 +659,9 @@ async function receive(request, env, identity = {ownerKey:'admin'}) {
   }
 }
 
-async function retryUnresolved(env) {
-  const rows = await env.DB.prepare(`SELECT i.id,i.value,i.canonical_value,i.value_type,u.retry_count
-    FROM unresolved_items u JOIN items i ON i.id=u.item_id ORDER BY u.updated_at ASC LIMIT 100`).all();
+async function retryUnresolved(env,source='arunomatic') {
+  const rows = await env.DB.prepare(`SELECT i.id,i.value,i.canonical_value,i.value_type,i.intake_source,u.retry_count
+    FROM unresolved_items u JOIN items i ON i.id=u.item_id WHERE i.intake_source=? ORDER BY u.updated_at ASC LIMIT 100`).bind(source).all();
   const items = rows.results || [];
   const urlItems = []; const output = [];
   for (const item of items) {
@@ -666,7 +672,7 @@ async function retryUnresolved(env) {
       await classifyTikTokVideos(env,[item]);
       output.push({id:item.id,status:"active"});
     } else if (classified && ["cokeon", "paypay", "quocardpay"].includes(classified.type)) {
-      const cardId = await ensureCodeCard(env, classified.type);
+      const cardId = await ensureCodeCard(env, classified.type,intakeSource(item.intake_source));
       output.push(await assignCard(env, item.id, cardId));
     } else if (classified?.type === "url") urlItems.push(item);
     else output.push(await markUnresolved(env, item, classified?.reason || "未対応の入力形式"));
@@ -726,12 +732,12 @@ async function confirmPending(request, env, pendingId) {
     await env.DB.prepare("UPDATE product_master SET display_name=?,updated_at=? WHERE id=?")
       .bind(displayName, nowSql(), product.id).run();
   }
-  let card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=?").bind(product.id, expiresOn).first();
+  let card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=? AND intake_source=?").bind(product.id, expiresOn,intakeSource(pending.intake_source)).first();
   if (!card) {
     const cardId = id();
-    await env.DB.prepare("INSERT OR IGNORE INTO cards (id,product_id,expires_on,locked) VALUES (?,?,?,1)")
-      .bind(cardId, product.id, expiresOn).run();
-    card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=?").bind(product.id, expiresOn).first();
+    await env.DB.prepare("INSERT OR IGNORE INTO cards (id,product_id,expires_on,locked,intake_source) VALUES (?,?,?,1,?)")
+      .bind(cardId, product.id, expiresOn,intakeSource(pending.intake_source)).run();
+    card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=? AND intake_source=?").bind(product.id, expiresOn,intakeSource(pending.intake_source)).first();
   }
   await env.DB.batch([
     env.DB.prepare(`DELETE FROM unresolved_items WHERE item_id IN
@@ -745,16 +751,16 @@ async function confirmPending(request, env, pendingId) {
   return json({ ok: true, action: body.action, productId: product.id, cardId: card.id, classified: items.length });
 }
 
-async function listCards(env) {
+async function listCards(env,source='arunomatic') {
   const rows = await env.DB.prepare(`SELECT c.id,c.expires_on,p.display_name,p.raw_name,p.redeem_place,p.specification,p.required_conditions,
-    COUNT(i.id) count FROM cards c JOIN product_master p ON p.id=c.product_id
+    c.intake_source,COUNT(i.id) count FROM cards c JOIN product_master p ON p.id=c.product_id
     LEFT JOIN items i ON i.card_id=c.id AND i.status='active'
-    GROUP BY c.id HAVING COUNT(i.id)>0
-    ORDER BY CASE WHEN c.expires_on='' THEN 1 ELSE 0 END,c.expires_on ASC,c.created_at DESC`).all();
+    WHERE c.intake_source=? GROUP BY c.id HAVING COUNT(i.id)>0
+    ORDER BY CASE WHEN c.expires_on='' THEN 1 ELSE 0 END,c.expires_on ASC,c.created_at DESC`).bind(source).all();
   return json({ ok: true, cards: await enrichCards(env, rows.results || []) });
 }
 
-async function listPending(env) {
+async function listPending(env,source='arunomatic') {
   const rows = await env.DB.prepare(`SELECT p.*,COUNT(i.id) item_count, json_group_array(
       CASE WHEN json_valid(i.analysis_json) THEN json_object(
         'status',json_extract(i.analysis_json,'$.status'),
@@ -765,7 +771,7 @@ async function listPending(env) {
         'balanceUnit',json_extract(i.analysis_json,'$.balanceUnit')) ELSE NULL END
     ) item_analyses FROM pending_confirmations p
     LEFT JOIN items i ON i.pending_id=p.id AND i.status='pending_confirmation'
-    GROUP BY p.id HAVING COUNT(i.id)>0 ORDER BY p.created_at ASC LIMIT 100`).all();
+    WHERE p.intake_source=? GROUP BY p.id HAVING COUNT(i.id)>0 ORDER BY p.created_at ASC LIMIT 100`).bind(source).all();
   const items = (rows.results || []).map(({ item_analyses, ...item }) => {
     let conditions;
     try { conditions = JSON.parse(item.required_conditions); } catch { conditions = {}; }
@@ -802,14 +808,14 @@ async function reanalyzePending(env, pendingId) {
   return json({ ok: true, pendingId, imageUpdated: true });
 }
 
-async function listUnresolved(env) {
+async function listUnresolved(env,source='arunomatic') {
   const rows = await env.DB.prepare(`SELECT i.id,i.value,i.received_at,u.reason,u.pattern_key,u.retry_count,u.last_error
-    FROM unresolved_items u JOIN items i ON i.id=u.item_id ORDER BY i.received_at ASC LIMIT 500`).all();
+    FROM unresolved_items u JOIN items i ON i.id=u.item_id WHERE i.intake_source=? ORDER BY i.received_at ASC LIMIT 500`).bind(source).all();
   return json({ ok: true, items: (rows.results || []).map(item => ({ ...item, openUrl: lawsonLoginUrl(item.value) || item.value })) });
 }
 
 async function unresolvedItem(env, itemId) {
-  return env.DB.prepare(`SELECT i.id,i.value,i.value_type,i.status,u.reason
+  return env.DB.prepare(`SELECT i.id,i.value,i.value_type,i.status,i.intake_source,u.reason
     FROM items i JOIN unresolved_items u ON u.item_id=i.id
     WHERE i.id=? AND i.status='unresolved'`).bind(itemId).first();
 }
@@ -857,12 +863,12 @@ async function confirmUnresolvedImage(request, env, itemId) {
     await env.DB.prepare("UPDATE product_master SET display_name=?,updated_at=? WHERE id=?")
       .bind(displayName, nowSql(), product.id).run();
   }
-  let card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=?").bind(product.id, expiresOn).first();
+  let card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=? AND intake_source=?").bind(product.id, expiresOn,intakeSource(item.intake_source)).first();
   if (!card) {
     const cardId = id();
-    await env.DB.prepare("INSERT OR IGNORE INTO cards (id,product_id,expires_on,locked) VALUES (?,?,?,1)")
-      .bind(cardId, product.id, expiresOn).run();
-    card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=?").bind(product.id, expiresOn).first();
+    await env.DB.prepare("INSERT OR IGNORE INTO cards (id,product_id,expires_on,locked,intake_source) VALUES (?,?,?,1,?)")
+      .bind(cardId, product.id, expiresOn,intakeSource(item.intake_source)).run();
+    card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=? AND intake_source=?").bind(product.id, expiresOn,intakeSource(item.intake_source)).first();
   }
   const analysis = {
     status: "ok", site: "image", kind: "coupon", product: rawName, redeemPlace,
@@ -954,6 +960,11 @@ export default {
     const url = new URL(request.url);
     env={...env,DB:env.DB?.withSession?env.DB.withSession('first-primary'):env.DB};
     try {
+      if(url.pathname==='/api/chiritumo/receive'){
+        if(request.method!=='POST')return json({ok:false,error:'POSTのみ対応'},405);
+        await limitSending(env,'chiritumo:'+await sha256(request.headers.get('cf-connecting-ip')||'relay'));
+        return await receive(request,env,{ownerKey:'site:chiritumo',intakeSource:'chiritumo'});
+      }
       // An explicit bearer token can never fall back to an administrator cookie.
       if(url.pathname.startsWith('/api/') && request.headers.has('authorization')) {
         const identity=await sendingIdentity(request,env);
@@ -1053,8 +1064,8 @@ export default {
         const body = await request.json().catch(()=>({}));
         return json({ok:true,...await saveDisplayName(env,displayNameRoute[1],displayNameRoute[2],body.display_name)});
       }
-      if (url.pathname === "/api/cards" && request.method === "GET") return listCards(env);
-      if (url.pathname === "/api/usage" && request.method === "GET") return json({ok:true,...await usageOverview(env)});
+      if (url.pathname === "/api/cards" && request.method === "GET") return listCards(env,requestIntakeSource(url));
+      if (url.pathname === "/api/usage" && request.method === "GET") return json({ok:true,...await usageOverview(env,requestIntakeSource(url))});
       if (url.pathname === "/api/usage/recheck" && request.method === "POST") {
         const body=await request.json().catch(()=>({}));
         const result=await recheckUsage(env,body.ids,analyzerRequest);
@@ -1202,9 +1213,9 @@ export default {
         const body = await request.json().catch(() => ({}));
         return json({ ok: true, ...await startCorrection(env, correctionRoute[1], body.reason) });
       }
-      if (url.pathname === "/api/pending" && request.method === "GET") return listPending(env);
-      if (url.pathname === "/api/unresolved" && request.method === "GET") return listUnresolved(env);
-      if (url.pathname === "/api/unresolved/retry" && request.method === "POST") return retryUnresolved(env);
+      if (url.pathname === "/api/pending" && request.method === "GET") return listPending(env,requestIntakeSource(url));
+      if (url.pathname === "/api/unresolved" && request.method === "GET") return listUnresolved(env,requestIntakeSource(url));
+      if (url.pathname === "/api/unresolved/retry" && request.method === "POST") return retryUnresolved(env,requestIntakeSource(url));
       const unresolvedImageAnalyze = url.pathname.match(/^\/api\/unresolved\/([0-9a-f-]+)\/image-analyze$/i);
       if (unresolvedImageAnalyze && request.method === "POST") return analyzeUnresolvedImage(request, env, unresolvedImageAnalyze[1]);
       const unresolvedImageConfirm = url.pathname.match(/^\/api\/unresolved\/([0-9a-f-]+)\/image-confirm$/i);
