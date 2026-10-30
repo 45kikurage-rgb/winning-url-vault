@@ -7,7 +7,7 @@ permissions:
   contents: read
 concurrency:
   group: winning-url-vault-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   release:
     runs-on: ubuntu-latest
