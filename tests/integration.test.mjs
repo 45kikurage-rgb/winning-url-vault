@@ -1624,3 +1624,35 @@ test('暫定の個別削除は認証・対象箱・受信完了を検証し、�
   const empty=(await request(worker,'/api/provisional')).buckets.find(row=>row.slot==='B');
   assert.equal(empty.count,0); assert.equal(empty.items.length,0);
 });
+
+test('Chiritumo intake retains source and separates same-product cards, pending and unknowns from ARUNOMATIC',async t=>{
+ const {mf,analyzer,worker,DB}=await createRuntime();t.after(()=>cleanup(mf,analyzer));
+ const post=text=>({method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text,clientRequestId:crypto.randomUUID()})});
+ const chSend=async text=>{const r=await worker.fetch('https://vault.test/api/chiritumo/receive',post(text));assert.equal(r.status,202);return r.json()};
+ await request(worker,'/api/receive',post('https://br.quocardpay.jp/card/ARUNOMATIC000001'));
+ const sent=await chSend('https://br.quocardpay.jp/card/CHIRITUMO0000001');assert.equal(sent.stored,true);
+ const regular=(await request(worker,'/api/cards')).cards;
+ const ch=(await request(worker,'/api/cards?intake_source=chiritumo')).cards;
+ assert.equal(regular.length,1);assert.equal(ch.length,1);assert.equal(regular[0].count,1);assert.equal(ch[0].count,1);
+ assert.notEqual(regular[0].id,ch[0].id);assert.equal(ch[0].intake_source,'chiritumo');
+ const records=(await DB.prepare('SELECT intake_source FROM items ORDER BY intake_source').all()).results;
+ assert.deepEqual(records.map(r=>r.intake_source),['arunomatic','chiritumo']);
+ // Same canonical URL keeps its original source and never duplicates/moves existing data.
+ const duplicate=await chSend('https://br.quocardpay.jp/card/ARUNOMATIC000001');assert.equal(duplicate.received,0);assert.equal(duplicate.existing,1);
+ // Both sources can contain the same not-yet-confirmed product without a shared confirmation group.
+ await request(worker,'/api/receive',post('https://example.test/good?intake=aruno'));
+ await chSend('https://example.test/good?intake=chiritumo');
+ const normalPending=(await request(worker,'/api/pending')).items,chPending=(await request(worker,'/api/pending?intake_source=chiritumo')).items;
+ assert.equal(normalPending.length,1);assert.equal(chPending.length,1);assert.notEqual(normalPending[0].id,chPending[0].id);
+ await request(worker,`/api/pending/${chPending[0].id}/confirm`,{...post(''),body:JSON.stringify({action:'ok'})});
+ assert.equal((await request(worker,'/api/pending')).items.length,1);
+ assert.equal((await request(worker,'/api/pending?intake_source=chiritumo')).items.length,0);
+ await request(worker,'/api/receive',post('https://example.test/generic?intake=aruno'));
+ await chSend('https://example.test/generic?intake=chiritumo');
+ assert.equal((await request(worker,'/api/unresolved')).items.length,1);
+ assert.equal((await request(worker,'/api/unresolved?intake_source=chiritumo')).items.length,1);
+ // Read and management APIs retain their prior protection.
+ assert.equal((await worker.fetch('https://vault.test/api/cards?intake_source=chiritumo')).status,401);
+ assert.equal((await worker.fetch('https://vault.test/api/chiritumo/receive')).status,405);
+ const invalid=await worker.fetch('https://vault.test/api/chiritumo/receive',post('not-a-url'));assert.equal(invalid.status,400);
+});

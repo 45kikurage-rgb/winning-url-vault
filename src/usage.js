@@ -10,9 +10,9 @@ const unassigned = `NOT EXISTS (SELECT 1 FROM item_campaign_assignments a WHERE 
   AND NOT EXISTS (SELECT 1 FROM tiktok_video_links v WHERE v.item_id=items.id)`;
 const eligible = `status IN ('active','pending_confirmation','unresolved') AND ${unassigned}`;
 
-export async function usageOverview(env) {
-  const candidates = await env.DB.prepare(`SELECT id,value,value_type FROM items WHERE ${eligible} ORDER BY received_at,id`).all();
-  const used = await env.DB.prepare(`SELECT id FROM items WHERE status='used' AND ${unassigned} ORDER BY received_at,id`).all();
+export async function usageOverview(env,source='arunomatic') {
+  const candidates = await env.DB.prepare(`SELECT id,value,value_type FROM items WHERE ${eligible} AND intake_source=? ORDER BY received_at,id`).bind(source).all();
+  const used = await env.DB.prepare(`SELECT id FROM items WHERE status='used' AND ${unassigned} AND intake_source=? ORDER BY received_at,id`).bind(source).all();
   const rows = candidates.results || [];
   const urls = rows.filter(row => row.value_type === 'url' && /^https:\/\//i.test(row.value));
   return { ids: urls.map(row => row.id), unsupported: rows.length - urls.length, usedIds: (used.results || []).map(row => row.id) };

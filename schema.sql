@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS product_master (
 CREATE INDEX IF NOT EXISTS idx_product_exact ON product_master(normalized_name, specification, redeem_place, required_conditions, confirmed);
 
 CREATE TABLE IF NOT EXISTS cards (
+  intake_source TEXT NOT NULL DEFAULT 'arunomatic',
   id TEXT PRIMARY KEY,
   product_id TEXT NOT NULL,
   expires_on TEXT NOT NULL DEFAULT '',
@@ -25,9 +26,10 @@ CREATE TABLE IF NOT EXISTS cards (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(product_id) REFERENCES product_master(id)
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_card_exact ON cards(product_id, expires_on);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_card_exact ON cards(product_id, expires_on, intake_source);
 
 CREATE TABLE IF NOT EXISTS pending_confirmations (
+  intake_source TEXT NOT NULL DEFAULT 'arunomatic',
   id TEXT PRIMARY KEY,
   match_key TEXT NOT NULL,
   expires_on TEXT NOT NULL,
@@ -42,9 +44,10 @@ CREATE TABLE IF NOT EXISTS pending_confirmations (
   analysis_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_exact ON pending_confirmations(match_key, expires_on);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_exact ON pending_confirmations(match_key, expires_on, intake_source);
 
 CREATE TABLE IF NOT EXISTS items (
+  intake_source TEXT NOT NULL DEFAULT 'arunomatic',
   id TEXT PRIMARY KEY,
   value TEXT NOT NULL,
   canonical_value TEXT NOT NULL UNIQUE,
@@ -375,3 +378,7 @@ CREATE TABLE IF NOT EXISTS tiktok_video_batches (
   completed_at TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tiktok_video_pending ON tiktok_video_batches(status) WHERE status='pending';
+
+CREATE INDEX IF NOT EXISTS idx_items_intake_status ON items(intake_source,status,received_at,id);
+CREATE INDEX IF NOT EXISTS idx_cards_intake ON cards(intake_source,id);
+CREATE INDEX IF NOT EXISTS idx_pending_intake ON pending_confirmations(intake_source,id);

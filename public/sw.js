@@ -1,10 +1,10 @@
-const CACHE = "winning-url-vault-pwa-20261028-tiktok-videos";
+const CACHE = "winning-url-vault-pwa-20261030-chiritumo";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
-  "/styles.css?v=20261028-tiktok-videos",
-  "/app.js?v=20261028-tiktok-videos",
+  "/styles.css?v=20261030-chiritumo",
+  "/app.js?v=20261030-chiritumo",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",

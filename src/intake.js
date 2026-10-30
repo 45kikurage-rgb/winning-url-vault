@@ -1,3 +1,4 @@
+import {intakeSource} from './intake-source.js';
 import {classifyValue,extractInputValues} from './core.js';
 import {digest,IntakeError} from './sending-auth.js';
 const MAX_BYTES=512*1024;
@@ -40,7 +41,7 @@ export async function beginIntake(env, input, ownerKey) {
   const seen=new Set(),plan=[];let duplicates=0;
   for(const raw of input.values){const value=classifyValue(raw,env.COKEON_REDEEM_BASE_URL);
     if(!value)continue;if(seen.has(value.canonicalValue)){duplicates++;continue;}seen.add(value.canonicalValue);
-    plan.push({...value,id:crypto.randomUUID()});}
+    plan.push({...value,id:crypto.randomUUID(),intakeSource:intakeSource(input.intakeSource)});}
   const createdAt=stamp();
   await env.DB.batch([
     env.DB.prepare(`INSERT OR IGNORE INTO analysis_jobs(id,client_request_id,input_total,input_duplicates,status,updated_at)
@@ -61,9 +62,9 @@ export async function materializeIntake(env, receipt) {
   for(let start=receipt.cursor;start<plan.length;start+=40){
     const chunk=plan.slice(start,start+40),statements=[];
     for(const [offset,item] of chunk.entries()){
-      statements.push(env.DB.prepare(`INSERT OR IGNORE INTO items(id,value,canonical_value,value_type,status)
-        SELECT ?,?,?,?,'queued' WHERE EXISTS(SELECT 1 FROM intake_receipts WHERE job_id=? AND status='receiving')`)
-        .bind(item.id,item.storedValue,item.canonicalValue,item.type,jobId));
+      statements.push(env.DB.prepare(`INSERT OR IGNORE INTO items(id,value,canonical_value,value_type,status,intake_source)
+        SELECT ?,?,?,?,'queued',? WHERE EXISTS(SELECT 1 FROM intake_receipts WHERE job_id=? AND status='receiving')`)
+        .bind(item.id,item.storedValue,item.canonicalValue,item.type,intakeSource(item.intakeSource),jobId));
       statements.push(env.DB.prepare(`INSERT OR IGNORE INTO analysis_job_items(job_id,item_id,ordinal,state,updated_at)
         SELECT ?,id,?,'queued',? FROM items WHERE id=?
         AND EXISTS(SELECT 1 FROM intake_receipts WHERE job_id=? AND status='receiving')`)
