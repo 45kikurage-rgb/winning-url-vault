@@ -85,7 +85,7 @@ const state = { cursor: null, cardId: null, authenticated: false, cards: new Map
   sortingSource:'arunomatic',sortingLoadSequence:0, unresolvedItems: new Map(), imageAnalysisItemId: null, couponImageData: null, cardsLoaded: false };
 
 async function api(path, options) {
-  if(/^\/api\/(cards|pending|unresolved|usage)(?:[/?]|$)/.test(path))path+=(path.includes('?')?'&':'?')+'intake_source='+state.sortingSource;
+  if(/^\/api\/(cards|pending|unresolved|usage)(?:[/?]|$)/.test(path) && !new URL(path,location.origin).searchParams.has('intake_source'))path+=(path.includes('?')?'&':'?')+'intake_source='+state.sortingSource;
   const response = await fetchReadWithRetry(fetch, path, options);
   const payload = await response.json().catch(() => ({}));
   if (response.status === 401 && path !== "/api/auth/login") showLogin(payload.error || "ログインが必要です");
@@ -359,6 +359,7 @@ function cardHtml(card) {
     ${isEraberuPay(card) ? "" : `<div class="meta">期限 ${esc(card.expires_on || "期限なし")}</div>`}${(card.assignments || []).some(row=>row.sync_status==='failed') ? '<p class="sync-error">同期失敗あり：割当内訳を確認してください。</p>' : ''}${assignments ? `<details class="assignment-list"><summary>割当済み${(card.assignments || []).reduce((sum,row)=>sum+Number(row.current_winner_count || 0),0).toLocaleString()}件／${esc(card.assignments[0].campaign_name || card.assignments[0].campaign_id)}</summary>${assignments}</details>` : '<div class="unassigned-label">解析済み・未仕分け</div>'}</div>
     <div class="coupon-foot"><div class="card-actions">
       ${Number(card.unassigned_count || 0) > 0 ? `<button data-assign-card="${esc(card.id)}" data-title="${esc(card.display_name)}">振り分け（${Number(card.unassigned_count).toLocaleString()}）</button>` : ""}
+      ${Number(card.unassigned_count || 0) > 0 ? `<button class="danger" data-delete-sorting="${esc(card.id)}">削除（${Number(card.unassigned_count).toLocaleString()}）</button>` : ""}
       <button class="secondary" data-edit-sorting-name="${esc(card.id)}">表示名</button><button class="secondary" data-card="${esc(card.id)}" data-title="${esc(card.display_name)}">内容</button></div></div>
   </article>`;
 }
@@ -1331,7 +1332,34 @@ async function confirmCorrection() {
   } finally { $("correctionConfirm").disabled = false; }
 }
 
+const sortingDeletes = new Set();
+async function deleteSortingCard(button) {
+  const cardId = button.dataset.deleteSorting, source = state.sortingSource;
+  const key = `${source}:${cardId}`;
+  if (sortingDeletes.has(key)) return;
+  sortingDeletes.add(key);button.disabled = true;
+  try {
+    const path = `/api/cards/${encodeURIComponent(cardId)}/delete-unassigned?intake_source=${source}`;
+    const preview = await api(path);
+    if (!preview.count) { await load(); return; }
+    const card = state.cards.get(cardId);
+    const title = displayLabel('sorting',cardId,card?.display_name);
+    if (source !== state.sortingSource || !confirm(`${title}\n未仕分けの${preview.count.toLocaleString()}件を、カテゴリへ移さず削除しますか？\n登録済みのカテゴリのデータは残ります。`)) return;
+    const result = await api(path,{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({ids:preview.ids,confirmation:'未仕分けを削除'})});
+    await load();
+    alert(`${result.deleted.toLocaleString()}件を削除しました。${result.skipped ? `\n状態が変わった${result.skipped.toLocaleString()}件は削除していません。` : ''}`);
+  } catch (error) { alert(error.message); }
+  finally {
+    sortingDeletes.delete(key);button.disabled = false;
+    document.querySelectorAll('[data-delete-sorting]').forEach(current => {
+      current.disabled = sortingDeletes.has(`${state.sortingSource}:${current.dataset.deleteSorting}`);
+    });
+  }
+}
+
 function bindDynamic() {
+  document.querySelectorAll('[data-delete-sorting]').forEach(button => { button.disabled=sortingDeletes.has(`${state.sortingSource}:${button.dataset.deleteSorting}`);button.onclick=()=>deleteSortingCard(button); });
   document.querySelectorAll('[data-edit-sorting-name]').forEach(button => button.onclick = () => openDisplayName('sorting',button.dataset.editSortingName));
   document.querySelectorAll("[data-card]").forEach(button => button.onclick = () => openItems(button.dataset.card, button.dataset.title));
   document.querySelectorAll("[data-assign-card]").forEach(button => button.onclick = () => openAssignment(button.dataset.assignCard, button.dataset.title));

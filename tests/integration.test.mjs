@@ -770,7 +770,10 @@ test("JSTの2026-10以降だけを商品月収益へ集約し、抽出状態と�
   assert.deepEqual({winner_count:revenue.winner_count,unit_price:revenue.unit_price,amount:revenue.amount},
     {winner_count:100,unit_price:150,amount:15000});
   let list=(await request(worker,"/api/winning-lists")).products[0];
-  assert.equal(Number(list.unit_price),150);assert.equal(Number(list.current_month_revenue),15000);
+  const livePeriod=(await request(worker,"/api/revenue/summary")).month;
+  // These fixtures intentionally test October's JST boundary; the UI shows the actual current month.
+  const expectedCurrentRevenue=livePeriod==='2026-10'?15000:0;
+  assert.equal(Number(list.unit_price),150);assert.equal(Number(list.current_month_revenue),expectedCurrentRevenue);
   let summary = await getRevenueSummary({ DB }, Date.parse("2026-10-02T10:00:00.000Z"));
   assert.deepEqual({ monthly:summary.monthly_revenue, daily:summary.daily_revenue }, { monthly:15000, daily:14850 });
   const liveSummary = await request(worker, "/api/revenue/summary");
@@ -786,7 +789,7 @@ test("JSTの2026-10以降だけを商品月収益へ集約し、抽出状態と�
   });
   await request(worker, `/api/export-batches/${batch.batch.id}/complete`, {method:"POST"});
   list=(await request(worker,"/api/winning-lists")).products[0];
-  assert.equal(Number(list.current_month_revenue),15000);
+  assert.equal(Number(list.current_month_revenue),expectedCurrentRevenue);
 
   await request(worker, `/api/products/${assigned.product_id}/unit-price`, {
     method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({unit_price:200})
@@ -1405,6 +1408,7 @@ test("キャンペーン変更はURL・抽出履歴・単価を保護し両キ�
   });
   const next=await request(worker,`/api/products/${source.product_id}/export-next`);
   await request(worker,`/api/products/${source.product_id}/items/${next.item.id}/export-complete`,{method:"POST"});
+  const receiptMonth=(await DB.prepare("SELECT strftime('%Y-%m',datetime(received_at,'+9 hours')) month FROM items WHERE card_id=?").bind(card.id).first()).month;
   const before=(await request(worker,"/api/revenue/summary")).monthly_revenue;
   const preview=await request(worker,`/api/products/${source.product_id}/reassign?campaign_id=campaign-active-b`);
   assert.equal(preview.exported_count,1);
@@ -1428,8 +1432,8 @@ test("キャンペーン変更はURL・抽出履歴・単価を保護し両キ�
   assert.equal(analyzer.products.get(moved.product_id).current_winner_count,1);
   assert.equal(analyzer.totals.get("campaign-active-a").current_winner_count,0);
   assert.equal(analyzer.totals.get("campaign-active-b").current_winner_count,1);
-  assert.equal(analyzer.revenues.get("2026-10:"+source.product_id)?.amount,0);
-  assert.equal(analyzer.revenues.get("2026-10:"+moved.product_id)?.amount,120);
+  assert.equal(analyzer.revenues.get(receiptMonth+":"+source.product_id)?.amount,0);
+  assert.equal(analyzer.revenues.get(receiptMonth+":"+moved.product_id)?.amount,120);
   assert.equal((await DB.prepare("SELECT action FROM audit_log WHERE action='campaign_reassigned'").first()).action,"campaign_reassigned");
   const replay=await worker.fetch(`https://vault.test/api/products/${source.product_id}/reassign`,{
     method:"POST",headers:{cookie:authCookies.get(worker),"content-type":"application/json"},
