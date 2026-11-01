@@ -77,11 +77,12 @@ test('cancel makes no deletion call, explicit source survives tab switch, and du
   const source=readFileSync(new URL('../public/app.js',import.meta.url),'utf8');
   const code=source.slice(source.indexOf('const sortingDeletes = new Set();'),source.indexOf('function bindDynamic()'));
   const calls=[],button={dataset:{deleteSorting:'card'},disabled:false};let confirmResult=false;
-  const context={state:{sortingSource:'arunomatic',cards:new Map([['card',{display_name:'茶'}]])},displayLabel:(s,id,f)=>f,confirm:()=>confirmResult,alert(){},load:async()=>{},api:async(path,options)=>{calls.push({path,options});return options?{deleted:1,skipped:0}:{count:1,ids:['id']}}};
+  const currentButton={dataset:{deleteSorting:'card'},disabled:true};
+  const context={document:{querySelectorAll:()=>[currentButton]},state:{sortingSource:'arunomatic',cards:new Map([['card',{display_name:'茶'}]])},displayLabel:(s,id,f)=>f,confirm:()=>confirmResult,alert(){},load:async()=>{},api:async(path,options)=>{calls.push({path,options});return options?{deleted:1,skipped:0}:{count:1,ids:['id']}}};
   vm.createContext(context);vm.runInContext(code,context);
   await context.deleteSortingCard(button);assert.equal(calls.length,1);assert.equal(calls[0].options,undefined);assert.equal(button.disabled,false);
   calls.length=0;confirmResult=true;context.api=async(path,options)=>{calls.push({path,options});if(!options){await Promise.resolve();return {count:1,ids:['id']}}return {deleted:1,skipped:0}};
-  await Promise.all([context.deleteSortingCard(button),context.deleteSortingCard(button)]);assert.equal(calls.length,2);assert.match(calls[1].path,/intake_source=arunomatic$/);assert.equal(JSON.parse(calls[1].options.body).confirmation,'未仕分けを削除');
+  await Promise.all([context.deleteSortingCard(button),context.deleteSortingCard(button)]);assert.equal(currentButton.disabled,false);assert.equal(calls.length,2);assert.match(calls[1].path,/intake_source=arunomatic$/);assert.equal(JSON.parse(calls[1].options.body).confirmation,'未仕分けを削除');
   calls.length=0;context.api=async(path,options)=>{calls.push({path,options});context.state.sortingSource='chiritumo';return {count:1,ids:['id']}};
   await context.deleteSortingCard(button);assert.equal(calls.length,1);
 });

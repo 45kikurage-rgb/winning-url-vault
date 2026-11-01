@@ -1350,7 +1350,12 @@ async function deleteSortingCard(button) {
     await load();
     alert(`${result.deleted.toLocaleString()}件を削除しました。${result.skipped ? `\n状態が変わった${result.skipped.toLocaleString()}件は削除していません。` : ''}`);
   } catch (error) { alert(error.message); }
-  finally { sortingDeletes.delete(key);button.disabled = false; }
+  finally {
+    sortingDeletes.delete(key);button.disabled = false;
+    document.querySelectorAll('[data-delete-sorting]').forEach(current => {
+      current.disabled = sortingDeletes.has(`${state.sortingSource}:${current.dataset.deleteSorting}`);
+    });
+  }
 }
 
 function bindDynamic() {
