@@ -1,3 +1,4 @@
+import { sortingDeletePreview, deleteSortingItems } from './sorting-delete.js';
 import {intakeSource,requestIntakeSource} from './intake-source.js';
 import {chiritumoHistory} from './chiritumo-history.js';
 import { isTikTokLongVideo } from '../public/tiktok-video.js';
@@ -1078,6 +1079,21 @@ export default {
         if (body.confirmation !== "使用済みを削除") return json({ok:false,error:"削除確認が必要です"},400);
         const result=await deleteUsed(env,body.ids);
         if (result.ok) await audit(env,null,"used_deleted",{count:result.deleted});
+        return json(result,result.ok?200:400);
+      }
+      const sortingDelete = url.pathname.match(/^\/api\/cards\/([0-9a-f-]{36})\/delete-unassigned$/i);
+      if (sortingDelete && ['GET','POST'].includes(request.method)) {
+        const source = requestIntakeSource(url);
+        if (request.method === 'GET') {
+          const result = await sortingDeletePreview(env,sortingDelete[1],source);
+          return json(result,result.ok?200:400);
+        }
+        if (request.headers.get('origin') !== url.origin)
+          return json({ok:false,error:'管理画面から操作してください',code:'SCOPE_DENIED'},403);
+        const body = await request.json().catch(() => ({}));
+        if (body?.confirmation !== '未仕分けを削除')
+          return json({ok:false,error:'削除確認が必要です'},400);
+        const result = await deleteSortingItems(env,sortingDelete[1],source,body.ids);
         return json(result,result.ok?200:400);
       }
       if (url.pathname === "/api/revenue/summary" && request.method === "GET") {

@@ -1,10 +1,10 @@
-const CACHE = "winning-url-vault-pwa-20261030-chiritumo";
+const CACHE = "winning-url-vault-pwa-20261101-sorting-delete";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
-  "/styles.css?v=20261030-chiritumo",
-  "/app.js?v=20261030-chiritumo",
+  "/styles.css?v=20261101-sorting-delete",
+  "/app.js?v=20261101-sorting-delete",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
