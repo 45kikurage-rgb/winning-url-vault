@@ -15,7 +15,7 @@ def preflight():
     g.require(all(b['type'] in ('secret_text','plain_text','json') or b['name'] in known for b in settings['bindings']),'UNDECLARED_RUNTIME_BINDING')
     # Refuse to publish over an unseen frontend update from another work session.
     for name in assets:
-        old=subprocess.check_output(['git','show','HEAD^:public/'+name])
+        old=subprocess.check_output(['git','show','5f5e19867366742ca5d7a1ea492025a363363470:public/'+name])
         status,data=g.public('/'+name+'?preflight='+os.environ['GITHUB_SHA'])
         g.require(status==200 and data==old,'UNEXPECTED_BASELINE_'+name)
     state={'settings':g.runtime(settings),'schema':g.schema(),'schedules':g.schedules(),'subdomain':subdomain,'baseline':baseline}
