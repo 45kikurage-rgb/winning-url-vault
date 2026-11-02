@@ -1,0 +1,34 @@
+{
+  "source_sha": "f5f5c66481c00f01d386188209caf15c5e47bc5d",
+  "stage": "published_verified",
+  "baseline": "7252cd40-9bc0-492b-9fb9-76812b886b97",
+  "baseline_source": "4bc220e63361f140777c1ed7ea27e3271155c30c",
+  "time_travel_bookmark": "00000689-000001ac-00005117-487ef2c1ce0c8ce612613b60dc56cd78",
+  "business_row_mutations": 0,
+  "real_device_test": "pending",
+  "existing_schema_preserved": true,
+  "additive_schema_replay": true,
+  "migration": "0015_single_wins.sql",
+  "deployed_version": "7fe568b1-40b0-41b1-976d-2be2642c8116",
+  "worker_sha256": "6869996b6f14715ea604a0e5d8f88b1c1091c6c57d549e7c95177c08ee84338e",
+  "assets": {
+    "index.html": "2f437dfca064552f762a77622184f14de88df836799b039c3435e2f7fbdd7edf",
+    "styles.css": "589aa3310eea1bb78a6e3a4c7414929a59926a696c6d09a196994948dbbcab38",
+    "app.js": "c20790444dc6138e65b592d0a882b1855e42104dc7f2b203d484f61db73c54ce",
+    "sw.js": "d40f4474fb33e79bd87c2e04735058896a40683636a15d241015d344df01148c",
+    "display-name.js": "674cd0deddfe457380296aaddabe5de0f82d3c62ea036bd667acc0b65d3aacf7",
+    "single-win-ui.js": "ed4a49ac0a9cf41331f377100aab47bf9237578ab4bbf67fb5148ad9fe07f62d"
+  },
+  "existing_runtime_preserved": true,
+  "added_binding": {
+    "name": "ALIGN_SINGLE_WIN",
+    "type": "service",
+    "service": "arunomatic-align",
+    "entrypoint": "VaultCampaignAPI"
+  },
+  "anonymous_guards_passed": true,
+  "workflow_url": "https://github.com/45kikurage-rgb/winning-url-vault/actions/runs/41430443703",
+  "artifact_zip_sha256": "7a11188660c230310bcccf6f9f8dc0c19058b056d6868b0ee4df0edc39a8a1c1",
+  "authenticated_live_rpc_probe": "not performed; no administrator browser session available",
+  "physical_pixel10": "not performed"
+}
