@@ -279,27 +279,28 @@ body[data-operation-mode="production"] .summary strong{margin-top:1px;font-size:
 /* Approved mobile shell. The footer participates in layout, so its real height
    (text enlargement and safe area included) never overlays the last row. */
 body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;font-weight:400;padding:0}
-#app{height:100dvh;max-width:820px;padding:0;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto;overflow:hidden}
-#app>header{grid-row:1;margin:0;padding:.6rem .625rem;gap:.5rem;border-bottom:1px solid #65758e;align-items:center}
+#app{height:100dvh;width:100%;max-width:820px;min-width:0;padding:0;display:grid;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto auto minmax(0,1fr) auto;overflow:hidden}
+#app>header{grid-row:1;margin:0;padding:.6rem .625rem;gap:.5rem;border-bottom:1px solid #65758e;align-items:center;flex-wrap:wrap}
 #app header h1{font-size:1.2rem;line-height:1.5;margin:0;white-space:nowrap}
-#app .header-side{gap:0;min-width:0}
-#app .header-revenue{min-width:0;padding:0;border:0;background:transparent;gap:0;line-height:1.2}
-#app .header-revenue>div{gap:.35rem}
+#app .header-side{gap:0;min-width:0;max-width:100%;margin-left:auto}
+#app .header-revenue{min-width:0;max-width:100%;padding:0;border:0;background:transparent;gap:0;line-height:1.2}
+#app .header-revenue>div{gap:.35rem;flex-wrap:wrap}
 #app .header-revenue span{font-size:.625rem;white-space:nowrap}
-#app .header-revenue strong{font-size:.6875rem;white-space:nowrap;font-variant-numeric:tabular-nums;text-align:right}
+#app .header-revenue strong{max-width:100%;font-size:.6875rem;white-space:normal;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;text-align:right}
 #app>.revenue-notice{grid-row:2;margin:.35rem .625rem 0;padding:.4rem .6rem;border-left:3px solid #ffd269;background:#282216;color:#ffe1a0;font-size:.8125rem}
 #app>.trial-notice{grid-row:3;margin:.4rem .625rem;padding:.5rem;border-width:1px}
-#app>.tab-page{grid-row:4;min-height:0;overflow:auto;overscroll-behavior:contain;padding:.625rem;scrollbar-gutter:auto}
+#app>.tab-page{grid-row:4;min-height:0;min-width:0;overflow:auto;overscroll-behavior:contain;padding:.625rem;scrollbar-gutter:auto}
 #app>.main-tabs{grid-row:5;position:static;transform:none;width:100%;gap:.2rem;padding:.3rem .3rem calc(.3rem + env(safe-area-inset-bottom,0px));border-top:1px solid #65758e;box-shadow:none;background:#020711}
 #app .tab-button{display:flex;align-items:center;justify-content:center;gap:.15rem;padding:.35rem .1rem;font-size:.875rem;min-height:2.75rem;white-space:nowrap;border-width:2px;line-height:1.3}
 #app .tab-count{display:block;min-width:0;width:.32rem;height:.32rem;margin:0;flex:none;background:#ffd668;border-radius:50%}
 #app button,#app summary,dialog button{min-height:2.75rem}
-#app button,dialog button{white-space:nowrap}
-#app .panel{border:1px solid #65758e;background:transparent;padding:.75rem;margin-top:.5rem}
+/* Long action labels must fit their own panel even with enlarged system text. */
+#app button,dialog button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+#app .panel{border:1px solid #65758e;background:transparent;padding:.75rem min(.75rem,16px);margin-top:.5rem}
 #app .panel p{font-size:.875rem}
 #app .winning-panel{padding:0;border:0;margin:0}
 .page-metric{margin:0 0 .6rem;font-size:.875rem}
-#app .receive.panel{padding:.75rem;margin-top:0}
+#app .receive.panel{padding:.75rem min(.75rem,16px);margin-top:0}
 .input-title{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-top:.4rem}
 .input-title label{font-size:.875rem}
 #app .input-title button{font-size:.8125rem;padding:.4rem .6rem}
@@ -308,19 +309,20 @@ body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;font-weight:4
 #app #openSendingTokens{min-height:2.75rem;font-size:.8125rem;margin-top:.5rem}
 #app #receiveContext{font-size:.8125rem;margin:.4rem 0}
 #app .provisional-mode-panel h2 small{font-size:.75rem;color:#b9c5d8}
-#app .summary{margin:.5rem 0;gap:.4rem}
-#app .summary article{border-width:1px;padding:.5rem}
+#app .summary{grid-template-columns:repeat(3,minmax(0,1fr));margin:.5rem 0;gap:.4rem}
+#app .summary article{min-width:0;border-width:1px;padding:.5rem}
 #app .summary span{font-size:.75rem}
-#app .summary strong{font-size:1.125rem}
+#app .summary strong{max-width:100%;font-size:1.125rem;overflow-wrap:anywhere}
 #app #pendingBanner{width:100%;text-align:left;margin-bottom:.5rem;white-space:normal}
-#app #cards{grid-template-columns:1fr;gap:.6rem}
-#app .coupon{border:1px solid #65758e;min-height:0;padding:.75rem;background:transparent}
-#app .coupon h3{font-size:1rem;font-weight:700;line-height:1.5;margin:0 0 .3rem;white-space:nowrap;overflow-x:auto;overflow-wrap:normal;text-overflow:clip}
-.sorting-spec{white-space:nowrap;overflow-x:auto}
+#app #cards{grid-template-columns:minmax(0,1fr);gap:.6rem}
+#app #cards>[data-sorting-card],#app .coupon,#app .coupon>div{min-width:0}
+#app .coupon{border:1px solid #65758e;min-height:0;padding:.75rem min(.75rem,16px);background:transparent}
+#app .coupon h3{width:14em;max-width:100%;min-width:0;font-size:1rem;font-weight:700;line-height:1.5;margin:0 0 .3rem;white-space:nowrap;overflow:hidden;overflow-wrap:normal;text-overflow:ellipsis}
+.sorting-spec{white-space:normal;overflow-wrap:anywhere}
 #app .coupon .meta{font-size:.8125rem}
 #app .coupon-foot{margin-top:.6rem}
-#app .card-actions{display:flex;flex-wrap:wrap;gap:.5rem}
-#app .card-actions button{font-size:.875rem;min-height:2.75rem;padding:.45rem .6rem}
+#app .card-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.25rem;width:100%;min-width:0;max-width:100%}
+#app .card-actions button{font-size:.875rem;line-height:1.35;min-height:2.75rem;min-width:0;max-width:100%;padding:.45rem 2px;white-space:normal;overflow-wrap:anywhere}
 #app .assignment-list{border:0;padding:0;margin-top:.5rem}
 #app .assignment-list summary{padding:.5rem 0;font-size:.8125rem;overflow-wrap:anywhere}
 #app .assignment-row{font-size:.8125rem;overflow-wrap:anywhere}
@@ -328,18 +330,18 @@ body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;font-weight:4
 #app .winning-products{gap:0}
 #app .winning-product-row.winning-card{display:block;border:0;border-bottom:1px solid #65758e;background:transparent;padding:.65rem 0;opacity:1}
 #app .product-heading{display:flex;flex-wrap:wrap;align-items:start;gap:.2rem .5rem;min-width:0;line-height:1.5}
-#app .product-heading h3{flex:1 0 min(14em,100%);max-width:100%;min-width:0;font-size:1rem;font-weight:700;line-height:1.5;margin:0;white-space:nowrap;overflow-x:auto;overflow-wrap:normal;text-overflow:clip}
-#app .product-total{margin-left:auto;font-size:.8125rem;white-space:nowrap;font-variant-numeric:tabular-nums;line-height:1.85}
+#app .product-heading h3{flex:0 1 14em;width:14em;max-width:100%;min-width:0;font-size:1rem;font-weight:700;line-height:1.5;margin:0;white-space:nowrap;overflow:hidden;overflow-wrap:normal;text-overflow:ellipsis}
+#app .product-total{margin-left:auto;max-width:100%;font-size:.8125rem;overflow-wrap:anywhere;font-variant-numeric:tabular-nums;line-height:1.85}
 #app .product-body{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.5rem;margin-top:.3rem}
 #app .product-meta{display:flex;flex-direction:column;align-items:start;gap:.25rem;font-size:.8125rem;margin:0;min-width:0;line-height:1.5}
-#app .product-meta>span{max-width:100%;white-space:nowrap;overflow-x:auto;overflow-wrap:normal}
-#app .product-controls{border-left:1px solid #65758e;padding-left:.5rem;min-width:0;align-self:start}
-#app .product-method{display:block;text-align:right;font-size:.75rem;white-space:nowrap;margin:0 0 .3rem;line-height:1.5}
-#app .product-actions{display:flex;flex-wrap:nowrap;gap:.5rem;align-items:start;margin:0}
-#app .product-actions button{font-size:.875rem;min-height:2.75rem;padding:.45rem .4rem;line-height:1.4}
-#app .product-actions .extract-button{display:grid;grid-template-columns:3em 3ch 1em;gap:0;white-space:nowrap;overflow-wrap:normal;background:#204f81;border-color:#8da7c8;color:#fff}
-#app .product-actions .extract-button strong{font-size:inherit;font-weight:400;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-#app .product-actions .extract-button.wide-count{grid-template-columns:3em auto 1em}
+#app .product-meta>span{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+#app .product-controls{border-left:1px solid #65758e;padding-left:.5rem;min-width:0;max-width:100%;align-self:start}
+#app .product-method{display:block;text-align:right;font-size:.75rem;white-space:normal;overflow-wrap:anywhere;margin:0 0 .3rem;line-height:1.5}
+#app .product-actions{display:flex;flex-wrap:wrap;gap:.5rem;align-items:start;justify-content:flex-end;margin:0;min-width:0;max-width:100%}
+#app .product-actions button{font-size:.875rem;min-height:2.75rem;max-width:100%;padding:.45rem .4rem;line-height:1.4}
+#app .product-actions .extract-button{display:grid;grid-template-columns:3em minmax(0,3ch) 1em;gap:0;white-space:normal;overflow-wrap:anywhere;background:#204f81;border-color:#8da7c8;color:#fff}
+#app .product-actions .extract-button strong{font-size:inherit;font-weight:400;text-align:right;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
+#app .product-actions .extract-button.wide-count{grid-template-columns:3em minmax(0,1fr) 1em}
 #app .product-actions .extract-button:disabled{color:#acb9cc;background:#17324e;opacity:1}
 #app .product-settings{min-width:2.75rem}
 #app .product-notes,#app .product-recheck{font-size:.75rem;line-height:1.5;margin-top:.25rem}
@@ -358,20 +360,20 @@ body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;font-weight:4
 #app .campaign-actions button,#retryLedgerSync{font-size:.875rem;padding:.5rem .75rem;min-height:2.75rem}
 #displayNameDialog{width:min(36rem,calc(100% - 1.25rem));max-height:90dvh;overflow:auto;padding:1rem}
 #displayNameInput{width:100%;font-size:1rem;padding:.6rem;background:#020713;color:#fff;border:1px solid #8da7c8}
-.display-name-preview{margin:.75rem 0;border:1px solid #65758e;padding:.625rem;overflow-x:auto}
-.display-name-preview h3{width:max-content;white-space:nowrap;margin:0;line-height:1.5}
+.display-name-preview{margin:.75rem 0;border:1px solid #65758e;padding:.625rem;min-width:0;overflow-wrap:anywhere}
+.display-name-preview h3{white-space:normal;margin:0;line-height:1.5;overflow-wrap:anywhere}
 .display-name-measure{position:fixed;left:-10000px;top:0;display:inline-block;white-space:pre;visibility:hidden;width:max-content;padding:0;border:0}
 #displayNameMessage{font-size:.875rem;min-height:2.8em}
 @media(min-width:900px){#app{border-left:1px solid #65758e;border-right:1px solid #65758e}}
 @media(min-width:1px){
   /* Large system text can increase the footer and stack controls without clipping. */
-  #app .product-body:has(.wide-count){grid-template-columns:1fr}
+  #app .product-body:has(.wide-count){grid-template-columns:minmax(0,1fr)}
   #app .product-body:has(.wide-count) .product-controls{justify-self:end}
 }
 @media(max-width:350px){#app .header-brand h1{font-size:1.05rem}#app .tab-button{font-size:.8rem}}
 #app .winning-product-row{container-type:inline-size}
 @container(max-width:18rem){
-  #app .product-body{grid-template-columns:1fr}
+  #app .product-body{grid-template-columns:minmax(0,1fr)}
   #app .product-controls{justify-self:end}
 }
 #app .main-tabs{grid-template-columns:minmax(max-content,1fr) minmax(max-content,1.3fr) minmax(max-content,1.8fr) minmax(max-content,1.4fr);overflow-x:auto}
@@ -399,4 +401,36 @@ body[data-active-tab="chiritumo"] #tabSorting{display:block}
 @media(max-width:380px){.main-tabs .tab-button{font-size:11px;padding-inline:3px}}
 #app .main-tabs{grid-template-columns:repeat(5,minmax(0,1fr));overflow-x:hidden}
 #app .main-tabs{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1.35fr) minmax(0,1.65fr) minmax(0,1.2fr)}
-#app .main-tabs .tab-button{font-size:clamp(10px,3.2vw,14px);gap:.12rem}
+#app .main-tabs .tab-button{font-size:clamp(.625rem,3.2vw,.875rem);gap:.12rem;white-space:normal;overflow-wrap:anywhere}
+
+/* A long saved name never sizes a list column. Full content is available by tap. */
+#app [data-name-scope][role="button"]{min-height:2.75rem;padding:.5rem 0;cursor:pointer;text-decoration:underline;text-decoration-color:#65758e;text-underline-offset:.2em}
+#app [data-name-scope][role="button"]:focus-visible{outline:2px solid #ffd668;outline-offset:2px}
+#productNameDialog{width:min(36rem,calc(100% - 1.25rem));max-width:calc(100% - 1.25rem);max-height:90dvh;overflow:auto;padding:1rem}
+#productNameDialog .dialog-head,#displayNameDialog .dialog-head{flex-wrap:wrap;min-width:0}
+#productNameDialog .dialog-head h2,#displayNameDialog .dialog-head h2{min-width:0;overflow-wrap:anywhere}
+#productNameDialog button,#displayNameDialog button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.product-name-detail,#displayNameFormal{min-width:0;white-space:normal;overflow-wrap:anywhere;line-height:1.6}
+.product-name-detail p{margin:0 0 .75rem}
+.product-name-detail strong,.product-name-detail span{display:block;white-space:pre-wrap;overflow-wrap:anywhere}
+.sorting-action-notice{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:.5rem 0;padding:.65rem;border:1px solid #65758e;background:#071020;overflow-wrap:anywhere}
+.sorting-action-notice>p{flex:1 1 12rem;min-width:0;margin:0}
+.sorting-action-notice .actions{flex-wrap:wrap;min-width:0;max-width:100%;margin-top:0}
+#app .sorting-action-notice button{min-height:2.75rem;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+.pending-card,.pending-fields,.field-row{min-width:0}
+.field-row{grid-template-columns:repeat(2,minmax(0,1fr))}
+.pending-fields input{min-width:0;max-width:100%}
+.confirm-actions{flex-wrap:wrap}
+#app .confirm-actions button,dialog .confirm-actions button{flex:1 1 9em;min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+#singleWinDialog{width:min(36rem,calc(100% - 1.25rem));max-width:calc(100% - 1.25rem);max-height:90dvh;overflow:auto}
+#singleWinDialog .dialog-head{flex-wrap:wrap}
+#singleWinDialog .dialog-head h2{min-width:0;overflow-wrap:anywhere}
+#singleWinDialog button{min-height:2.75rem;max-width:100%;font-size:inherit;white-space:normal;overflow-wrap:anywhere}
+.single-win-details{white-space:pre-wrap;overflow-wrap:anywhere}
+#singleWinRecovery button{min-height:2.75rem;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+/* A long full product title must scroll away instead of covering the actions. */
+#assignmentDialog .dialog-head{position:static;top:auto;flex-wrap:wrap;align-items:flex-start}
+#assignmentDialog .dialog-head>div{flex:1 1 12rem;min-width:0}
+#assignmentDialog h2,#assignmentDialog p{overflow-wrap:anywhere}
+#assignmentDialog button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+

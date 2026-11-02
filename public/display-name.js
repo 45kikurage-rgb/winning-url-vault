@@ -7,8 +7,9 @@ export function validateDisplayName(value) {
   if (nameUnits(value.trim()) > 14) return '表示名は全角14文字相当以内（半角は0.5文字）にしてください。';
   return '';
 }
-// Measure the real field after layout, including its actual font and available width.
-// No hardcoded viewport, character-width estimate, or ellipsis-as-success.
+// Compatibility export for a previously cached app module. The current UI accepts
+// 14 full-width equivalents regardless of device width and opens a full-text dialog.
+// Keep this real-width measurement until older app modules no longer import it.
 export function nameFits(element, value) {
   if (!element?.getClientRects().length || element.clientWidth <= 0) return false;
   const style = getComputedStyle(element), probe = document.createElement('span');
@@ -23,3 +24,4 @@ export function nameFits(element, value) {
   const usable = element.clientWidth - parseFloat(style.paddingLeft || 0) - parseFloat(style.paddingRight || 0);
   return width <= usable + 0.25;
 }
+

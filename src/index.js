@@ -1,4 +1,5 @@
 import { sortingDeletePreview, deleteSortingItems } from './sorting-delete.js';
+import { singleWinPreview, registerSingleWin, singleWinStatus, singleWinAvailability } from './single-wins.js';
 import {intakeSource,requestIntakeSource} from './intake-source.js';
 import {chiritumoHistory} from './chiritumo-history.js';
 import { isTikTokLongVideo } from '../public/tiktok-video.js';
@@ -29,7 +30,7 @@ import {
   startExportBatch, undoExportBatch, setFolderVisibility, inspectUnexportedItems, setManualFinished
 } from "./extraction.js";
 
-const VERSION = "0.9.6";
+const VERSION = "0.10.0";
 const ANALYSIS_BATCH_SIZE = 40;
 const SESSION_COOKIE = "wuv_session";
 const SESSION_SECONDS = 60 * 60 * 24 * 30;
@@ -631,7 +632,7 @@ async function processJobFully(env, jobId, acceptedCount) {
   await finalizeJob(env, jobId);
 }
 
-async function receive(request, env, identity = {ownerKey:'admin'}) {
+async function receive(request, env, identity = {ownerKey:'admin'}, ctx) {
   try {
     const input=await readIntake(request,Boolean(identity.deviceId));
     input.intakeSource=intakeSource(identity.intakeSource);
@@ -645,9 +646,15 @@ async function receive(request, env, identity = {ownerKey:'admin'}) {
     }
     const {receipt,resumed}=await beginIntake(env,input,identity.ownerKey);
     const stored=await materializeIntake(env,receipt);
-    // Analysis queue failure does not invalidate saved input; cron retries dispatch.
-    try { await dispatchIntake(env,stored,processJobFully); }
-    catch { console.error('Saved intake awaiting dispatch',stored.job_id); }
+    // Saving the receipt, all items and the exact duplicate counts is the ACK
+    // boundary. A slow analysis queue must not hold a sending device open.
+    // dispatched stays 0 until queue registration succeeds, so the existing
+    // scheduled recovery also covers a failed/expired waitUntil task.
+    const dispatch = dispatchIntake(env,stored,processJobFully).catch(() => {
+      console.error('Saved intake awaiting dispatch',stored.job_id);
+    });
+    if (env.ANALYSIS_QUEUE?.send && typeof ctx?.waitUntil === 'function') ctx.waitUntil(dispatch);
+    else await dispatch; // Preserve the queue-less runtime's inline fallback.
     const summary=await jobSummary(env,stored.job_id);
     return json({ok:true,stored:true,clientRequestId:input.clientRequestId,resumed,
       received:summary.accepted,duplicate:summary.inputDuplicates+summary.existing,
@@ -966,14 +973,14 @@ export default {
       if(url.pathname==='/api/chiritumo/receive'){
         if(request.method!=='POST')return json({ok:false,error:'POSTのみ対応'},405);
         await limitSending(env,'chiritumo:'+await sha256(request.headers.get('cf-connecting-ip')||'relay'));
-        return await receive(request,env,{ownerKey:'site:chiritumo',intakeSource:'chiritumo'});
+        return await receive(request,env,{ownerKey:'site:chiritumo',intakeSource:'chiritumo'},ctx);
       }
       // An explicit bearer token can never fall back to an administrator cookie.
       if(url.pathname.startsWith('/api/') && request.headers.has('authorization')) {
         const identity=await sendingIdentity(request,env);
         if(url.pathname!=='/api/receive'||request.method!=='POST') return json({ok:false,code:'SCOPE_DENIED',error:'このトークンは送信専用です'},403);
         await limitSending(env,identity.deviceId);
-        return await receive(request,env,identity);
+        return await receive(request,env,identity,ctx);
       }
       if (url.pathname === "/api/auth/status" && request.method === "GET") {
         const device = await registeredDevice(env);
@@ -1054,7 +1061,7 @@ export default {
         const body=await request.json().catch(()=>({}));
         return json(await publishBucket(env,publishSlot[1],body.bucket_id,body));
       }
-      if (url.pathname === "/api/receive" && request.method === "POST") return receive(request, env);
+      if (url.pathname === "/api/receive" && request.method === "POST") return receive(request, env, undefined, ctx);
       if (url.pathname === "/api/trial/reset" && request.method === "POST") return resetTrialData(request, env);
       if (url.pathname === "/api/jobs/latest" && request.method === "GET") return latestJob(env);
       const jobStatus = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/i);
@@ -1068,6 +1075,19 @@ export default {
         return json({ok:true,...await saveDisplayName(env,displayNameRoute[1],displayNameRoute[2],body.display_name)});
       }
       if (url.pathname === "/api/cards" && request.method === "GET") return listCards(env,requestIntakeSource(url));
+      if (url.pathname === '/api/single-wins/availability' && request.method === 'GET')
+        return json(await singleWinAvailability(env));
+      const singleWinReceipt = url.pathname.match(/^\/api\/single-wins\/([0-9a-f-]{36})$/i);
+      if (singleWinReceipt && request.method === 'GET') return json(await singleWinStatus(env,singleWinReceipt[1]));
+      const singleWin = url.pathname.match(/^\/api\/cards\/([0-9a-f-]{36})\/(single-win-preview|single-win)$/i);
+      if (singleWin?.[2] === 'single-win-preview' && request.method === 'GET')
+        return json(await singleWinPreview(env,singleWin[1],requestIntakeSource(url)));
+      if (singleWin?.[2] === 'single-win' && request.method === 'POST') {
+        if (request.headers.get('origin') !== url.origin)
+          return json({ok:false,error:'管理画面から操作してください',code:'SCOPE_DENIED'},403);
+        const body = await request.json().catch(() => ({}));
+        return json(await registerSingleWin(env,singleWin[1],requestIntakeSource(url),body));
+      }
       if (url.pathname === "/api/usage" && request.method === "GET") return json({ok:true,...await usageOverview(env,requestIntakeSource(url))});
       if (url.pathname === "/api/usage/recheck" && request.method === "POST") {
         const body=await request.json().catch(()=>({}));
@@ -1285,6 +1305,7 @@ export default {
     })());
   }
 };
+
 
 
 

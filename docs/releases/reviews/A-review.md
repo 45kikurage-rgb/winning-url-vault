@@ -1,0 +1,15 @@
+# A independent gate: release provenance and preserved download contracts
+
+Reviewer: root/A. Result: PASS for the candidate-provenance and release-package contract gate. Production publication, signing-run receipts and physical-device acceptance are separate checks recorded after execution.
+
+Root reviewed G's publication code and tests, then independently ran the 8 Worker delivery/route tests and 11 candidate rejection tests. They passed. The fixed code62 routes advance the TEST aliases while forwarding existing handlers and preserving stable52 and older downloads. Publication checks all old modules/settings/routes and refuses concurrent source changes; it does not write application DB or R2 data. Signing uses the existing certificate and two independently restored copies in distinct runners, without creating a new key.
+
+Root downloaded Android CI run 41422469968 artifact 13131095118 through the GitHub connector, verified ZIP SHA256 aa0c5b8fc8af0d10a895160b76b735e66a19d44ff3f422e95075da0603af3878, then recomputed the APK digest and summed every JUnit XML independently of build-result.json. The counts agree: 185 tests, 0 failures/errors/skips. The implementation lifecycle class contains 36 cases and B's independent class 12. Package badging is com.aruno.arunomatic, code62, v0.3.8-winning-share-receipt, minSdk26 and targetSdk35. Unsigned APK SHA256: b84d741849b7fa911c025d1b4299d4d7eb386762007fdea563bc0cf07c5b8a08. Source: 3df5d344127c77c997027e5e136a87951b4ea3f5. PR44 merged to Android main as 4496698a1d4e498f2e5b26047e0bef86aadab29e.
+
+During concurrent work, Ops main advanced from cb0f1e4 to dcc0921 with another project's code14 changes. Root inspected the full compare file list and fetched the newer signing configuration. The ARUNOMATIC record is byte-equivalent as parsed JSON. The new publication tree will use the newer main and only add the scoped code62 project/workflow/request, preserving the other project's changes.
+
+Root also downloaded successful Align candidate run 41423641822 artifact 13129819607 and verified ZIP SHA256 0568544ea69a1cf62c16f226e9c33d0917bded228898251bbdca94418cfc61da. Its built Worker smoke exercised VaultCampaignAPI with 15 idempotent retries, durable outbox, unchanged layout state and blocked public routes, plus existing admin/asset/device/pairing/Aruclick and 15-device layout flows. All reported PASS. These used isolated databases; no production test campaign was created.
+
+Cross-review findings were not treated as success until corrected: root independently observed actual browser header text overlap in CI2 and sent it to C/G for correction and a new text-Range gate. G owns the final browser verdict; A does not claim it passed from the isolated card fixture.
+
+Limits: no physical Pixel 10, installed APK, real HOME navigation or production multi-device latency measurements were performed. The final signed APK/certificate/download and live Web deployment must be verified separately. Existing malformed product metadata is rejected with its specific reason before creating a campaign; no nonexistent product-edit screen is advertised and original metadata is not rewritten.

@@ -1,0 +1,97 @@
+name: Mobile reliability and single-win production release
+on:
+  push:
+    branches: [main]
+    paths: [docs/releases/mobile-reliability-20261102.md]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: winning-url-vault-production
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 18
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Require this main commit's existing CI success
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json,os,time,urllib.request
+          url=f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/ci.yml/runs?head_sha={os.environ['GITHUB_SHA']}"
+          for attempt in range(60):
+              req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              runs=json.load(urllib.request.urlopen(req))['workflow_runs']
+              candidates=[r for r in runs if r['head_sha']==os.environ['GITHUB_SHA'] and r['event']=='push']
+              if candidates and candidates[0]['status']=='completed':
+                  assert candidates[0]['conclusion']=='success','CI_FAILED'
+                  print('Exact main SHA CI succeeded');break
+              time.sleep(5)
+          else:raise SystemExit('CI_TIMEOUT')
+          PY
+      - name: Check the seven completed independent reviews against candidate files
+        run: node scripts/check-release-reviews.mjs
+      - run: python3 scripts/test-mobile-release-guards.py
+      - run: python3 scripts/test-mobile-release-independent.py
+      - name: Install Japanese fonts for rendered mobile verification
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends fontconfig fonts-noto-cjk fonts-noto-color-emoji
+          fc-cache -f
+          fc-match -f '%{family}\n' 'sans-serif:lang=ja'
+      - name: Exercise real mobile renderers and existing sorting controls
+        run: |
+          npm install --prefix "$RUNNER_TEMP/vault-ui-browser" --no-audit --no-fund --package-lock=false playwright@1.58.2
+          node "$RUNNER_TEMP/vault-ui-browser/node_modules/playwright/cli.js" install --only-shell chromium
+          MOBILE_LAYOUT_SCREENSHOT_DIR=mobile-name-layout-evidence NODE_PATH="$RUNNER_TEMP/vault-ui-browser/node_modules" node scripts/check-mobile-name-layout.cjs
+          NODE_PATH="$RUNNER_TEMP/vault-ui-browser/node_modules" node scripts/check-mobile-e2e.cjs
+          NODE_PATH="$RUNNER_TEMP/vault-ui-browser/node_modules" node scripts/check-sorting-delete-ui.cjs
+      - name: Build candidate without credentials
+        run: npx wrangler deploy --dry-run --outdir release-bundle
+      - name: Check production baseline and recovery checkpoint
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-mobile-reliability.py preflight
+      - name: Add only the reviewed single-win receipt table
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-mobile-reliability.py migrate
+      - name: Publish candidate and preserve existing settings
+        id: publish
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy --config .release-wrangler.json --keep-vars --message "Mobile reliability and single wins $GITHUB_SHA"
+      - name: Verify deployed bytes, schema, binding, and authentication
+        id: verify
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-mobile-reliability.py verify
+      - name: Restore previous version if publication verification failed
+        if: failure() && steps.publish.conclusion == 'success' && steps.verify.conclusion == 'failure'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-mobile-reliability.py rollback
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-reliability-${{ github.run_id }}
+          path: |
+            mobile-reliability-release-evidence.json
+            mobile-name-layout-evidence/
+            mobile-e2e-evidence/
+          if-no-files-found: warn
+          retention-days: 30
