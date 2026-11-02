@@ -428,7 +428,8 @@ body[data-active-tab="chiritumo"] #tabSorting{display:block}
 #singleWinDialog button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .single-win-details{white-space:pre-wrap;overflow-wrap:anywhere}
 #singleWinRecovery button{min-height:2.75rem;max-width:100%;white-space:normal;overflow-wrap:anywhere}
-#assignmentDialog .dialog-head{flex-wrap:wrap}
+/* A long full product title must scroll away instead of covering the actions. */
+#assignmentDialog .dialog-head{position:static;top:auto;flex-wrap:wrap;align-items:flex-start}
 #assignmentDialog .dialog-head>div{flex:1 1 12rem;min-width:0}
 #assignmentDialog h2,#assignmentDialog p{overflow-wrap:anywhere}
 #assignmentDialog button{max-width:100%;white-space:normal;overflow-wrap:anywhere}

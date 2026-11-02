@@ -82,7 +82,9 @@ function fixture({ pending = false, noCampaigns = false } = {}) {
       if (p.startsWith('/api/display-names/')) { const [, , , scope, id] = p.split('/'); state.names.push({scope,target_id:id,display_name:body.display_name}); return success({}); }
       if (p === '/api/pending/pending-one/confirm') {
         if (state.failConfirm) return failure('合成保存障害');
-        state.pending=[]; return success({classified:2});
+        // Match the real confirmation receipt, including its explicit action.
+        // The UI deliberately refuses an incomplete or mismatched success body.
+        state.pending=[]; return success({action:body.action,productId:'confirmed-product',cardId:'confirmed-card',classified:2});
       }
       const assignment = p.match(/^\/api\/cards\/([^/]+)\/(assign|single-win)$/);
       if (assignment) {
@@ -264,7 +266,12 @@ async function verifyMatrix() {
     await page.waitForFunction(()=>document.querySelector('#assignmentDialog').open && !document.querySelector('#assignmentConfirm').disabled);
     await layout(page,'#assignmentDialog',`assignment entry ${width}/${scale}`);
     assert.equal(await page.locator('#assignmentSingleWin').isVisible(),true,'Compact row must retain the single-win entry');
-    await page.locator('#assignmentClose').click();
+    await page.locator('#assignmentSingleWin').click();
+    const singlePreview=page.locator('#singleWinDialog[open]');await singlePreview.waitFor();
+    await singlePreview.locator('[data-details]').filter({hasText:'登録対象 3件'}).waitFor();
+    assert.equal(await page.locator('#assignmentDialog').evaluate(el=>el.open),false);
+    await layout(page,'#singleWinDialog',`single-win preview ${width}/${scale}`);
+    await singlePreview.locator('[data-close]').click();
     await clickTab(page,'winning');await page.locator('[data-name-id="product-long"]').waitFor();
     await layout(page,'#app',`winning ${width}/${scale}`);await checkName(page,'winning','product-long');
     assert.equal(await page.locator('[data-tiktok-copy]').count(),1,'Existing TikTok card must remain available');
@@ -278,7 +285,7 @@ async function verifyMatrix() {
     await page.locator('[data-provisional-slot="A"] details > summary').click();await layout(page,'#tabSorting',`provisional details ${width}/${scale}`);
     await page.screenshot({path:path.join(evidence,`actual-page-${width}-${scale}x.png`)});
     assert.deepEqual(pageErrors,[]);assert.deepEqual(data.unexpected,[]);
-    report.passed.push({name:'Actual-page mobile matrix',width,rootTextScale:scale,tabs:['sorting','winning','chiritumo','receive'],fullNameAndAlias:true,tiktokAndProvisional:true,compactFourActions:'one-row/order/44px/no-clipped-text',largeCount:123456789});
+    report.passed.push({name:'Actual-page mobile matrix',width,rootTextScale:scale,tabs:['sorting','winning','chiritumo','receive'],fullNameAndAlias:true,tiktokAndProvisional:true,singleWinPreviewReachable:true,compactFourActions:'one-row/order/44px/no-clipped-text',largeCount:123456789});
     await context.close();
     });
   }
