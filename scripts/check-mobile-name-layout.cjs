@@ -126,7 +126,7 @@ const staticFiles = new Set(['styles.css', 'winning-view.js', 'winning-folders.j
           }));
           const actionRow = [...root.querySelectorAll('.card-actions button')].map(node => {
             const box = node.getBoundingClientRect(), range = document.createRange(); range.selectNodeContents(node);
-            return { top:box.top, left:box.left, right:box.right, height:box.height,
+            return { top:box.top, left:box.left, right:box.right, height:box.height, width:box.width,
               lines:range.getClientRects().length,
               action:['assignCard','deleteSorting','editSortingName','card'].find(key => key in node.dataset) || 'unexpected' };
           });
@@ -159,6 +159,7 @@ const staticFiles = new Set(['styles.css', 'winning-view.js', 'winning-folders.j
           assert.deepEqual(metrics.actionRow.map(button => button.action), ['assignCard','deleteSorting','editSortingName','card'],
             'The card must expose exactly four actions in the agreed order');
           for (const [position, button] of metrics.actionRow.entries()) {
+            assert(button.width >= 44, JSON.stringify({ scenario, reason:'Each sorting action needs a 44px-wide touch target at every text scale', button }));
             assert(Math.abs(button.top - metrics.actionRow[0].top) <= 1,
               JSON.stringify({ scenario, reason:'Sorting actions must stay on one row', actionRow:metrics.actionRow }));
             if (position) assert(button.left >= metrics.actionRow[position - 1].right,

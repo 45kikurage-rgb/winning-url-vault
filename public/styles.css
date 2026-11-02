@@ -296,11 +296,11 @@ body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;font-weight:4
 #app button,#app summary,dialog button{min-height:2.75rem}
 /* Long action labels must fit their own panel even with enlarged system text. */
 #app button,dialog button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
-#app .panel{border:1px solid #65758e;background:transparent;padding:.75rem;margin-top:.5rem}
+#app .panel{border:1px solid #65758e;background:transparent;padding:.75rem min(.75rem,16px);margin-top:.5rem}
 #app .panel p{font-size:.875rem}
 #app .winning-panel{padding:0;border:0;margin:0}
 .page-metric{margin:0 0 .6rem;font-size:.875rem}
-#app .receive.panel{padding:.75rem;margin-top:0}
+#app .receive.panel{padding:.75rem min(.75rem,16px);margin-top:0}
 .input-title{display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-top:.4rem}
 .input-title label{font-size:.875rem}
 #app .input-title button{font-size:.8125rem;padding:.4rem .6rem}
@@ -316,7 +316,7 @@ body{font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;font-weight:4
 #app #pendingBanner{width:100%;text-align:left;margin-bottom:.5rem;white-space:normal}
 #app #cards{grid-template-columns:minmax(0,1fr);gap:.6rem}
 #app #cards>[data-sorting-card],#app .coupon,#app .coupon>div{min-width:0}
-#app .coupon{border:1px solid #65758e;min-height:0;padding:.75rem;background:transparent}
+#app .coupon{border:1px solid #65758e;min-height:0;padding:.75rem min(.75rem,16px);background:transparent}
 #app .coupon h3{width:14em;max-width:100%;min-width:0;font-size:1rem;font-weight:700;line-height:1.5;margin:0 0 .3rem;white-space:nowrap;overflow:hidden;overflow-wrap:normal;text-overflow:ellipsis}
 .sorting-spec{white-space:normal;overflow-wrap:anywhere}
 #app .coupon .meta{font-size:.8125rem}

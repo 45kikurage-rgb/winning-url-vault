@@ -228,8 +228,34 @@ async function checkName(page,scope,id) {
   assert.equal((await dialog.locator('.product-name-detail span').allTextContents())[1],longName,'Alias edit must retain formal name');
   await dialog.locator('[data-name-close]').click();
 }
+async function runScenario(name,execute) {
+  activePage=null;
+  report.scenarios ||= [];
+  try {
+    await execute();
+    report.scenarios.push({name,status:'passed'});
+  } catch(error) {
+    const diagnostic=error.stack || String(error);
+    report.errors.push(`${name}: ${diagnostic}`);
+    const screenshot=`failure-${name.replace(/[^a-z0-9-]/gi,'-')}.png`;
+    report.scenarios.push({name,status:'failed',error:diagnostic,screenshot});
+    console.error(`[${name}] FAIL: ${diagnostic}`);
+    try {
+      await activePage?.screenshot({path:path.join(evidence,screenshot)});
+      if(report.errors.length===1)await activePage?.screenshot({path:path.join(evidence,'failure.png')});
+    } catch { /* Browser crashes can prevent screenshots; retain the diagnostic. */ }
+  } finally {
+    // Every scenario gets an isolated browser context and synthetic API state.
+    // A failed case must not leave dialogs, offline state or polling in the next.
+    const cleanup=await Promise.allSettled((browser?.contexts() || []).map(context=>context.close()));
+    for(const result of cleanup)if(result.status==='rejected')report.errors.push(`${name}: context cleanup failed: ${String(result.reason)}`);
+    activePage=null;
+    fs.writeFileSync(path.join(evidence,'results.json'),JSON.stringify(report,null,2)+'\n');
+  }
+}
 async function verifyMatrix() {
   for (const width of [320,360,393,412]) for (const scale of [1,2]) {
+    await runScenario(`mobile-${width}-${scale}x`,async()=>{
     const test=await openPage(width,scale);const {page,context,data,pageErrors}=test;
     if(width===320&&scale===1)await checkJapaneseFont(context,page);
     await layout(page,'#app',`sorting ${width}/${scale}`);await checkCompactActions(page,'arunomatic',scale);await checkName(page,'sorting','arunomatic-card-0');
@@ -254,6 +280,7 @@ async function verifyMatrix() {
     assert.deepEqual(pageErrors,[]);assert.deepEqual(data.unexpected,[]);
     report.passed.push({name:'Actual-page mobile matrix',width,rootTextScale:scale,tabs:['sorting','winning','chiritumo','receive'],fullNameAndAlias:true,tiktokAndProvisional:true,compactFourActions:'one-row/order/44px/no-clipped-text',largeCount:123456789});
     await context.close();
+    });
   }
 }
 async function verifyAssignment(source) {
@@ -339,14 +366,38 @@ async function verifyPwa(precache) {
 
 (async()=>{
   try {
+    if(process.argv.includes('--aggregation-self-test')) {
+      const executed=[];
+      for(const [name,fails] of [['first',true],['middle',false],['last',true]])await runScenario(name,async()=>{
+        executed.push(name);if(fails)throw new Error('intentional aggregation control');
+      });
+      assert.deepEqual(executed,['first','middle','last']);
+      assert.deepEqual(report.scenarios.map(result=>result.status),['failed','passed','failed']);
+      assert.equal(report.errors.length,2);
+      report.status='aggregation-self-test-passed';report.browserExecuted=false;
+      console.log('Aggregation control passed: both failures collected and later scenarios executed; browser scenarios NOT RUN.');return;
+    }
     const precache=checkPrecacheClosure();
-    if(process.argv.includes('--static-only')) {console.log('PWA static precache/import contract passed; browser scenarios NOT RUN.');return;}
+    if(process.argv.includes('--static-only')) {report.status='static-only';console.log('PWA static precache/import contract passed; browser scenarios NOT RUN.');return;}
     const {chromium}=require('playwright');await startServer();
     browser=await chromium.launch({headless:true,...(process.env.BROWSER_EXECUTABLE_PATH?{executablePath:process.env.BROWSER_EXECUTABLE_PATH}:{})});
-    await verifyMatrix();await verifyAssignment('arunomatic');await verifyAssignment('chiritumo');await verifyPendingFailure();await verifySingleWin();await verifyPwa(precache);
+    report.browserExecuted=true;
+    await verifyMatrix();
+    await runScenario('assignment-arunomatic',()=>verifyAssignment('arunomatic'));
+    await runScenario('assignment-chiritumo',()=>verifyAssignment('chiritumo'));
+    await runScenario('edited-original-ok',verifyPendingFailure);
+    await runScenario('single-win-recovery',verifySingleWin);
+    await runScenario('pwa-offline',()=>verifyPwa(precache));
+    if(report.errors.length) {
+      report.status='failed';
+      const error=new Error(`Independent actual-page E2E failed: ${report.scenarios.filter(result=>result.status==='failed').length}/${report.scenarios.length} scenarios; ${report.errors.length} diagnostics. See mobile-e2e-evidence/results.json.`);
+      error.scenarioAggregate=true;throw error;
+    }
+    report.status='passed';
     console.log(`Independent actual-page mobile E2E: ${report.passed.length} acceptance scenarios passed.`);
   } catch(error) {
-    report.errors.push(error.stack || String(error));
+    report.status='failed';
+    if(!error.scenarioAggregate)report.errors.push(error.stack || String(error));
     try {await activePage?.screenshot({path:path.join(evidence,'failure.png')});}catch{}
     throw error;
   } finally {
