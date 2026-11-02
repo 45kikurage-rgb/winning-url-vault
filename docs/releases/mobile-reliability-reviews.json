@@ -66,7 +66,7 @@
     "scripts/check-release-reviews.mjs": "96e55d1f45c5fdc9b8d234f5763d2f751b64c881d6a0f0af5b6a1c05b511a21d",
     "scripts/check-sorting-delete-ui.cjs": "93c2b2a3ffa87b532e01937ea7ec24c0975d22c019004364bd372c3e77131cbe",
     "scripts/release-mobile-reliability.py": "4352ff288f48c0853d38f5f2a53ae761221db5cd802bd8a0fc513f2e8245aabe",
-    "scripts/release-provisional-controls.py": "359e0adac7d1def57e1d82afb39dbf3b461a3f918b8e58d5f2fde013613ca40a",
+    "scripts/release-provisional-controls.py": "d2dc8f8d48f85d4c73cb7ba642e8ce3483cee8f35e56a37c9ddfd946ef453311",
     "scripts/test-mobile-release-guards.py": "9f596df857321032d480b6bbd4ec82f4ca126879f6cdf839516d56dd9941afe4",
     "scripts/test-mobile-release-independent.py": "0f8bae7c09be3c3ad6a19cdf1bbd4fa552c01eb008e76accbb9021eba7cf68c0",
     "src/index.js": "57ae98a9f2ee8e7de078d3d0e6189027b6c817497ecfe017d3f23e15befd3a5f",
