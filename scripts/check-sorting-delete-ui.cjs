@@ -22,8 +22,10 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
     ${cardCode}\n${deleteCode}
     load().then(()=>{document.querySelector('[data-delete-sorting]').onclick=event=>deleteSortingCard(event.currentTarget);});
    `});
-   const button=page.getByRole('button',{name:'削除（1）',exact:true});
-   await button.waitFor();assert((await button.boundingBox()).height>=44);
+   const button=page.locator('[data-delete-sorting="card"]');
+   await button.waitFor();assert.equal(await button.textContent(),'削除');
+   assert.equal(await page.locator('.unassigned-label').textContent(),'未仕分け1件');
+   assert((await button.boundingBox()).height>=44);
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
    page.once('dialog',dialog=>dialog.dismiss());await button.click();
    assert.equal(await page.evaluate(()=>window.deleteCalls),0);assert(await button.isEnabled());
@@ -35,3 +37,4 @@ const fs=require('node:fs'),path=require('node:path'),assert=require('node:asser
   console.log('Sorting deletion mobile UI passed at 320/360/412px: visible button, no horizontal overflow, cancel, confirmation and removal.');
  } finally {await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1)});
+

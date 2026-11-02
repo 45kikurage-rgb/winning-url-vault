@@ -425,7 +425,7 @@ body[data-active-tab="chiritumo"] #tabSorting{display:block}
 #singleWinDialog{width:min(36rem,calc(100% - 1.25rem));max-width:calc(100% - 1.25rem);max-height:90dvh;overflow:auto}
 #singleWinDialog .dialog-head{flex-wrap:wrap}
 #singleWinDialog .dialog-head h2{min-width:0;overflow-wrap:anywhere}
-#singleWinDialog button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
+#singleWinDialog button{min-height:2.75rem;max-width:100%;font-size:inherit;white-space:normal;overflow-wrap:anywhere}
 .single-win-details{white-space:pre-wrap;overflow-wrap:anywhere}
 #singleWinRecovery button{min-height:2.75rem;max-width:100%;white-space:normal;overflow-wrap:anywhere}
 /* A long full product title must scroll away instead of covering the actions. */
