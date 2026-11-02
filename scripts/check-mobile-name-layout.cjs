@@ -130,14 +130,27 @@ const staticFiles = new Set(['styles.css', 'winning-view.js', 'winning-folders.j
               lines:range.getClientRects().length,
               action:['assignCard','deleteSorting','editSortingName','card'].find(key => key in node.dataset) || 'unexpected' };
           });
+          const headerText = [...document.querySelectorAll('#app>header h1,#headerRevenue span,#headerRevenue strong')].map(node => {
+            const range = document.createRange(); range.selectNodeContents(node);
+            const box = range.getBoundingClientRect();
+            return { text:node.textContent, left:box.left, right:box.right, top:box.top, bottom:box.bottom };
+          });
           return { bad, portOverflow:root.scrollWidth - root.clientWidth,
-            name:{ width:box.width, height:box.height, max:14 * parseFloat(css.fontSize), overflow:css.overflowX, ellipsis:css.textOverflow }, buttons, actionRow };
+            name:{ width:box.width, height:box.height, max:14 * parseFloat(css.fontSize), overflow:css.overflowX, ellipsis:css.textOverflow }, buttons, actionRow, headerText };
         }, port);
         assert.deepEqual(metrics.bad, [], JSON.stringify({ scenario, metrics }));
         assert(metrics.portOverflow <= 1, JSON.stringify({ scenario, metrics }));
         assert(metrics.name.width <= metrics.name.max + 1, JSON.stringify({ scenario, metrics }));
         assert(metrics.name.height >= 44, JSON.stringify({ scenario, metrics }));
         assert.equal(metrics.name.overflow, 'hidden'); assert.equal(metrics.name.ellipsis, 'ellipsis');
+        for (const [position, text] of metrics.headerText.entries()) {
+          assert(text.left >= -1 && text.right <= width + 1, JSON.stringify({ scenario, reason:'Header text must stay inside the viewport', text }));
+          for (const other of metrics.headerText.slice(position + 1)) {
+            const overlapWidth = Math.min(text.right, other.right) - Math.max(text.left, other.left);
+            const overlapHeight = Math.min(text.bottom, other.bottom) - Math.max(text.top, other.top);
+            assert(overlapWidth <= 1 || overlapHeight <= 1, JSON.stringify({ scenario, reason:'Header title and revenue must not overlap', text, other }));
+          }
+        }
         for (const button of metrics.buttons) {
           assert(button.height >= 44, JSON.stringify({ scenario, button }));
           assert(button.scroll <= button.client + 1, JSON.stringify({ scenario, button }));

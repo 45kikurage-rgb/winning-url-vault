@@ -136,10 +136,35 @@ async function layout(page,selector,label,{targets=true}={}) {
   await settle(page);
   const metrics=await page.locator(selector).evaluate((root,targets)=>{
     const bad=[];const visible=node=>node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden';
+    const describe=node=>{
+      const ancestors=[];
+      for(let parent=node.parentElement;parent&&ancestors.length<5;parent=parent.parentElement){
+        const box=parent.getBoundingClientRect(),style=getComputedStyle(parent);
+        ancestors.push({tag:parent.tagName,id:parent.id,cls:parent.className,
+          ...(parent.tagName==='DETAILS'?{open:parent.open}:{}),left:box.left,right:box.right,width:box.width,
+          display:style.display,visibility:style.visibility,overflowX:style.overflowX});
+      }
+      return {tag:node.tagName,id:node.id,cls:node.className,text:node.textContent.replace(/\s+/g,' ').trim().slice(0,160),
+        data:Object.fromEntries([...node.attributes].filter(attribute=>attribute.name.startsWith('data-')).map(attribute=>[attribute.name,attribute.value.slice(0,160)])),ancestors};
+    };
     for (const node of root.querySelectorAll('button,input,select,textarea,[data-name-scope],.coupon,.winning-card')) {
       if (!visible(node)) continue;const b=node.getBoundingClientRect();
-      if (b.left < -1 || b.right > innerWidth+1 || b.width > innerWidth+1) bad.push({tag:node.tagName,id:node.id,cls:node.className,left:b.left,right:b.right});
-      if (targets && node.matches('button,[data-name-scope]') && b.height < 43.5) bad.push({id:node.id,tag:node.tagName,height:b.height});
+      if (b.left < -1 || b.right > innerWidth+1 || b.width > innerWidth+1) bad.push({...describe(node),left:b.left,right:b.right,width:b.width});
+      if (targets && node.matches('button,[data-name-scope]') && b.height < 43.5) bad.push({...describe(node),height:b.height});
+    }
+    if(root.id==='app') {
+      const textBoxes=[...root.querySelectorAll('header h1,#headerRevenue span,#headerRevenue strong')].filter(visible).map(node=>{
+        const range=document.createRange();range.selectNodeContents(node);const box=range.getBoundingClientRect();
+        return {node,box};
+      });
+      for(const {node,box} of textBoxes) if(box.left < -1 || box.right > innerWidth+1)
+        bad.push({...describe(node),kind:'header-text-outside-viewport',left:box.left,right:box.right});
+      const title=textBoxes.find(({node})=>node.tagName==='H1');
+      if(title)for(const revenue of textBoxes.filter(({node})=>node.tagName!=='H1')) {
+        const overlapX=Math.min(title.box.right,revenue.box.right)-Math.max(title.box.left,revenue.box.left);
+        const overlapY=Math.min(title.box.bottom,revenue.box.bottom)-Math.max(title.box.top,revenue.box.top);
+        if(overlapX>1&&overlapY>1)bad.push({...describe(revenue.node),kind:'header-title-revenue-overlap',overlapX,overlapY,title:title.node.textContent});
+      }
     }
     return {bad,overflow:root.scrollWidth-root.clientWidth,documentOverflow:document.documentElement.scrollWidth-innerWidth};
   },targets);

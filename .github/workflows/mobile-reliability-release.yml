@@ -46,6 +46,7 @@ jobs:
       - name: Check the seven completed independent reviews against candidate files
         run: node scripts/check-release-reviews.mjs
       - run: python3 scripts/test-mobile-release-guards.py
+      - run: python3 scripts/test-mobile-release-independent.py
       - name: Install Japanese fonts for rendered mobile verification
         run: |
           sudo apt-get update -qq

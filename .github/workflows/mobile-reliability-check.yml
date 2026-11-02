@@ -25,6 +25,7 @@ jobs:
       - run: npm ci
       - run: npm run check && npm test
       - run: python3 scripts/test-mobile-release-guards.py
+      - run: python3 scripts/test-mobile-release-independent.py
       - name: Install Japanese fonts for rendered mobile verification
         run: |
           sudo apt-get update -qq
