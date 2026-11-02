@@ -11,7 +11,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icon-any-192.png">
   <link rel="icon" type="image/png" href="/icon-any-192.png">
-  <link rel="stylesheet" href="/styles.css?v=20261101-sorting-delete">
+  <link rel="stylesheet" href="/styles.css?v=20261102-mobile-reliability">
 </head>
 <body>
 <section id="loginScreen" class="login-screen">
@@ -164,7 +164,7 @@
   <div class="dialog-head"><h2 id="displayNameTitle">表示名を変更</h2><button id="displayNameClose" type="button" class="secondary">閉じる</button></div>
   <p id="displayNameFormal" class="meta"></p>
   <label for="displayNameInput">表示名（全角14文字相当以内）</label><input id="displayNameInput" autocomplete="off" maxlength="28">
-  <p class="meta">半角は0.5文字。現在の一覧欄の幅で検査します。正式名・商品ID・他の表示箇所は変更しません。プレビューは横に動かして全文を確認できます。</p>
+  <p class="meta">半角は0.5文字。長い表示は一覧の枠内で省略され、商品名をタップすると全文を確認できます。正式商品名・商品IDは変わりません。</p>
   <div id="displayNamePreview" class="display-name-preview"><h3></h3></div>
   <p id="displayNameMessage" role="status"></p><button id="displayNameSave" type="button" disabled>表示名を保存</button>
 </dialog>
@@ -327,8 +327,9 @@
 </dialog>
 
 <dialog id="assignmentDialog">
-  <div class="dialog-head"><div><small>キャンペーン仕分け</small><h2 id="assignmentTitle">振り分け</h2></div><button id="assignmentClose" class="secondary">閉じる</button></div>
-  <p>同名キャンペーンは抽選開始日で区別します。内部ではcampaign_idを使用します。</p>
+  <div class="dialog-head"><div><small>当選の仕分け</small><h2 id="assignmentTitle">振り分け</h2></div><button id="assignmentClose" class="secondary">閉じる</button></div>
+  <div class="assignment-single-win"><p>キャンペーン名がない少数の当選はこちらから登録できます。</p><button id="assignmentSingleWin" class="secondary">単発当選として登録</button></div>
+  <p>キャンペーンがある場合は下から選んでください。同名のキャンペーンは抽選開始日で区別します。</p>
   <label>仕分け先キャンペーン
     <select id="assignmentCampaign"></select>
   </label>
@@ -361,9 +362,10 @@
   <p id="trialResetMessage" class="result" aria-live="polite"></p>
   <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
-<script type="module" src="/app.js?v=20261101-sorting-delete"></script>
+<script type="module" src="/app.js?v=20261102-mobile-reliability"></script>
 </body>
 </html>
+
 
 
 

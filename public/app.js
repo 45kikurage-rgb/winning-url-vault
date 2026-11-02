@@ -1,6 +1,7 @@
+import { initSingleWinUI } from './single-win-ui.js';
 import { isTikTokVideoCard } from './tiktok-video.js';
 import { tikTokVideoCardHtml, initTikTokVideosUI } from './tiktok-videos-ui.js';
-import { nameUnits, validateDisplayName, nameFits } from './display-name.js';
+import { nameUnits, validateDisplayName } from './display-name.js';
 import { DEFAULT_VIEW, normalizeView, attentionReasons, orderWinningItems, expiryLabel, selectWinningItems } from './winning-view.js';
 import { currentWinningMonth, winningMonth, winningMonthLabel, groupWinningFolders } from './winning-folders.js';
 import { predictAssignmentCampaign } from './assignment-prediction.js';
@@ -47,6 +48,43 @@ async function openDisplayName(scope,id) {
   await document.fonts.ready;
   checkDisplayName();
 }
+function openProductName(scope, id) {
+  const item = scope === 'sorting' ? state.cards.get(id) : winningProduct(id);
+  if (!item) return;
+  let dialog = $('productNameDialog');
+  if (!dialog) {
+    dialog = document.createElement('dialog');
+    dialog.id = 'productNameDialog';
+    dialog.setAttribute('aria-labelledby', 'productNameTitle');
+    dialog.innerHTML = '<div class="dialog-head"><h2 id="productNameTitle">商品名・詳細</h2><button type="button" class="secondary" data-name-close>閉じる</button></div><div class="product-name-detail"></div><button type="button" class="secondary" data-name-edit>表示名を変更</button>';
+    document.body.append(dialog);
+    dialog.querySelector('[data-name-close]').onclick = () => dialog.close();
+  }
+  const detail = dialog.querySelector('.product-name-detail');
+  const fields = [
+    ['表示名', displayLabel(scope, id, item.display_name || item.product_name)],
+    ['正式商品名', item.raw_name || item.product_name || item.display_name || '未取得'],
+    ['容量・規格', item.specification || item.product_spec || '規格なし'],
+    ['利用先', item.redeem_place || item.redemption_place || '未取得'],
+    ['期限', item.expires_on || item.valid_until || (isEraberuPay(item) ? '期限なし' : '未取得')]
+  ];
+  detail.replaceChildren(...fields.map(([label, value]) => {
+    const row = document.createElement('p'), title = document.createElement('strong'), text = document.createElement('span');
+    title.textContent = label; text.textContent = value; row.append(title, text); return row;
+  }));
+  dialog.querySelector('[data-name-edit]').onclick = () => { dialog.close(); void openDisplayName(scope, id); };
+  if (!dialog.open) dialog.showModal();
+}
+function bindProductNames() {
+  document.querySelectorAll('[data-name-scope]').forEach(field => {
+    field.setAttribute('role', 'button'); field.tabIndex = 0; field.setAttribute('aria-haspopup', 'dialog');
+    field.setAttribute('aria-label', `${field.textContent}：全文を確認`);
+    field.onclick = () => openProductName(field.dataset.nameScope, field.dataset.nameId);
+    field.onkeydown = event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); field.click(); }
+    };
+  });
+}
 function checkDisplayName() {
   if (!editingName) return false;
   const value = $('displayNameInput').value.trim(), field = displayNameField(editingName.scope,editingName.id);
@@ -54,9 +92,9 @@ function checkDisplayName() {
   preview.textContent = value;
   const style = field && getComputedStyle(field);
   if (style) { preview.style.font = style.font; preview.style.letterSpacing = style.letterSpacing; }
-  const error = validateDisplayName(value) || (!nameFits(field,value) ? '現在の一覧の幅に収まりません。表示名を短くしてください。' : '');
-  // The preview uses its own real dimensions; it never ellipsizes to imply a pass.
-  $('displayNameMessage').textContent = error || `${nameUnits(value)}／14文字相当・一覧の1行幅に収まります。`;
+  const error = validateDisplayName(value);
+  // The list has a bounded width. Text size never changes which aliases may be saved.
+  $('displayNameMessage').textContent = error || `${nameUnits(value)}／14文字相当・収まらない部分は商品名をタップして確認できます。`;
   $('displayNameSave').disabled = Boolean(error);
   return !error;
 }
@@ -121,6 +159,8 @@ function switchTab(name) {
   }
   document.querySelectorAll("[data-tab]").forEach(button => button.classList.toggle("active", button.dataset.tab === selected));
   try { localStorage.setItem("winning-url-vault:tab", selected); } catch {}
+  renderSortingNotice();
+  refreshSingleWinRecovery();
   if(selected==='receive')void load();
   if (selected === "winning") loadWinningLists();
   if (["sorting","chiritumo"].includes(selected)) {
@@ -334,7 +374,7 @@ function pendingCard(item) {
   const image = item.image_data_uri
     ? `<img src="${esc(item.image_data_uri)}" alt="${esc(item.raw_name)}の商品画像">`
     : '<div class="image-tools"><div class="image-empty">画像なし</div><button class="secondary" data-action="reanalyze">画像を再取得</button></div>';
-  return `<article class="pending-card" data-pending="${esc(item.id)}">
+  return `<article class="pending-card" data-pending="${esc(item.id)}" data-source="${esc(item.intake_source || state.sortingSource)}">
     ${image}<div class="pending-fields">
       <label>正式商品名<input name="raw_name" value="${esc(item.raw_name)}" readonly></label>
       <label>判定用商品名<input name="normalized_name" value="${esc(item.normalized_name)}" readonly></label>
@@ -344,7 +384,7 @@ function pendingCard(item) {
       ${isEraberuPay(item) ? "" : `<label>使用期限<input name="expires_on" type="date" value="${esc(item.expires_on)}" readonly></label>`}
       <p class="waiting">完全一致グループ ${Number(item.item_count || 0).toLocaleString()}件（残りの解析は継続中）</p>
       <button class="secondary copy-analysis" data-action="copy">ChatGPT用にコピー</button>
-      <div class="confirm-actions"><button data-action="ok">OK</button><button class="secondary" data-action="edit">修正</button><button class="danger" data-action="cancel">キャンセル</button></div>
+      <p class="confirmation-message hidden" role="status"></p><div class="confirm-actions"><button data-action="ok">この内容で確定</button><button class="secondary" data-action="edit">内容を修正</button><button class="danger" data-action="cancel">未判定に戻す</button></div>
     </div></article>`;
 }
 
@@ -356,16 +396,27 @@ function cardHtml(card) {
   </div>`).join("");
   return `<article class="coupon">
     <div><h3 data-name-scope="sorting" data-name-id="${esc(card.id)}" title="${esc(card.raw_name || card.display_name)}">${esc(displayLabel('sorting',card.id,card.display_name))}</h3><div class="meta sorting-spec">${esc(card.specification || '規格未設定')}／${esc(card.redeem_place)}</div>
-    ${isEraberuPay(card) ? "" : `<div class="meta">期限 ${esc(card.expires_on || "期限なし")}</div>`}${(card.assignments || []).some(row=>row.sync_status==='failed') ? '<p class="sync-error">同期失敗あり：割当内訳を確認してください。</p>' : ''}${assignments ? `<details class="assignment-list"><summary>割当済み${(card.assignments || []).reduce((sum,row)=>sum+Number(row.current_winner_count || 0),0).toLocaleString()}件／${esc(card.assignments[0].campaign_name || card.assignments[0].campaign_id)}</summary>${assignments}</details>` : '<div class="unassigned-label">解析済み・未仕分け</div>'}</div>
+    ${isEraberuPay(card) ? "" : `<div class="meta">期限 ${esc(card.expires_on || "期限なし")}</div>`}${(card.assignments || []).some(row=>row.sync_status==='failed') ? '<p class="sync-error">同期失敗あり：割当内訳を確認してください。</p>' : ''}<div class="unassigned-label">未仕分け${Number(card.unassigned_count || 0).toLocaleString()}件</div>${assignments ? `<details class="assignment-list"><summary>割当済み${(card.assignments || []).reduce((sum,row)=>sum+Number(row.current_winner_count || 0),0).toLocaleString()}件／${esc(card.assignments[0].campaign_name || card.assignments[0].campaign_id)}</summary>${assignments}</details>` : ''}</div>
     <div class="coupon-foot"><div class="card-actions">
-      ${Number(card.unassigned_count || 0) > 0 ? `<button data-assign-card="${esc(card.id)}" data-title="${esc(card.display_name)}">振り分け（${Number(card.unassigned_count).toLocaleString()}）</button>` : ""}
-      ${Number(card.unassigned_count || 0) > 0 ? `<button class="danger" data-delete-sorting="${esc(card.id)}">削除（${Number(card.unassigned_count).toLocaleString()}）</button>` : ""}
+      ${Number(card.unassigned_count || 0) > 0 ? `<button data-assign-card="${esc(card.id)}" data-title="${esc(card.display_name)}">振分</button>` : ""}
+      ${Number(card.unassigned_count || 0) > 0 ? `<button class="danger" data-delete-sorting="${esc(card.id)}">削除</button>` : ""}
       <button class="secondary" data-edit-sorting-name="${esc(card.id)}">表示名</button><button class="secondary" data-card="${esc(card.id)}" data-title="${esc(card.display_name)}">内容</button></div></div>
   </article>`;
 }
 
+function captureSortingPosition(remainingIds) {
+  const port = $('tabSorting'), top = port.getBoundingClientRect().top;
+  const anchor = [...$('cards').querySelectorAll(':scope > [data-sorting-card]')].find(node =>
+    (!remainingIds || remainingIds.has(node.dataset.sortingCard)) && node.getClientRects().length && node.getBoundingClientRect().bottom > top);
+  return { port, scrollTop: port.scrollTop, anchor, anchorTop: anchor?.getBoundingClientRect().top };
+}
+function restoreSortingPosition(position) {
+  if (position.anchor?.isConnected && position.anchor.getClientRects().length) {
+    position.port.scrollTop += position.anchor.getBoundingClientRect().top - position.anchorTop;
+  } else position.port.scrollTop = position.scrollTop;
+}
 function renderSortingCards(cards) {
-  const container = $('cards'), port = $('tabSorting'), scrollTop = port.scrollTop;
+  const container = $('cards'), position = captureSortingPosition(new Set(cards.map(card => card.id)));
   const current = new Map([...container.querySelectorAll(':scope > [data-sorting-card]')].map(node=>[node.dataset.sortingCard,node]));
   const next = cards.map(card=>{
     let node = current.get(card.id);
@@ -380,14 +431,14 @@ function renderSortingCards(cards) {
   });
   if (next.length) syncWinningChildren(container,next);
   else container.innerHTML='<div class="empty">仕分け待ちのカードはありません</div>';
-  port.scrollTop=scrollTop;
+  restoreSortingPosition(position);
 }
 async function load() {
   const source=state.sortingSource,sequence=++state.sortingLoadSequence;
   try {
     await loadDisplayNames();
     const [cards, pending, unresolved, usage] = await Promise.all([api("/api/cards"), api("/api/pending"), api("/api/unresolved"), api("/api/usage")]);
-    if(sequence!==state.sortingLoadSequence||source!==state.sortingSource)return;
+    if(sequence!==state.sortingLoadSequence||source!==state.sortingSource)return false;
     renderUsedCount(usage.usedIds);
     const total = cards.cards.reduce((sum, card) => sum + Number(card.count || 0), 0);
     $("total").textContent = `${total.toLocaleString()}件`;
@@ -404,7 +455,7 @@ async function load() {
     renderSortingCards(sortingCards);
     $("pendingSection").classList.toggle("hidden", pending.items.length === 0);
     state.pendingItems = new Map(pending.items.map(item => [item.id, item]));
-    if (!$("pendingList").querySelector(".editing")) $("pendingList").innerHTML = pending.items.map(pendingCard).join("");
+    if (!$("pendingList").querySelector(".editing, .saving")) $("pendingList").innerHTML = pending.items.map(pendingCard).join("");
     $("unknownList").innerHTML = unresolved.items.map(item => {
       const openUrl = item.openUrl || item.value;
       const open = /^https?:\/\//i.test(openUrl)
@@ -431,6 +482,7 @@ async function load() {
     state.cardsLoaded = true;
     $("sortingLoadStatus").classList.add("hidden");
     $("retrySortingLoad").classList.add("hidden");
+    return true;
   } catch (error) {
     // A transient network failure is not a failure of the saved cards.
     // Keep the last successful DOM and retry after returning to the app.
@@ -440,6 +492,7 @@ async function load() {
     $("sortingLoadStatus").textContent = "一時的に通信できません。前回のカード表示は保持しています。接続復帰時に自動再取得します。";
     $("sortingLoadStatus").classList.remove("hidden");
     $("retrySortingLoad").classList.remove("hidden");
+    return false;
   }
 }
 
@@ -564,6 +617,17 @@ function methodLabel(method) {
 }
 
 const tikTokVideoUI = initTikTokVideosUI({api,writeClipboard,refresh:loadWinningLists});
+const singleWinUI = initSingleWinUI({ api, onChange: refreshSingleWinRecovery,
+  onSaved: async (result, source) => {
+    await refreshAfterAssignment(result, source, '単発当選として登録しました');
+    if (result.device_warning) setSortingNotice(source, result.device_warning);
+  }
+});
+function refreshSingleWinRecovery() {
+  const position = captureSortingPosition();
+  singleWinUI.renderRecovery(state.sortingSource);
+  restoreSortingPosition(position);
+}
 
 function winningCardHtml(item) {
   if (isTikTokVideoCard(item)) return tikTokVideoCardHtml(item);
@@ -691,6 +755,7 @@ function winningProduct(productId) {
 }
 
 function bindWinningControls() {
+  bindProductNames();
   document.querySelectorAll("[data-tiktok-copy]").forEach(button=>button.onclick=()=>tikTokVideoUI.open());
   document.querySelectorAll("[data-tiktok-undo]").forEach(button=>button.onclick=()=>tikTokVideoUI.undo());
   document.querySelectorAll("[data-method-product]").forEach(button => button.onclick = () => openOutputMethod(button.dataset.methodProduct));
@@ -1191,8 +1256,49 @@ function bindCampaignControls() {
   document.querySelectorAll("[data-correct-campaign]").forEach(button => button.onclick = () => openCorrection(button.dataset.correctCampaign));
 }
 
+const sortingNotices = new Map();
+let assignmentPreviewRequest = 0, assignmentSaving = null;
+function renderSortingNotice() {
+  const position = captureSortingPosition();
+  const notice = sortingNotices.get(state.sortingSource);
+  let panel = $('sortingActionNotice');
+  if (!panel && notice) {
+    panel = document.createElement('section'); panel.id = 'sortingActionNotice';
+    panel.className = 'sorting-action-notice'; panel.setAttribute('role', 'status');
+    panel.innerHTML = '<p></p><div class="actions"><button type="button" class="secondary" data-notice-winning>当選リストを見る</button><button type="button" class="secondary" data-notice-dismiss>閉じる</button></div>';
+    $('sortingMetric').after(panel);
+    panel.querySelector('[data-notice-winning]').onclick = () => switchTab('winning');
+    panel.querySelector('[data-notice-dismiss]').onclick = () => { sortingNotices.delete(state.sortingSource); renderSortingNotice(); };
+  }
+  if (!panel) return;
+  panel.classList.toggle('hidden', !notice);
+  if (notice) {
+    panel.querySelector('p').textContent = notice.message;
+    panel.querySelector('[data-notice-winning]').hidden = !notice.showWinning;
+  }
+  restoreSortingPosition(position);
+}
+function setSortingNotice(source, message, showWinning = true) {
+  sortingNotices.set(source, { message, showWinning });
+  renderSortingNotice();
+}
+async function refreshAfterAssignment(result, source, label = '仕分けました') {
+  const saved = `${Number(result.assigned_count || 0).toLocaleString()}件を${label}。`;
+  setSortingNotice(source, saved);
+  const updates = await Promise.allSettled([load(), loadCampaigns(), loadWinningLists(), loadRevenueSummary()]);
+  const sorting = updates[0];
+  if (sorting.status === 'rejected' || sorting.value === false) {
+    setSortingNotice(source, `${saved} 一覧の更新ができませんでした。再読み込みで確認してください。`);
+  } else if (source === state.sortingSource) {
+    const remaining = [...state.cards.values()].reduce((sum, card) => sum + Number(card.unassigned_count || 0), 0);
+    setSortingNotice(source, `${saved} ${remaining ? `残り${remaining.toLocaleString()}件を続けて仕分けできます。` : '仕分け待ちのカードはありません。'}`);
+  }
+}
 async function openAssignment(cardId, title) {
+  if (assignmentSaving) return;
+  assignmentPreviewRequest++;
   state.assignmentCardId = cardId;
+  state.assignmentSource = state.sortingSource;
   state.assignmentPreview = null;
   $("assignmentTitle").textContent = `${title} を振り分け`;
   const available = state.campaigns.filter(campaign => !campaign.is_archived && ["active", "closing", "correcting"].includes(campaign.status));
@@ -1214,13 +1320,28 @@ async function openAssignment(cardId, title) {
   if (available.length) await loadAssignmentPreview();
 }
 
+async function openSingleWinFromAssignment() {
+  if (assignmentSaving || !$('assignmentDialog').open || !state.assignmentCardId) return;
+  const cardId = state.assignmentCardId, source = state.assignmentSource;
+  assignmentPreviewRequest++;
+  state.assignmentPreview = null;
+  $('assignmentDialog').close();
+  await singleWinUI.open(cardId, source);
+}
+
 async function loadAssignmentPreview() {
-  const campaignId = $("assignmentCampaign").value;
-  if (!campaignId || !state.assignmentCardId) return;
+  if (assignmentSaving) return;
+  const campaignId = $("assignmentCampaign").value, cardId = state.assignmentCardId, source = state.sortingSource;
+  const request = ++assignmentPreviewRequest;
+  state.assignmentPreview = null;
+  if (!campaignId || !cardId) return;
   $("assignmentConfirm").disabled = true;
   $("assignmentMessage").textContent = "商品重複を確認中…";
+  const current = () => request === assignmentPreviewRequest && $('assignmentDialog').open &&
+    cardId === state.assignmentCardId && campaignId === $('assignmentCampaign').value && source === state.sortingSource;
   try {
-    const preview = await api(`/api/cards/${state.assignmentCardId}/assignment-preview?campaign_id=${encodeURIComponent(campaignId)}`);
+    const preview = await api(`/api/cards/${cardId}/assignment-preview?campaign_id=${encodeURIComponent(campaignId)}&intake_source=${source}`);
+    if (!current()) return;
     state.assignmentPreview = preview;
     let html = `<p><strong>${Number(preview.card.unassigned_count).toLocaleString()}件</strong>を仕分けます。</p>`;
     if (preview.exact_product) {
@@ -1236,6 +1357,7 @@ async function loadAssignmentPreview() {
     $("assignmentMessage").textContent = preview.campaign.status === "closing" ? "終了確認待ちです。遅れて回収したURLとして仕分けできます。" : "";
     $("assignmentConfirm").disabled = false;
   } catch (error) {
+    if (!current()) return;
     state.assignmentPreview = null;
     $("assignmentDecision").innerHTML = "";
     $("assignmentMessage").textContent = error.message;
@@ -1243,29 +1365,43 @@ async function loadAssignmentPreview() {
 }
 
 async function confirmAssignment() {
-  if (!state.assignmentPreview) return;
-  const selected = document.querySelector('input[name="productChoice"]:checked')?.value || "";
+  if (assignmentSaving || !state.assignmentPreview) return;
+  const cardId = state.assignmentCardId, source = state.sortingSource;
+  const campaignId = $('assignmentCampaign').value;
+  if (state.assignmentPreview.campaign.campaign_id !== campaignId) {
+    $('assignmentMessage').textContent = '仕分け先をもう一度確認しています。';
+    await loadAssignmentPreview(); return;
+  }
+  const selected = document.querySelector('input[name="productChoice"]:checked')?.value || '';
   if (state.assignmentPreview.possible_products.length && !selected) {
-    $("assignmentMessage").textContent = "同一商品か別商品かを選択してください。";
-    return;
+    $('assignmentMessage').textContent = '同一商品か別商品かを選択してください。'; return;
   }
-  $("assignmentConfirm").disabled = true;
-  $("assignmentMessage").textContent = "仕分け・同期登録中…";
+  const body = { campaign_id: campaignId };
+  if (selected === 'separate') body.create_separate = true;
+  else if (selected) body.product_id = selected;
+  const submission = { cardId, source, campaignId };
+  assignmentSaving = submission;
+  const controls = [...$('assignmentDialog').querySelectorAll('button, input, select')];
+  controls.forEach(control => { control.disabled = true; });
+  $('assignmentMessage').textContent = '仕分けを保存中…';
+  let result;
   try {
-    const body = { campaign_id: $("assignmentCampaign").value };
-    if (selected === "separate") body.create_separate = true;
-    else if (selected) body.product_id = selected;
-    const result = await api(`/api/cards/${state.assignmentCardId}/assign`, {
-      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+    result = await api(`/api/cards/${cardId}/assign?intake_source=${source}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
     });
-    $("assignmentDialog").close();
-    await Promise.all([load(), loadCampaigns(), loadWinningLists(), loadRevenueSummary()]);
-    switchTab("winning");
-    alert(`${result.assigned_count.toLocaleString()}件を仕分けました。`);
   } catch (error) {
-    $("assignmentMessage").textContent = error.message;
-    $("assignmentConfirm").disabled = false;
+    $('assignmentMessage').textContent = `仕分けの保存を確認できませんでした。${error.message}`;
+    return;
+  } finally {
+    if (assignmentSaving === submission) assignmentSaving = null;
+    controls.forEach(control => { control.disabled = false; });
   }
+  state.assignmentPreview = null;
+  assignmentPreviewRequest++;
+  $('assignmentDialog').close();
+  // Keep the user's current tab and list position; the saved assignment and
+  // subsequent list/sync refreshes are separate outcomes.
+  await refreshAfterAssignment(result, source);
 }
 
 async function openClose(campaignId) {
@@ -1359,6 +1495,8 @@ async function deleteSortingCard(button) {
 }
 
 function bindDynamic() {
+  bindProductNames();
+  refreshSingleWinRecovery();
   document.querySelectorAll('[data-delete-sorting]').forEach(button => { button.disabled=sortingDeletes.has(`${state.sortingSource}:${button.dataset.deleteSorting}`);button.onclick=()=>deleteSortingCard(button); });
   document.querySelectorAll('[data-edit-sorting-name]').forEach(button => button.onclick = () => openDisplayName('sorting',button.dataset.editSortingName));
   document.querySelectorAll("[data-card]").forEach(button => button.onclick = () => openItems(button.dataset.card, button.dataset.title));
@@ -1372,7 +1510,7 @@ function syncPendingDialog(items) {
     if (!current) {
       $("pendingDialog").close();
       state.dialogPendingId = null;
-    } else if (!$("pendingDialogContent").querySelector(".editing")) {
+    } else if (!$("pendingDialogContent").querySelector(".editing, .saving")) {
       $("pendingDialogContent").innerHTML = pendingCard(current);
       bindPendingControls($("pendingDialogContent").querySelector("[data-pending]"));
     }
@@ -1380,20 +1518,27 @@ function syncPendingDialog(items) {
 
 }
 
+const pendingConfirmations = new Set();
+function setPendingEditing(card) {
+  card.classList.add('editing');
+  card.querySelectorAll('input').forEach(input => { input.readOnly = false; });
+  card.querySelector('[data-action="ok"]').textContent = '修正を保存して確定';
+  card.querySelector('[data-action="edit"]').hidden = true;
+  const reanalyze = card.querySelector('[data-action="reanalyze"]');
+  if (reanalyze) reanalyze.hidden = true;
+  card.querySelector('input')?.focus();
+}
 function bindPendingControls(card) {
   card.querySelector('[data-action="ok"]').onclick = () => submitConfirmation(card, "ok");
   card.querySelector('[data-action="cancel"]').onclick = () => {
-    if (confirm("この確認待ちを未判定URLへ戻しますか？")) submitConfirmation(card, "cancel");
+    if (confirm("この確認待ちグループを未判定URLへ戻しますか？")) submitConfirmation(card, "cancel");
   };
-  card.querySelector('[data-action="edit"]').onclick = event => {
-    const editing = card.classList.toggle("editing");
-    card.querySelectorAll("input").forEach(input => input.readOnly = !editing);
-    event.currentTarget.textContent = editing ? "修正して確定" : "修正";
-    if (!editing) submitConfirmation(card, "edit");
-  };
+  card.querySelector('[data-action="edit"]').onclick = () => setPendingEditing(card);
   card.querySelector('[data-action="copy"]').onclick = event => copyPendingForChatGPT(card, event.currentTarget);
   const reanalyze = card.querySelector('[data-action="reanalyze"]');
   if (reanalyze) reanalyze.onclick = () => reanalyzePending(card, reanalyze);
+  const busy = pendingConfirmations.has(card.dataset.pending);
+  card.querySelectorAll('button').forEach(button => { button.disabled = busy; });
 }
 
 async function copyPendingForChatGPT(card, button) {
@@ -1445,23 +1590,51 @@ async function reanalyzePending(card, button) {
 }
 
 async function submitConfirmation(card, action) {
-  const buttons = [...card.querySelectorAll("button")];
-  buttons.forEach(button => button.disabled = true);
-  const body = { action };
-  if (action === "edit") card.querySelectorAll("input[name]").forEach(input => body[input.name] = input.value);
+  const pendingId = card.dataset.pending;
+  if (pendingConfirmations.has(pendingId)) return;
+  const source = card.dataset.source || state.sortingSource;
+  // Snapshot the visible editor before any asynchronous work. Even an old OK
+  // handler must save the current editor instead of approving stored values.
+  const editing = action !== 'cancel' && (action === 'edit' || card.classList.contains('editing'));
+  const body = { action: editing ? 'edit' : action };
+  if (editing) card.querySelectorAll('input[name]').forEach(input => { body[input.name] = input.value; });
+  const buttons = [...card.querySelectorAll('button')];
+  const inputs = [...card.querySelectorAll('input')], inputReadOnly = inputs.map(input => input.readOnly);
+  const message = card.querySelector('.confirmation-message');
+  pendingConfirmations.add(pendingId); card.classList.add('saving');
+  buttons.forEach(button => { button.disabled = true; });
+  inputs.forEach(input => { input.readOnly = true; });
+  message.textContent = '保存中…'; message.classList.remove('hidden');
+  let result;
   try {
-    await api(`/api/pending/${card.dataset.pending}/confirm`, { method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify(body) });
-    const inPauseDialog = Boolean(card.closest("#pendingDialog"));
-    if (inPauseDialog && $("pendingDialog").open) {
-      $("pendingDialog").close();
-      $("pendingDialogContent").innerHTML = "";
-      state.dialogPendingId = null;
+    result = await api(`/api/pending/${pendingId}/confirm?intake_source=${source}`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body)
+    });
+    const savedCount = body.action === 'cancel' ? result.movedToUnresolved : result.classified;
+    if (result.ok !== true || result.action !== body.action || !Number.isSafeInteger(savedCount) || savedCount < 0) {
+      throw new Error('保存結果の応答を確認できません。一覧を再取得して保存状態を確認してください。');
     }
-    await load();
-    await loadJob();
   } catch (error) {
-    alert(error.message);
-    buttons.forEach(button => button.disabled = false);
+    pendingConfirmations.delete(pendingId); card.classList.remove('saving');
+    buttons.forEach(button => { button.disabled = false; });
+    inputs.forEach((input, index) => { input.readOnly = inputReadOnly[index]; });
+    message.textContent = `保存を確認できませんでした。入力内容は残っています。${error.message}`;
+    return;
+  }
+  // The write succeeded. A later read failure must never offer this write again.
+  pendingConfirmations.delete(pendingId);
+  state.pendingItems.delete(pendingId);
+  document.querySelectorAll('[data-pending]').forEach(node => { if (node.dataset.pending === pendingId) node.remove(); });
+  if (state.dialogPendingId === pendingId) {
+    if ($('pendingDialog').open) $('pendingDialog').close();
+    $('pendingDialogContent').innerHTML = ''; state.dialogPendingId = null;
+  }
+  const count = Number(body.action === 'cancel' ? result.movedToUnresolved : result.classified);
+  const savedMessage = `${Number.isFinite(count) ? count.toLocaleString() + '件を' : ''}${body.action === 'cancel' ? '未判定へ戻しました。' : '確認・保存しました。'}`;
+  setSortingNotice(source, savedMessage, false);
+  const updates = await Promise.allSettled([load(), loadJob()]);
+  if (updates.some(update => update.status === 'rejected' || update.value === false)) {
+    setSortingNotice(source, `${savedMessage} 一覧の更新ができませんでした。再読み込みで確認してください。`, false);
   }
 }
 
@@ -1712,7 +1885,9 @@ $("openTrialReset").onclick = openTrialReset;
 $("refreshCampaigns").onclick = loadCampaigns;
 $("assignmentCampaign").onchange = loadAssignmentPreview;
 $("assignmentConfirm").onclick = confirmAssignment;
-$("assignmentClose").onclick = () => $("assignmentDialog").close();
+$("assignmentSingleWin").onclick = openSingleWinFromAssignment;
+$("assignmentClose").onclick = () => { if (!assignmentSaving) { assignmentPreviewRequest++; $("assignmentDialog").close(); } };
+$("assignmentDialog").addEventListener('cancel', event => { if (assignmentSaving) event.preventDefault(); else assignmentPreviewRequest++; });
 $("closeConfirm").onclick = confirmClose;
 $("closeDialogClose").onclick = () => $("closeDialog").close();
 $("correctionConfirm").onclick = confirmCorrection;
@@ -1870,4 +2045,5 @@ async function deleteUsedCoupons() {
 $("recheckUsage").onclick=recheckSortingUsage;
 $("retrySortingLoad").onclick = () => { void refreshVisibleData(); };
 $("deleteUsed").onclick=deleteUsedCoupons;
+
 

@@ -1,5 +1,6 @@
 const SOURCE_SYSTEM = "winning-url-vault";
 const RETRY_SECONDS = [60, 120, 300, 900, 3600];
+const LEDGER_TIMEOUT_MS = 10000;
 const now = () => new Date().toISOString();
 const uuid = () => crypto.randomUUID();
 export const REVENUE_START_MONTH = "2026-10";
@@ -54,23 +55,69 @@ export async function getRevenueSummary(env, at = Date.now()) {
 
 function binding(env, kind) {
   const value = kind === "reader" ? env.LEDGER_READER : env.LEDGER_VAULT;
-  if (!value?.fetch) throw new VaultLedgerError("中央管理台帳のService Bindingが未設定です", 503, "LEDGER_BINDING_MISSING");
+  if (typeof value?.fetch !== 'function') throw new VaultLedgerError("中央管理台帳のService Bindingが未設定です", 503, "LEDGER_BINDING_MISSING");
   return value;
 }
 
 async function callLedger(env, kind, path, options = {}) {
+  const service = binding(env, kind);
+  const controller = new AbortController();
   const request = new Request(`https://ledger.internal${path}`, {
     method: options.method || "GET",
     headers: options.body ? { "content-type": "application/json" } : undefined,
-    body: options.body ? JSON.stringify(options.body) : undefined
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: controller.signal
   });
-  const response = await binding(env, kind).fetch(request);
-  const payload = await response.json().catch(() => ({}));
+  let timer, timedOut = false, response, text;
+  try {
+    // Only failures at the network boundary are transport errors. JSON parsing,
+    // payload construction and local DB/programming errors must not be retried
+    // just because they happen to be TypeErrors.
+    ({response, text} = await Promise.race([
+      (async () => {
+        const response = await service.fetch(request);
+        if (!(response instanceof Response)) throw new VaultLedgerError("中央管理台帳の応答を確認できません", 422, "LEDGER_INVALID_RESPONSE");
+        return {response, text: await response.text()};
+      })(),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          timedOut = true;
+          controller.abort();
+          reject(new Error('Ledger response timed out'));
+        }, LEDGER_TIMEOUT_MS);
+      })
+    ]));
+  } catch (error) {
+    if (error instanceof VaultLedgerError) throw error;
+    throw new VaultLedgerError(
+      timedOut ? "中央管理台帳の応答が時間内にありませんでした" : "中央管理台帳へ通信できませんでした",
+      timedOut ? 504 : 503, timedOut ? "LEDGER_TIMEOUT" : "LEDGER_TRANSPORT_ERROR");
+  } finally {clearTimeout(timer);}
+  let payload;
+  try {payload = JSON.parse(text);}
+  catch {
+    // An HTTP 5xx remains retryable even when a proxy returns non-JSON. A
+    // malformed successful response is kept for inspection, never marked sent.
+    if (!response.ok) throw new VaultLedgerError(`中央管理台帳: LEDGER_HTTP_${response.status}`, response.status, `LEDGER_HTTP_${response.status}`);
+    throw new VaultLedgerError("中央管理台帳の応答形式を確認してください", 422, "LEDGER_INVALID_RESPONSE");
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new VaultLedgerError("中央管理台帳の応答形式を確認してください", response.ok ? 422 : response.status, "LEDGER_INVALID_RESPONSE");
+  }
   if (!response.ok || payload.ok === false) {
     const code = payload?.error?.code || `LEDGER_HTTP_${response.status}`;
     throw new VaultLedgerError(`中央管理台帳: ${code}`, response.status, code, payload?.error?.details || {});
   }
+  if (request.method !== 'GET' &&
+      (payload.ok !== true || !['applied','duplicate','stale'].includes(payload.result))) {
+    throw new VaultLedgerError("中央管理台帳の保存確認を取得できませんでした。同期内容を確認してください", 422, "LEDGER_INVALID_ACK");
+  }
   return payload;
+}
+
+function retryableLedgerError(error) {
+  return error instanceof VaultLedgerError &&
+    (error.status >= 500 || error.code === "DEPENDENCY_NOT_READY" || error.code === "CONCURRENT_MODIFICATION");
 }
 
 function safeText(value) {
@@ -281,6 +328,55 @@ export async function assignCardToCampaign(env, cardId, campaignId, choice = {})
     reused: Boolean(preview.exact_product || choice.product_id) };
 }
 
+// A single-win operation owns a frozen list of item IDs. The guard, product,
+// assignments, projections and receipt commit together; later arrivals remain
+// in sorting and retries never add a second product or projection revision.
+export async function assignSingleWinToCampaign(env, operation) {
+  if (operation.completed_at) return;
+  const model = JSON.parse(operation.product_json), ids = JSON.parse(operation.item_ids_json);
+  const cardId = operation.card_id, source = operation.intake_source, campaignId = operation.campaign_id;
+  const productId = operation.product_id, occurredAt = now();
+  const eligible = `i.card_id=? AND i.intake_source=? AND i.status='active'
+    AND i.id IN (SELECT value FROM json_each(?))
+    AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)
+    AND NOT EXISTS(SELECT 1 FROM tiktok_video_links v WHERE v.item_id=i.id)`;
+  const statements = [
+    env.DB.prepare(`UPDATE vault_single_wins SET checked=CASE WHEN completed_at IS NULL AND invalidated_at IS NULL AND campaign_id=?
+      AND (SELECT COUNT(*) FROM items i WHERE ${eligible})=?
+      AND EXISTS(SELECT 1 FROM cards c JOIN product_master p ON p.id=c.product_id WHERE c.id=? AND c.intake_source=?
+        AND c.product_id=? AND c.expires_on=? AND p.raw_name=? AND p.normalized_name=? AND p.display_name=?
+        AND p.redeem_place=? AND p.specification=?)
+      AND EXISTS(SELECT 1 FROM vault_campaigns c WHERE c.campaign_id=? AND c.is_archived=0 AND c.status IN ('active','closing'))
+      THEN 1 ELSE 0 END WHERE request_id=?`)
+      .bind(campaignId,cardId,source,operation.item_ids_json,ids.length,cardId,source,
+        model.master_id,model.expires_on,model.raw_name,model.normalized_name,model.display_name,model.redeem_place,model.specification,
+        campaignId,operation.request_id),
+    env.DB.prepare(`INSERT INTO ledger_products
+      (product_id,campaign_id,card_id,product_name,redemption_place,product_spec,valid_until,identity_key,assigned_at,is_archived,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,0,?,?)`).bind(productId,campaignId,cardId,model.raw_name,
+        model.redeem_place || null,model.specification || null,model.expires_on || null,identityKey(model),occurredAt,occurredAt,occurredAt),
+    env.DB.prepare(`INSERT INTO item_campaign_assignments(item_id,campaign_id,product_id,assigned_at)
+      SELECT i.id,?,?,? FROM items i WHERE ${eligible}`)
+      .bind(campaignId,productId,occurredAt,cardId,source,operation.item_ids_json),
+    ...enqueueProductAndTotals(env.DB,productId,campaignId,occurredAt),
+    refreshProductRevenueStatement(env.DB,productId,occurredAt),
+    env.DB.prepare("INSERT INTO audit_log(id,item_id,action,detail) VALUES (?,NULL,'single_win_registered',?)")
+      .bind(`single-win:${operation.request_id}`,JSON.stringify({requestId:operation.request_id,cardId,source,campaignId,productId,count:ids.length})),
+    env.DB.prepare('UPDATE vault_single_wins SET assigned_count=?,completed_at=? WHERE request_id=?')
+      .bind(ids.length,occurredAt,operation.request_id)
+  ];
+  try {
+    await env.DB.batch(statements);
+  } catch (error) {
+    // Another retry may have committed while this request was in flight.
+    const current = await env.DB.prepare('SELECT completed_at FROM vault_single_wins WHERE request_id=?').bind(operation.request_id).first();
+    if (current?.completed_at) return;
+    if (/CHECK constraint failed.*checked|CHECK constraint failed.*vault_single_wins/.test(String(error?.message || error)))
+      throw new VaultLedgerError('商品や登録対象が更新されています。対象を再確認してください。',409,'SINGLE_WIN_PREVIEW_CHANGED');
+    throw error;
+  }
+}
+
 export async function reassignmentPreview(env, productId, destinationCampaignId) {
   const source = await env.DB.prepare(`SELECT p.*,c.status campaign_status,c.campaign_name,c.lottery_start_date
     FROM ledger_products p LEFT JOIN vault_campaigns c ON c.campaign_id=p.campaign_id WHERE p.product_id=?`)
@@ -406,7 +502,7 @@ export async function enrichCards(env, cards) {
 
 async function updateOutboxFailure(env, row, error) {
   const attempts = Number(row.attempts || 0) + 1;
-  const retryable = error.status >= 500 || error.code === "DEPENDENCY_NOT_READY" || error.code === "CONCURRENT_MODIFICATION";
+  const retryable = retryableLedgerError(error);
   const delay = RETRY_SECONDS[Math.min(attempts - 1, RETRY_SECONDS.length - 1)];
   const nextAttempt = retryable ? new Date(Date.now() + delay * 1000).toISOString() : null;
   const message = `${error.code || "LEDGER_ERROR"}: ${error.message || String(error)}`.slice(0, 500);
@@ -417,10 +513,16 @@ async function updateOutboxFailure(env, row, error) {
 
 export async function processOutbox(env, options = {}) {
   const limit = Math.min(50, Math.max(1, Number(options.limit || 25)));
+  const dueAt = now();
   const due = options.id
-    ? await env.DB.prepare("SELECT * FROM ledger_outbox WHERE id=? AND status!='sent'").bind(options.id).all()
-    : await env.DB.prepare(`SELECT * FROM ledger_outbox WHERE status!='sent'
-      AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY created_at,source_revision LIMIT ?`).bind(now(), limit).all();
+    ? await env.DB.prepare(`SELECT * FROM ledger_outbox WHERE id=? AND
+      (status='pending' OR (status='failed' AND next_attempt_at IS NOT NULL AND next_attempt_at<=?))`).bind(options.id,dueAt).all()
+    : await env.DB.prepare(`SELECT * FROM ledger_outbox AS current WHERE
+      (status='pending' OR (status='failed' AND next_attempt_at IS NOT NULL AND next_attempt_at<=?))
+      AND NOT EXISTS(SELECT 1 FROM ledger_outbox AS prior
+        WHERE prior.source_record_id=current.source_record_id AND prior.source_revision<current.source_revision
+        AND prior.status='failed' AND (prior.next_attempt_at IS NULL OR prior.next_attempt_at>?))
+      ORDER BY created_at,source_revision LIMIT ?`).bind(dueAt,dueAt,limit).all();
   const results = [];
   const blocked = new Set();
   for (const row of due.results || []) {
@@ -476,7 +578,7 @@ export async function setUnitPrice(env, productId, value) {
 
 async function revenueFailure(env, row, error) {
   const attempts = Number(row.attempts || 0) + 1;
-  const retryable = error.status >= 500 || error.code === "DEPENDENCY_NOT_READY" || error.code === "CONCURRENT_MODIFICATION";
+  const retryable = retryableLedgerError(error);
   const delay = RETRY_SECONDS[Math.min(attempts - 1, RETRY_SECONDS.length - 1)];
   const nextAttempt = retryable ? new Date(Date.now() + delay * 1000).toISOString() : null;
   const message = `${error.code || "LEDGER_ERROR"}: ${error.message || String(error)}`.slice(0, 500);
@@ -528,7 +630,13 @@ export async function ensureCampaignTotals(env, campaignId) {
       .bind(now(), latest.id).run();
     const delivery = await processOutbox(env, { id: latest.id });
     if (!delivery.results[0]?.ok) {
-      throw new VaultLedgerError("当選数を中央管理台帳へ同期できませんでした。自動再送します", 503,
+      const failure = delivery.results[0];
+      const message = failure?.retryable
+        ? "当選数を中央管理台帳へ同期できませんでした。自動再送します"
+        : failure
+          ? "当選数の同期内容を確認してください。このエラーは自動再送しません"
+          : "先行する同期が完了していません。同期状況を確認してください";
+      throw new VaultLedgerError(message, 503,
         "TOTALS_SYNC_PENDING", { delivery: delivery.results[0] || null });
     }
   }
@@ -583,3 +691,4 @@ export async function startCorrection(env, campaignId, reason) {
   if (delivery.results[0]?.ok) await refreshCampaigns(env);
   return { delivery: delivery.results[0] || { ok: false } };
 }
+

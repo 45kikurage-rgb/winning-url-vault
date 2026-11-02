@@ -1,10 +1,10 @@
-const CACHE = "winning-url-vault-pwa-20261101-sorting-delete";
+const CACHE = "winning-url-vault-pwa-20261102-mobile-reliability";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
-  "/styles.css?v=20261101-sorting-delete",
-  "/app.js?v=20261101-sorting-delete",
+  "/styles.css?v=20261102-mobile-reliability",
+  "/app.js?v=20261102-mobile-reliability",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
@@ -15,6 +15,7 @@ const ASSETS = [
   "/tiktok-video.js",
   "/tiktok-videos-ui.js",
   "/display-name.js",
+  "/single-win-ui.js",
   "/share.js",
   "/manifest.json",
   "/manifest.webmanifest",
@@ -68,6 +69,7 @@ self.addEventListener("fetch", event => {
     }
   })());
 });
+
 
 
 
