@@ -165,10 +165,34 @@ test('invalid/mismatched requests never overwrite a receipt and availability is 
 
 test('remote capability or durable acknowledgement missing keeps local data without a product',async t=>{
   const{sql,env,card,add,prepare}=setup(t);add();const body=await prepare();
-  env.ALIGN_SINGLE_WIN={async createSingleWin(){return{ok:true,stored:false}}};
-  await assert.rejects(registerSingleWin(env,card,'arunomatic',body),e=>e.code==='SINGLE_WIN_REMOTE_UNAVAILABLE');
+  for (const ack of [{ok:true,stored:false},{ok:'true',stored:true},{ok:1,stored:true},{ok:true,stored:'true'}]) {
+    env.ALIGN_SINGLE_WIN={async createSingleWin(){return{...ack,request_id:body.request_id}}};
+    await assert.rejects(registerSingleWin(env,card,'arunomatic',body),e=>e.code==='SINGLE_WIN_REMOTE_UNAVAILABLE');
+  }
   assert.equal(sql.prepare('SELECT COUNT(*) n FROM items').get().n,1);assert.equal(sql.prepare('SELECT COUNT(*) n FROM ledger_products').get().n,0);
   assert.equal((await singleWinStatus(env,body.request_id)).state,'pending');assert.equal((await singleWinAvailability(env)).ready,false);
+});
+
+test('URL-like display names fall back only for the external campaign name and keep the original display value',async t=>{
+  const{sql,env,card,master,add,prepare,campaigns}=setup(t);add();
+  const display='お茶 https://shop.example';sql.prepare('UPDATE product_master SET display_name=? WHERE id=?').run(display,master);
+  const saved=await registerSingleWin(env,card,'arunomatic',await prepare());assert.equal(saved.state,'completed');
+  assert.equal(JSON.parse([...campaigns.values()][0].input).product_label,'セブンのお茶 600ml');
+  assert.equal(sql.prepare('SELECT display_name FROM product_master WHERE id=?').get(master).display_name,display);
+});
+
+test('unprojectable product information blocks before issuing a campaign and explains the affected field',async t=>{
+  for (const [column,value,label] of [['raw_name','茶'.repeat(201),'商品名'],['raw_name','https://shop.example','商品名'],
+    ['specification','規'.repeat(201),'規格'],['redeem_place','www.shop.example','交換場所'],['expires_on','2026-02-30','有効期限']])
+    await t.test(column,async t=>{
+      const{sql,env,card,master,add,prepare,remoteCalls}=setup(t);add();
+      if(column==='expires_on')sql.prepare('UPDATE cards SET expires_on=? WHERE id=?').run(value,card);
+      else sql.prepare(`UPDATE product_master SET ${column}=? WHERE id=?`).run(value,master);
+      const originals=sql.prepare('SELECT * FROM items').all();
+      await assert.rejects(registerSingleWin(env,card,'arunomatic',await prepare()),e=>e.code==='SINGLE_WIN_PRODUCT_INVALID'&&e.status===400&&e.message.includes(label));
+      assert.equal(remoteCalls(),0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM vault_single_wins').get().n,0);
+      assert.deepEqual(sql.prepare('SELECT * FROM items').all(),originals);
+    });
 });
 
 test('HTTP entry requires existing admin session, same origin and explicit confirmation; send-only token is refused',async t=>{

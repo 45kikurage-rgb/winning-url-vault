@@ -126,7 +126,9 @@ async function openPage(width=393,scale=1,options={}) {
   const pageErrors=[];page.on('pageerror',error=>pageErrors.push(error.message));
   await page.goto(origin);
   await page.waitForFunction(tab=>document.body.dataset.activeTab === tab && document.querySelectorAll('[data-sorting-card]').length === 18,options.tab || 'sorting');
-  await page.locator('#ledgerSyncStatus').filter({hasText:'中央台帳同期'}).waitFor();
+  // This readiness marker lives in the inactive campaigns tab. Its data must
+  // be ready, but boot must not require that unrelated tab to become visible.
+  await page.waitForFunction(()=>document.querySelector('#ledgerSyncStatus')?.textContent.includes('中央台帳同期'));
   return {page,context,data:currentFixture,pageErrors};
 }
 async function settle(page) {await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));}

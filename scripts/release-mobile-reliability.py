@@ -34,6 +34,57 @@ def validate_config_delta(before, candidate):
     expected['services'].append({'binding':'ALIGN_SINGLE_WIN','service':'arunomatic-align','entrypoint':'VaultCampaignAPI'})
     g.require(expected == candidate, 'UNREVIEWED_CONFIGURATION_CHANGE')
 
+def queue_state(config):
+    queues = []
+    for name in sorted({c['queue'] for c in config['queues']['consumers']}):
+        found = g.call(f'accounts/{g.ACCOUNT}/queues?page=1&name='+name)
+        matches = [q for q in found if q.get('queue_name') == name]
+        g.require(len(matches) == 1, 'QUEUE_IDENTITY_NOT_UNIQUE')
+        queue = matches[0]
+        consumers = [{k:c.get(k) for k in ('consumer_id','type','script','service','environment','settings','dead_letter_queue')}
+                     for c in queue.get('consumers', [])]
+        queues.append({'queue_name':name, 'queue_id':queue['queue_id'],
+                       'consumers':sorted(consumers,key=lambda c:c['consumer_id'])})
+    return queues
+
+def validate_live_targets(config, settings, queues):
+    rows = settings['bindings']; bindings = {b['name']:b for b in rows}
+    g.require(len(rows) == len(bindings), 'DUPLICATE_RUNTIME_BINDING')
+    for service in config['services']:
+        if service['binding'] == 'ALIGN_SINGLE_WIN':
+            g.require('ALIGN_SINGLE_WIN' not in bindings, 'SINGLE_WIN_ALREADY_BOUND')
+            continue
+        live = bindings.get(service['binding'], {})
+        g.require(live.get('type') == 'service' and live.get('service') == service['service']
+                  and live.get('entrypoint') == service.get('entrypoint')
+                  and live.get('environment') in (None, 'production'), 'LIVE_SERVICE_TARGET_CHANGED')
+    for key, kind in [('ai','ai'), ('assets','assets')]:
+        g.require(bindings.get(config[key]['binding'], {}).get('type') == kind, 'LIVE_BINDING_TYPE_CHANGED')
+    for db in config['d1_databases']:
+        live = bindings.get(db['binding'], {})
+        g.require(live.get('type') == 'd1' and (live.get('id') or live.get('database_id')) == db['database_id'], 'LIVE_DATABASE_TARGET_CHANGED')
+    by_name = {q['queue_name']:q for q in queues}
+    for producer in config['queues']['producers']:
+        live = bindings.get(producer['binding'], {}); queue = by_name.get(producer['queue'], {})
+        g.require(live.get('type') == 'queue' and queue, 'LIVE_QUEUE_TARGET_CHANGED')
+        g.require((live.get('queue_name') == producer['queue']) or
+                  (live.get('queue_name') is None and live.get('queue_id') == queue.get('queue_id')), 'LIVE_QUEUE_TARGET_CHANGED')
+        g.require(live.get('queue_id') in (None, queue.get('queue_id')), 'LIVE_QUEUE_ID_CHANGED')
+        g.require(live.get('delivery_delay',0) == producer.get('delivery_delay',0), 'LIVE_QUEUE_DELAY_CHANGED')
+    fields = {'max_batch_size':'batch_size','max_batch_timeout':'max_wait_time_ms',
+              'max_retries':'max_retries','max_concurrency':'max_concurrency'}
+    for consumer in config['queues']['consumers']:
+        queue = by_name.get(consumer['queue'], {})
+        matches = [c for c in queue.get('consumers', []) if (c.get('script') or c.get('service')) == g.WORKER]
+        g.require(len(matches) == 1, 'LIVE_QUEUE_CONSUMER_CHANGED')
+        live = matches[0]
+        g.require(live.get('type') == 'worker' and live.get('environment') in (None, 'production'), 'LIVE_QUEUE_CONSUMER_CHANGED')
+        for option, field in fields.items():
+            expected = consumer[option] * (1000 if option == 'max_batch_timeout' else 1)
+            g.require(live.get('settings', {}).get(field) == expected, 'LIVE_QUEUE_CONSUMER_SETTINGS_CHANGED')
+        g.require(live.get('dead_letter_queue') == consumer.get('dead_letter_queue') and
+                  live.get('settings', {}).get('retry_delay',0) == consumer.get('retry_delay',0), 'LIVE_QUEUE_RETRY_SETTINGS_CHANGED')
+
 def migration_sql():
     text = Path('migrations', MIGRATION).read_text()
     statements = [s.strip() for s in text.split(';') if s.strip()]
@@ -84,6 +135,11 @@ def preflight():
     config = g.deployment_config(settings, subdomain)
     baseline_config = json.loads(subprocess.check_output(['git','show',f'{BASE_SOURCE}:wrangler.jsonc']))
     validate_config_delta(baseline_config, json.loads(Path('wrangler.jsonc').read_text()))
+    queues = queue_state(config)
+    validate_live_targets(config, settings, queues)
+    g.require(sorted(config['triggers']['crons']) == state['schedules'], 'LIVE_CRON_CONFIGURATION_CHANGED')
+    state['queues'] = queues
+    g.STATE.write_text(json.dumps(state)); g.STATE.chmod(0o600)
     expected_service = {'binding':'ALIGN_SINGLE_WIN','service':'arunomatic-align','entrypoint':'VaultCampaignAPI'}
     g.require([b for b in config['services'] if b['binding']=='ALIGN_SINGLE_WIN'] == [expected_service], 'CANDIDATE_BINDING_MISMATCH')
     Path('.release-wrangler.json').write_text(json.dumps(config))
@@ -97,6 +153,9 @@ def migrate():
     state = json.loads(g.STATE.read_text())
     g.require(g.active() == state['baseline'], 'PRODUCTION_MOVED')
     g.require(normalized_runtime(g.get_settings()) == state['settings'], 'RUNTIME_MOVED')
+    g.require(g.schedules() == state['schedules'], 'SCHEDULE_MOVED')
+    g.require(g.call(g.endpoint('/subdomain')) == state['subdomain'], 'PUBLICATION_SCOPE_MOVED')
+    g.require(queue_state(json.loads(Path('wrangler.jsonc').read_text())) == state['queues'], 'QUEUE_CONFIGURATION_MOVED')
     g.require(existing_schema(g.schema()) == existing_schema(state['schema']), 'SCHEMA_MOVED')
     # Apply this exact file only, never all historical migrations.
     migration_sql()
@@ -116,6 +175,7 @@ def verify():
     expected['bindings'].sort(key=lambda b:b['name'])
     g.require(normalized_runtime(g.get_settings()) == expected, 'RUNTIME_SETTINGS_CHANGED')
     g.require(g.schedules() == state['schedules'], 'SCHEDULE_CHANGED')
+    g.require(queue_state(json.loads(Path('wrangler.jsonc').read_text())) == state['queues'], 'QUEUE_CONFIGURATION_CHANGED')
     g.require(g.call(g.endpoint('/subdomain')) == state['subdomain'], 'PUBLICATION_SCOPE_CHANGED')
     validate_added_schema(state['schema'], g.schema())
     version = g.active(); g.require(version != state['baseline'], 'VERSION_NOT_UPDATED')
@@ -149,6 +209,11 @@ def rollback():
     hashes, _ = g.code_hashes()
     g.require(hashes == [expected_hash], 'ROLLBACK_REFUSED_CONCURRENT_CODE_CHANGE')
     g.require(g.schedules() == state['schedules'], 'ROLLBACK_REFUSED_CONCURRENT_SCHEDULE_CHANGE')
+    expected = json.loads(json.dumps(state['settings']))
+    expected['bindings'].append(BINDING); expected['bindings'].sort(key=lambda b:b['name'])
+    g.require(normalized_runtime(g.get_settings()) == expected, 'ROLLBACK_REFUSED_CONCURRENT_RUNTIME_CHANGE')
+    g.require(g.call(g.endpoint('/subdomain')) == state['subdomain'], 'ROLLBACK_REFUSED_CONCURRENT_PUBLICATION_CHANGE')
+    g.require(queue_state(json.loads(Path('wrangler.jsonc').read_text())) == state['queues'], 'ROLLBACK_REFUSED_CONCURRENT_QUEUE_CHANGE')
     # Same API used by the pinned Wrangler rollback implementation. Never use
     # force: a changed secret or non-deployable version must stop this action.
     g.call(g.endpoint('/deployments'), {'strategy':'percentage',
