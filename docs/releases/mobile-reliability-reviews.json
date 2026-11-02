@@ -1,0 +1,76 @@
+{
+  "scope": "mobile-reliability-20261102",
+  "production_authorized": true,
+  "authorization": "User explicitly requested seven-agent implementation through production and independent post-change checks.",
+  "reviews": [
+    {
+      "reviewer": "/root",
+      "gate": "candidate-provenance-download-contract",
+      "status": "pass",
+      "evidence": "docs/releases/reviews/A-review.md",
+      "limits": "Android CI41422469968: 185 tests independently recounted; unsigned APK hash and source match; 19 publication rejection/route tests. Physical device and live publication receipts are separate."
+    },
+    {
+      "reviewer": "/root/vault_ui",
+      "gate": "android-lifecycle-interleavings",
+      "status": "pass",
+      "evidence": "docs/releases/reviews/B-review.md",
+      "limits": "12 independent API28/API35 cases; no physical Pixel 10."
+    },
+    {
+      "reviewer": "/root/visual_impl",
+      "gate": "receipt-and-ledger-failure-boundaries",
+      "status": "pass",
+      "evidence": "docs/releases/reviews/C-review.md",
+      "limits": "12 independent boundary cases, 40 related tests; no production latency measurement."
+    },
+    {
+      "reviewer": "/root/android_impl",
+      "gate": "web-state-and-recovery-integrity",
+      "status": "pass",
+      "evidence": "docs/releases/reviews/D-review.md",
+      "limits": "8 independent interference and recovery cases; browser dimensions independently checked by G."
+    },
+    {
+      "reviewer": "/root/receive_impl",
+      "gate": "three-database-single-win-integration",
+      "status": "pass",
+      "evidence": "docs/releases/reviews/E-review.md",
+      "limits": "14 independent cases using real Vault/Align/Ledger SQLite schemas; production binding verified separately."
+    },
+    {
+      "reviewer": "/root/single_win_impl",
+      "gate": "vault-publication-runtime-preservation",
+      "status": "pass",
+      "evidence": "docs/releases/reviews/F-review.md",
+      "limits": "5 independent parent tests with negative cases; live configuration and migration receipts are separate."
+    },
+    {
+      "reviewer": "/root/release_qa",
+      "gate": "actual-page-mobile-and-pwa",
+      "status": "pass",
+      "evidence": "docs/releases/reviews/G-review.md",
+      "limits": "Actual page/API fixtures and real service worker in Chromium; not physical Pixel 10 or production business mutations."
+    }
+  ],
+  "candidate_sha256": {
+    "migrations/0015_single_wins.sql": "c20b6316d0d1133ea6042a122aa7c7850d7ac5840218871f55b8140399bdc36e",
+    "public/app.js": "c20790444dc6138e65b592d0a882b1855e42104dc7f2b203d484f61db73c54ce",
+    "public/display-name.js": "674cd0deddfe457380296aaddabe5de0f82d3c62ea036bd667acc0b65d3aacf7",
+    "public/index.html": "2f437dfca064552f762a77622184f14de88df836799b039c3435e2f7fbdd7edf",
+    "public/single-win-ui.js": "ed4a49ac0a9cf41331f377100aab47bf9237578ab4bbf67fb5148ad9fe07f62d",
+    "public/styles.css": "589aa3310eea1bb78a6e3a4c7414929a59926a696c6d09a196994948dbbcab38",
+    "public/sw.js": "d40f4474fb33e79bd87c2e04735058896a40683636a15d241015d344df01148c",
+    "scripts/check-mobile-e2e.cjs": "d711b3fd1e30dcbfd672caf3d510699a8a3945e1ff79216819a156e99951685e",
+    "scripts/check-mobile-name-layout.cjs": "5b2893e8d3292837d28d95e4857727c65dd32383073a4365dec2bfa9daf07c17",
+    "scripts/check-release-reviews.mjs": "96e55d1f45c5fdc9b8d234f5763d2f751b64c881d6a0f0af5b6a1c05b511a21d",
+    "scripts/check-sorting-delete-ui.cjs": "93c2b2a3ffa87b532e01937ea7ec24c0975d22c019004364bd372c3e77131cbe",
+    "scripts/release-mobile-reliability.py": "4352ff288f48c0853d38f5f2a53ae761221db5cd802bd8a0fc513f2e8245aabe",
+    "scripts/release-provisional-controls.py": "359e0adac7d1def57e1d82afb39dbf3b461a3f918b8e58d5f2fde013613ca40a",
+    "scripts/test-mobile-release-guards.py": "9f596df857321032d480b6bbd4ec82f4ca126879f6cdf839516d56dd9941afe4",
+    "scripts/test-mobile-release-independent.py": "0f8bae7c09be3c3ad6a19cdf1bbd4fa552c01eb008e76accbb9021eba7cf68c0",
+    "src/index.js": "57ae98a9f2ee8e7de078d3d0e6189027b6c817497ecfe017d3f23e15befd3a5f",
+    "src/ledger.js": "65cc67f7612a519ade557476452cc19da21ddc4c7f1035c44cb42b07fa2885b1",
+    "src/single-wins.js": "7b0a879de4c2994cef9c51b937bbdc4590eb3ec23287ebcf2c7e8263aa465e8b"
+  }
+}
