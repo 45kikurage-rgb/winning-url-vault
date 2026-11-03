@@ -109,6 +109,31 @@ export async function inspectUnexportedItems(env, productId, cursor = null) {
     nextCursor:rows.results.length>50 && last ? btoa(JSON.stringify({t:last.received_at,id:last.id})) : null};
 }
 
+// Copy-only access to retained values. Never mark an item exported or create a batch.
+export async function listAllProductItems(env, productId, order = "received", cursor = null) {
+  const model = await product(env, productId);
+  if (model.is_archived) throw new VaultLedgerError("商品が見つかりません",404,"PRODUCT_NOT_FOUND");
+  if (!["received","reverse"].includes(order))
+    throw new VaultLedgerError("並び順が不正です",400,"INVALID_COPY_ORDER");
+  if (cursor && (typeof cursor.t !== "string" || typeof cursor.id !== "string"))
+    throw new VaultLedgerError("続きを読み込めません。最初から再読み込みしてください",400,"INVALID_CURSOR");
+  const reverse = order === "reverse";
+  const direction = reverse ? "DESC" : "ASC";
+  const operator = reverse ? "<" : ">";
+  const condition = cursor
+    ? `AND (i.received_at ${operator} ? OR (i.received_at = ? AND i.id ${operator} ?))` : "";
+  const params = cursor ? [productId,cursor.t,cursor.t,cursor.id] : [productId];
+  const rows = (await env.DB.prepare(`SELECT i.id,i.value,i.received_at,a.exported_at
+      FROM item_campaign_assignments a JOIN items i ON i.id=a.item_id
+      WHERE a.product_id=? AND i.status='active' ${condition}
+      ORDER BY i.received_at ${direction},i.id ${direction} LIMIT 201`)
+    .bind(...params).all()).results || [];
+  const items = rows.slice(0,200);
+  const last = items.at(-1);
+  return {product_id:productId,order,items,
+    nextCursor:rows.length>200 && last ? btoa(JSON.stringify({t:last.received_at,id:last.id})) : null};
+}
+
 export async function setManualFinished(env,productId,finished) {
   if (typeof finished !== 'boolean') throw new VaultLedgerError('移動先が不正です',400,'INVALID_LIST_STATE');
   const model = await product(env,productId);

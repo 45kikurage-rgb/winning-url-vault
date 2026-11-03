@@ -1516,6 +1516,48 @@ test('UI display aliases persist independently and never change product identity
   assert.deepEqual((await DB.prepare('SELECT * FROM product_monthly_revenue WHERE product_id=?').bind(productId).all()).results,finalized.results);
 });
 
+test('抽出済み含む全件再コピーは200件超と同時刻を順逆に取得し、保存状態を一切変更しない',async t=>{
+ const {mf,analyzer,worker,DB}=await createRuntime();t.after(()=>cleanup(mf,analyzer));
+ await request(worker,'/api/ledger/campaigns');
+ const card=await createConfirmedCard(worker,'copy-all');
+ const assigned=await request(worker,`/api/cards/${card.id}/assign`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({campaign_id:'campaign-active-a'})});
+ const pid=assigned.product_id,entries=Array.from({length:204},(_,i)=>({id:crypto.randomUUID(),value:`CODE-${String(i).padStart(4,'0')}`}));
+ for(let start=0;start<entries.length;start+=35){
+  await DB.batch(entries.slice(start,start+35).flatMap(({id,value})=>[
+   DB.prepare("INSERT INTO items(id,value,canonical_value,value_type,card_id,status,received_at) VALUES (?,?,?,?,?,'active','2026-10-25T00:00:00Z')").bind(id,value,id,'paypay',card.id),
+   DB.prepare("INSERT INTO item_campaign_assignments(item_id,campaign_id,product_id,assigned_at) VALUES (?,'campaign-active-a',?,'2026-10-25')").bind(id,pid)
+  ]));
+ }
+ await DB.prepare("UPDATE item_campaign_assignments SET exported_at='2026-10-25' WHERE product_id=?").bind(pid).run();
+ const tableNames=['items','item_campaign_assignments','ledger_products','product_monthly_revenue','ledger_outbox','export_batches'];
+ const before={};for(const name of tableNames)before[name]=(await DB.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all()).results;
+ const path=`/api/products/${pid}/all-items`;
+ assert.equal((await worker.fetch('https://vault.test'+path)).status,401);
+ const get=opts=>worker.fetch('https://vault.test'+path+opts,{headers:{cookie:authCookies.get(worker)}});
+ assert.equal((await get('?order=bad')).status,400);
+ assert.equal((await get('?cursor=invalid')).status,400);
+ async function collect(order){
+  const all=[],sizes=[];let cursor=null,iteration=0;
+  do{
+   const qs=new URLSearchParams({order});if(cursor)qs.set('cursor',cursor);
+   const payload=await request(worker,path+'?'+qs);
+   assert.equal(payload.order,order);assert.equal(payload.product_id,pid);
+   sizes.push(payload.items.length);all.push(...payload.items);cursor=payload.nextCursor;
+   assert.ok(++iteration<=3,'pagination must finish');
+  }while(cursor);
+  return {all,sizes};
+ }
+ const forward=await collect('received'),reverse=await collect('reverse');
+ assert.deepEqual(forward.sizes,[200,5]);assert.deepEqual(reverse.sizes,[200,5]);
+ assert.equal(new Set(forward.all.map(x=>x.id)).size,205);
+ assert.deepEqual(reverse.all.map(x=>x.id),forward.all.map(x=>x.id).reverse());
+ assert.equal(forward.all.filter(x=>x.exported_at).length,205);
+ assert.ok(entries.every(entry=>forward.all.some(x=>x.id===entry.id && x.value===entry.value)));
+ for(const name of tableNames)assert.deepEqual((await DB.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all()).results,before[name]);
+ const list=(await request(worker,'/api/winning-lists')).products.find(x=>x.product_id===pid);
+ assert.equal(list.total_count,205);assert.equal(list.unexported_count,0);
+});
+
 test('未抽出内容は方式未設定・対象外もページ取得でき、閲覧で抽出・割当・収益を変えない',async t=>{
  const {mf,analyzer,worker,DB}=await createRuntime();t.after(()=>cleanup(mf,analyzer));
  await request(worker,'/api/ledger/campaigns');

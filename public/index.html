@@ -11,7 +11,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icon-any-192.png">
   <link rel="icon" type="image/png" href="/icon-any-192.png">
-  <link rel="stylesheet" href="/styles.css?v=20261102-mobile-reliability">
+  <link rel="stylesheet" href="/styles.css?v=20261103-full-recopy">
 </head>
 <body>
 <section id="loginScreen" class="login-screen">
@@ -291,6 +291,23 @@
   <p id="unexportedContentsMessage" class="result" role="status"></p><button id="unexportedContentsMore" class="secondary hidden" type="button">続きを表示</button><button id="unexportedContentsRefresh" class="secondary" type="button">最初から再読み込み</button>
 </dialog>
 
+<dialog id="copyAllDialog" aria-labelledby="copyAllTitle">
+  <div class="dialog-head"><div><small>抽出状態は変更しません</small><h2 id="copyAllTitle">抽出済み含む全件再コピー</h2></div><button id="copyAllClose" type="button" class="secondary">閉じる</button></div>
+  <div id="copyAllContext" class="product-context"></div>
+  <p id="copyAllSummary" class="export-summary"></p>
+  <p class="meta">保存済みのコードを1行1件でコピーします。登録順は受信日時の古い順、逆順は新しい順です。チャージ成功順とは限りません。</p>
+  <div class="export-action-grid">
+    <button id="copyAllReceived" type="button">登録順で全件コピー</button>
+    <button id="copyAllReverse" type="button">逆順で全件コピー</button>
+  </div>
+  <p id="copyAllMessage" class="result" role="status" aria-live="polite"></p>
+  <div id="copyAllReady" class="hidden">
+    <button id="copyAllReadyButton" type="button">取得した全件をコピーする</button>
+    <label class="meta" for="copyAllReadyText">コピーできない場合は下の一覧を選択できます</label>
+    <textarea id="copyAllReadyText" readonly rows="4" spellcheck="false" autocomplete="off"></textarea>
+  </div>
+</dialog>
+
 <dialog id="exportActionDialog" aria-labelledby="exportActionTitle">
   <div class="dialog-head"><div><small>データ抽出</small><h2 id="exportActionTitle">抽出方法</h2></div><button id="exportActionClose" class="secondary">閉じる</button></div>
   <div id="exportActionContext" class="product-context"></div>
@@ -362,7 +379,7 @@
   <p id="trialResetMessage" class="result" aria-live="polite"></p>
   <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
-<script type="module" src="/app.js?v=20261102-mobile-reliability"></script>
+<script type="module" src="/app.js?v=20261103-full-recopy"></script>
 </body>
 </html>
 
