@@ -1048,11 +1048,17 @@ function selectPaypayKind(kind) {
 // Independent, read-only from the existing export-batch workflow.
 let copyAllProductId = null;
 let copyAllRunning = false;
+let copyAllPreparedText = '';
+let copyAllPreparedCount = 0;
+let copyAllPreparedOrder = 'received';
 function openCopyAllDialog(productId) {
   if (copyAllRunning) return;
   const item = winningProduct(productId);
   if (!item || !Number(item.total_count || 0)) return;
   copyAllProductId = productId;
+  copyAllPreparedText = "";
+  $("copyAllReady").classList.add("hidden");
+  $("copyAllReadyText").value = "";
   $("copyAllContext").textContent = productContext(item);
   $("copyAllSummary").textContent = `保存済み ${Number(item.total_count).toLocaleString()}件（抽出済み・未抽出をすべて含む）`;
   $("copyAllMessage").textContent = "コピーしても抽出済みの状態・履歴は変わりません。";
@@ -1063,6 +1069,9 @@ async function copyAllItems(order) {
   const productId = copyAllProductId, item = winningProduct(productId);
   if (!item) return;
   copyAllRunning = true;
+  copyAllPreparedText = "";
+  $("copyAllReady").classList.add("hidden");
+  $("copyAllReadyText").value = "";
   const buttons = [$("copyAllReceived"),$("copyAllReverse"),$("copyAllClose")];
   buttons.forEach(button=>button.disabled=true);
   let cursor = null, pageNo = 0;
@@ -1089,9 +1098,13 @@ async function copyAllItems(order) {
     if (rows.length !== Number(item.total_count))
       throw new Error(`件数が変わりました（取得${rows.length}件／表示${item.total_count}件）。一覧を更新してやり直してください`);
     if (!rows.length) throw new Error("保存済みコードがありません");
-    await writeClipboard(rows.join("\n"));
+    copyAllPreparedText = rows.join("\n");
+    copyAllPreparedCount = rows.length;
+    copyAllPreparedOrder = order;
+    $("copyAllReadyText").value = copyAllPreparedText;
+    $("copyAllReady").classList.remove("hidden");
     $("copyAllMessage").textContent =
-      `${rows.length.toLocaleString()}件を${order==="reverse"?"逆順":"登録順"}でコピーしました。抽出記録は変更していません。`;
+      `${rows.length.toLocaleString()}件を${order==="reverse"?"逆順":"登録順"}で取得しました。下の「コピーする」を押してください。抽出記録は変更していません。`;
   } catch (error) {
     $("copyAllMessage").textContent = `全件コピーできませんでした。抽出記録は変更していません。理由：${error.message}`;
   } finally {
@@ -1986,6 +1999,22 @@ $("outputMethodDialog").addEventListener("click", event => {
   if (button) saveOutputMethod(button.dataset.outputMethod);
 });
 $("copyAllClose").onclick = () => $("copyAllDialog").close();
+$("copyAllDialog").addEventListener("close", () => {
+  copyAllPreparedText = "";
+  $("copyAllReadyText").value = "";
+  $("copyAllReady").classList.add("hidden");
+});
+$("copyAllReadyButton").onclick = async () => {
+  if (!copyAllPreparedText) return;
+  try {
+    await writeClipboard(copyAllPreparedText);
+    $("copyAllMessage").textContent = `${copyAllPreparedCount.toLocaleString()}件を${copyAllPreparedOrder==="reverse"?"逆順":"登録順"}でコピーしました。抽出記録は変更していません。`;
+  } catch {
+    $("copyAllReadyText").focus();
+    $("copyAllReadyText").select();
+    $("copyAllMessage").textContent = "自動コピーに失敗しました。下のテキストを長押しして「すべて選択」→「コピー」を行ってください。";
+  }
+};
 $("copyAllReceived").onclick = () => copyAllItems("received");
 $("copyAllReverse").onclick = () => copyAllItems("reverse");
 $("exportActionClose").onclick = () => $("exportActionDialog").close();
