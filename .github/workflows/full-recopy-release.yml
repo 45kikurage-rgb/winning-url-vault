@@ -1,0 +1,75 @@
+name: Read-only full-recopy production release
+on:
+  push:
+    branches: [main]
+    paths: [docs/releases/full-recopy-20261103.md]
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: winning-url-vault-production
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Require exact merged main commit CI success (no duplicate test suite)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import json,os,time,urllib.request
+          url=f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/ci.yml/runs?head_sha={os.environ['GITHUB_SHA']}"
+          for _ in range(48):
+              req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              runs=json.load(urllib.request.urlopen(req))['workflow_runs']
+              matches=[r for r in runs if r['head_sha']==os.environ['GITHUB_SHA'] and r['event']=='push']
+              if matches and matches[0]['status']=='completed':
+                  assert matches[0]['conclusion']=='success','CI_FAILED'
+                  print('Exact main commit CI passed');break
+              time.sleep(5)
+          else:raise SystemExit('CI_TIMEOUT')
+          PY
+      - name: Compile release guard and prepare reviewed Worker without publishing
+        run: |
+          python3 -m py_compile scripts/release-full-recopy.py
+          npx wrangler deploy --dry-run --outdir release-bundle
+      - name: Read-only baseline, binding and schema preflight
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-full-recopy.py preflight
+      - name: Publish reviewed Worker with zero database migrations
+        id: publish
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy --config .release-wrangler.json --keep-vars --message "Read-only full recopy $GITHUB_SHA"
+      - name: Verify production bytes, anonymous access denial, and preserved runtime
+        id: verify
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-full-recopy.py verify
+      - name: Restore prior version only on verified publication failure
+        if: failure() && steps.publish.conclusion == 'success' && steps.verify.conclusion == 'failure'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-full-recopy.py rollback
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-recopy-release-${{ github.run_id }}
+          path: full-recopy-release-evidence.json
+          if-no-files-found: warn
+          retention-days: 14
