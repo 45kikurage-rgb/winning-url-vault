@@ -434,3 +434,7 @@ body[data-active-tab="chiritumo"] #tabSorting{display:block}
 #assignmentDialog h2,#assignmentDialog p{overflow-wrap:anywhere}
 #assignmentDialog button{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 
+
+/* Read-only full-copy control: compact without hiding the existing export/settings actions. */
+#app .product-actions .copy-all-button{white-space:nowrap;font-size:.75rem;padding-inline:.35rem}
+#copyAllDialog .export-action-grid button{min-height:52px}
