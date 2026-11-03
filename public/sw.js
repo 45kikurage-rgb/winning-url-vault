@@ -1,10 +1,10 @@
-const CACHE = "winning-url-vault-pwa-20261102-mobile-reliability";
+const CACHE = "winning-url-vault-pwa-20261103-full-recopy";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
-  "/styles.css?v=20261102-mobile-reliability",
-  "/app.js?v=20261102-mobile-reliability",
+  "/styles.css?v=20261103-full-recopy",
+  "/app.js?v=20261103-full-recopy",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
