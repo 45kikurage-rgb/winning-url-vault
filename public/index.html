@@ -301,6 +301,11 @@
     <button id="copyAllReverse" type="button">逆順で全件コピー</button>
   </div>
   <p id="copyAllMessage" class="result" role="status" aria-live="polite"></p>
+  <div id="copyAllReady" class="hidden">
+    <button id="copyAllReadyButton" type="button">取得した全件をコピーする</button>
+    <label class="meta" for="copyAllReadyText">コピーできない場合は下の一覧を選択できます</label>
+    <textarea id="copyAllReadyText" readonly rows="4" spellcheck="false" autocomplete="off"></textarea>
+  </div>
 </dialog>
 
 <dialog id="exportActionDialog" aria-labelledby="exportActionTitle">
