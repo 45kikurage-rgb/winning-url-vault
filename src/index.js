@@ -26,7 +26,7 @@ import {
 } from "./ledger.js";
 import {
   cancelExportBatch, completeExportBatch, completeExportItem, getExportBatch,
-  getPendingExportBatch, listWinningLists, nextExportItem, setOutputMethod,
+  getPendingExportBatch, listWinningLists, listAllProductItems, nextExportItem, setOutputMethod,
   startExportBatch, undoExportBatch, setFolderVisibility, inspectUnexportedItems, setManualFinished
 } from "./extraction.js";
 
@@ -1126,6 +1126,14 @@ export default {
       }
       if (url.pathname.startsWith('/api/tiktok-videos/')) {
         return json({ok:true,...await tikTokVideoRoute(request,env,url.pathname)});
+      }
+      // Read-only full copy: includes previously exported values; no state updates.
+      const allItemsRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/all-items$/i);
+      if (allItemsRoute && request.method === "GET") {
+        const rawCursor = url.searchParams.get("cursor");
+        const cursor = rawCursor ? decodeCursor(rawCursor) : null;
+        if (rawCursor && !cursor) return json({ok:false,error:"続きの位置が不正です",code:"INVALID_CURSOR"},400);
+        return json({ok:true,...await listAllProductItems(env,allItemsRoute[1],url.searchParams.get("order") || "received",cursor)});
       }
       const contentsRoute = url.pathname.match(/^\/api\/products\/([0-9a-f-]+)\/unexported-items$/i);
       if (contentsRoute && request.method === 'GET') {
