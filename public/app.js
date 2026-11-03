@@ -639,7 +639,7 @@ function winningCardHtml(item) {
   return `<div class="product-heading"><h3 data-name-scope="winning" data-name-id="${id}" title="${esc(item.product_name || name)}">${esc(name)}</h3><span class="product-total">合計${Number(item.total_count || 0).toLocaleString()}件</span></div>
     ${winningView.showCampaign ? `<div class="product-campaign">${esc(item.campaign_name || item.campaign_id)} · ${esc(item.lottery_start_date || '開始日未取得')}</div>` : ''}
     <div class="product-body"><div class="product-meta"><span class="product-spec-place">${esc(item.product_spec || '規格未設定')}／${esc(item.redemption_place || '引換先未取得')}</span><span>${esc(expiryLabel(item,winningView.relativeDates))}</span>${item.show_in_permanent ? '<span>常設</span>' : ''}</div>
-    <div class="product-controls"><small class="product-method">${esc(methodLabel(item.output_method))}</small><div class="product-actions"><button class="extract-button${remaining > 999 ? ' wide-count' : ''}" data-export-product="${id}" ${unset || remaining === 0 ? 'disabled' : ''}><span>未抽出</span><strong>${remaining.toLocaleString()}</strong><span>件</span></button><button class="secondary product-settings" data-method-product="${id}" aria-label="${esc(name)}の設定">設定</button></div></div></div>
+    <div class="product-controls"><small class="product-method">${esc(methodLabel(item.output_method))}</small><div class="product-actions"><button class="extract-button${remaining > 999 ? ' wide-count' : ''}" data-export-product="${id}" ${unset || remaining === 0 ? 'disabled' : ''}><span>未抽出</span><strong>${remaining.toLocaleString()}</strong><span>件</span></button><button class="secondary copy-all-button" data-copy-all-product="${id}" ${Number(item.total_count || 0) === 0 ? "disabled" : ""} title="抽出済みも含めて全件コピー">全件再コピー</button><button class="secondary product-settings" data-method-product="${id}" aria-label="${esc(name)}の設定">設定</button></div></div></div>
     ${item.manual_finished && item.campaign_status !== 'closed' ? '<div class="product-notes">手動で終了済みへ移動</div>' : ''}${reasons.length ? `<div class="product-notes">${esc(reasons.join(' / '))}</div>` : ''}
     ${isEraberuPay(item) ? `<div class="product-recheck"><span data-balance-message="${id}" role="status">${esc(recheck?.message || '再解析は設定から')}</span>${recheck?.running ? `<button class="secondary" data-stop-recheck="${id}">再解析を中断</button>` : ''}</div>` : ''}`;
 }
@@ -761,6 +761,7 @@ function bindWinningControls() {
   document.querySelectorAll("[data-method-product]").forEach(button => button.onclick = () => openOutputMethod(button.dataset.methodProduct));
   document.querySelectorAll("[data-reassign-product]").forEach(button => button.onclick = () => openReassignment(button.dataset.reassignProduct));
   document.querySelectorAll("[data-export-product]").forEach(button => button.onclick = () => openExportAction(button.dataset.exportProduct));
+  document.querySelectorAll("[data-copy-all-product]").forEach(button => button.onclick = () => openCopyAllDialog(button.dataset.copyAllProduct));
   document.querySelectorAll("[data-stop-recheck]").forEach(button => button.onclick = () => { const progress=balanceRechecks.get(button.dataset.stopRecheck); if (progress) { progress.stopRequested=true; button.disabled=true; button.textContent="応答後に中断します"; } });
 }
 
@@ -1042,6 +1043,61 @@ function selectPaypayKind(kind) {
   $("exportActionSummary").innerHTML = `${esc(label)}<strong>${count.toLocaleString()}件</strong><small>未抽出</small>`;
   $("exportActionMessage").textContent = "";
   $("exportActionGrid").classList.remove("hidden");
+}
+
+// Independent, read-only from the existing export-batch workflow.
+let copyAllProductId = null;
+let copyAllRunning = false;
+function openCopyAllDialog(productId) {
+  if (copyAllRunning) return;
+  const item = winningProduct(productId);
+  if (!item || !Number(item.total_count || 0)) return;
+  copyAllProductId = productId;
+  $("copyAllContext").textContent = productContext(item);
+  $("copyAllSummary").textContent = `保存済み ${Number(item.total_count).toLocaleString()}件（抽出済み・未抽出をすべて含む）`;
+  $("copyAllMessage").textContent = "コピーしても抽出済みの状態・履歴は変わりません。";
+  $("copyAllDialog").showModal();
+}
+async function copyAllItems(order) {
+  if (copyAllRunning || !["received","reverse"].includes(order) || !copyAllProductId) return;
+  const productId = copyAllProductId, item = winningProduct(productId);
+  if (!item) return;
+  copyAllRunning = true;
+  const buttons = [$("copyAllReceived"),$("copyAllReverse"),$("copyAllClose")];
+  buttons.forEach(button=>button.disabled=true);
+  let cursor = null, pageNo = 0;
+  const rows = [], seen = new Set();
+  try {
+    do {
+      const query = new URLSearchParams({order});
+      if (cursor) query.set("cursor",cursor);
+      const page = await api(`/api/products/${productId}/all-items?${query}`);
+      if (page.product_id !== productId || page.order !== order || !Array.isArray(page.items))
+        throw new Error("応答の照合に失敗しました");
+      for (const entry of page.items) {
+        if (!entry || typeof entry.id !== "string" || typeof entry.value !== "string" || seen.has(entry.id))
+          throw new Error("コード一覧に重複・欠損があります");
+        seen.add(entry.id);
+        rows.push(entry.value);
+      }
+      cursor = page.nextCursor;
+      pageNo += 1;
+      if (pageNo > 1000) throw new Error("件数が多すぎます");
+      $("copyAllMessage").textContent = `取得中… ${rows.length.toLocaleString()}件`;
+    } while (cursor);
+    // A stale card count or concurrent change must never produce a silently incomplete copy.
+    if (rows.length !== Number(item.total_count))
+      throw new Error(`件数が変わりました（取得${rows.length}件／表示${item.total_count}件）。一覧を更新してやり直してください`);
+    if (!rows.length) throw new Error("保存済みコードがありません");
+    await writeClipboard(rows.join("\n"));
+    $("copyAllMessage").textContent =
+      `${rows.length.toLocaleString()}件を${order==="reverse"?"逆順":"登録順"}でコピーしました。抽出記録は変更していません。`;
+  } catch (error) {
+    $("copyAllMessage").textContent = `全件コピーできませんでした。抽出記録は変更していません。理由：${error.message}`;
+  } finally {
+    copyAllRunning = false;
+    buttons.forEach(button=>button.disabled=false);
+  }
 }
 
 async function writeClipboard(text) {
@@ -1929,6 +1985,9 @@ $("outputMethodDialog").addEventListener("click", event => {
   const button = event.target.closest("[data-output-method]");
   if (button) saveOutputMethod(button.dataset.outputMethod);
 });
+$("copyAllClose").onclick = () => $("copyAllDialog").close();
+$("copyAllReceived").onclick = () => copyAllItems("received");
+$("copyAllReverse").onclick = () => copyAllItems("reverse");
 $("exportActionClose").onclick = () => $("exportActionDialog").close();
 $("paypayKindChooser").addEventListener("click", event => {
   const button = event.target.closest("[data-paypay-kind]");
