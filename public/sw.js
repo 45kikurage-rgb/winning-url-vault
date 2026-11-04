@@ -1,4 +1,4 @@
-const CACHE = "winning-url-vault-pwa-20261103-full-recopy";
+const CACHE = "winning-url-vault-pwa-20261104-aru-success";
 const ASSETS = [
   "/",
   "/index.html",
@@ -19,9 +19,9 @@ const ASSETS = [
   "/share.js",
   "/manifest.json",
   "/manifest.webmanifest",
-  "/icon-any-192.png",
-  "/icon-any-512.png",
-  "/icon-maskable-512.png"
+  "/icon-any-192.png?v=aru-success",
+  "/icon-any-512.png?v=aru-success",
+  "/icon-maskable-512.png?v=aru-success"
 ];
 
 async function handleShareTarget(request) {
