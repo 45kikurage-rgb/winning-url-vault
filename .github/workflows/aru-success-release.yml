@@ -1,4 +1,4 @@
-name: Aru-Success production verification
+name: Aru-Success production activation
 on:
   push:
     branches: [main]
@@ -16,7 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Verify active release after Cloudflare propagation
+      - name: Activate the uploaded version and verify production
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: python3 scripts/release-aru-success.py
