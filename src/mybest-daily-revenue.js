@@ -43,16 +43,16 @@ export async function readMyBestRevenue(db, month, at = Date.now()) {
     if (date <= through) days[date] = 0;
   }
   for (const row of results) {
-    if (!yen(row.winner_count) || !yen(row.unit_price)) return null;
-    const amount = row.unit_price * row.winner_count;
-    if (!yen(amount)) return null;
+    if (!yen(row.winner_count) || (row.unit_price !== null && !yen(row.unit_price))) return null;
+    const amount = row.unit_price === null ? null : row.unit_price * row.winner_count;
+    if (amount !== null && !yen(amount)) return null;
     if (row.kind === "monthly") {
       if (row.finalized_at !== null || !yen(row.source_revision) || row.amount !== amount) return null;
       products.set(row.product_id, {
         product_id: row.product_id, campaign_id: row.campaign_id, unit_price: row.unit_price,
         winner_count: row.winner_count, amount, source_revision: row.source_revision
       });
-      verifiedTotal += amount;
+      if (amount !== null) verifiedTotal += amount;
       if (!yen(verifiedTotal)) return null;
       continue;
     }
@@ -62,7 +62,7 @@ export async function readMyBestRevenue(db, month, at = Date.now()) {
     item.count += row.winner_count;
     if (!yen(item.count)) return null;
     computed.set(row.product_id, item);
-    if (Object.hasOwn(days, row.day)) {
+    if (amount !== null && Object.hasOwn(days, row.day)) {
       days[row.day] += amount;
       if (!yen(days[row.day])) return null;
     }
@@ -75,5 +75,8 @@ export async function readMyBestRevenue(db, month, at = Date.now()) {
     computed.delete(id);
   }
   if (computed.size) return null;
-  return { month, through: through.startsWith(month) ? through : null, days, products: [...products.values()] };
+  // The existing Ledger revenue contract contains priced products only.
+  // Unpriced products still participate in the Vault count check above.
+  return { month, through: through.startsWith(month) ? through : null, days,
+    products: [...products.values()].filter(product => product.unit_price !== null) };
 }

@@ -29,7 +29,7 @@ test("month boundary, zero day, current-day exclusion and valid product revision
   assert.equal(r.products[0].source_revision,7);
 });
 
-test("unpriced, finalized and mismatching products fail closed",async()=>{
+test("price changes, finalized rows and mismatching products fail closed",async()=>{
   const db=fixture();
   for(const [change,revert] of [
     ["UPDATE ledger_products SET unit_price=NULL","UPDATE ledger_products SET unit_price=300"],
@@ -41,4 +41,18 @@ test("unpriced, finalized and mismatching products fail closed",async()=>{
     db.sql.exec(revert);
   }
   assert.equal(await readMyBestRevenue(db,"2026-09",clock),null);
+});
+
+test("unpriced awards are excluded using the existing monthly accounting scope",async()=>{
+  const db=fixture();
+  db.sql.exec(`
+    INSERT INTO ledger_products VALUES ('unpriced',NULL);
+    INSERT INTO items VALUES (5,'2026-11-01T15:00:00Z','active');
+    INSERT INTO item_campaign_assignments VALUES (5,'unpriced','c');
+    INSERT INTO product_monthly_revenue VALUES ('2026-11','unpriced','c',NULL,1,NULL,0,NULL);
+  `);
+  const result=await readMyBestRevenue(db,"2026-11",clock);
+  assert.deepEqual({...result.days},{"2026-11-01":300,"2026-11-02":0});
+  assert.equal(result.products.length,1);
+  assert.equal(result.products[0].amount,600);
 });

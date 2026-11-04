@@ -1,4 +1,4 @@
-# Production entry point for the read-only Aru-MyBest service binding.
+# Publish the read-only Aru-MyBest service with the existing priced-only revenue scope.
 name: Aru-Success MyBest internal reader release
 on:
   push:
