@@ -1,3 +1,4 @@
+# Production entry point for the read-only Aru-MyBest service binding.
 name: Aru-Success MyBest internal reader release
 on:
   push:
