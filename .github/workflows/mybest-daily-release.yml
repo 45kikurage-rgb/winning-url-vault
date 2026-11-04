@@ -1,0 +1,47 @@
+name: Aru-Success MyBest internal reader release
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/mybest-daily-release.yml']
+permissions:
+  contents: read
+concurrency:
+  group: winning-url-vault-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '24', cache: npm}
+      - run: npm ci
+      - name: Verify reader and build once
+        run: |
+          npm run check
+          node --test tests/mybest-daily-revenue.test.js
+          npx wrangler deploy --dry-run --outdir release-bundle
+      - name: Read-only production preflight
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-mybest-daily.py preflight
+      - name: Publish existing Worker without migrations
+        id: publish
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy --config .release-wrangler.json --keep-vars --message "MyBest internal reader ${GITHUB_SHA}"
+      - name: Verify live code, authentication and unchanged D1
+        id: verify
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-mybest-daily.py verify
+      - name: Roll back our failed publication
+        if: failure() && steps.publish.conclusion == 'success' && steps.verify.conclusion == 'failure'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-mybest-daily.py rollback
