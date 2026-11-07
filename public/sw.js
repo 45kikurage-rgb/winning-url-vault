@@ -1,4 +1,4 @@
-const CACHE = "winning-url-vault-pwa-20261104-aru-success";
+const CACHE = "winning-url-vault-pwa-20261104-aruno-ticket-20261107";
 const ASSETS = [
   "/",
   "/index.html",
@@ -19,9 +19,9 @@ const ASSETS = [
   "/share.js",
   "/manifest.json",
   "/manifest.webmanifest",
-  "/icon-any-192.png?v=aru-success",
-  "/icon-any-512.png?v=aru-success",
-  "/icon-maskable-512.png?v=aru-success"
+  "/icon-any-192.png?v=aruno-ticket-20261107",
+  "/icon-any-512.png?v=aruno-ticket-20261107",
+  "/icon-maskable-512.png?v=aruno-ticket-20261107"
 ];
 
 async function handleShareTarget(request) {

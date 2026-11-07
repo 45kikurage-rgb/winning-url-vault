@@ -17,8 +17,8 @@ test("PWA manifests expose the Android share target", async () => {
   const manifest = JSON.parse(await text("manifest.json"));
   const alternate = JSON.parse(await text("manifest.webmanifest"));
   assert.deepEqual(alternate, manifest);
-  assert.equal(manifest.name, "Aru-Success");
-  assert.equal(manifest.short_name, "Aru-Success");
+  assert.equal(manifest.name, "Aruno-Ticket");
+  assert.equal(manifest.short_name, "Aruno-Ticket");
   assert.equal(manifest.start_url, "/");
   assert.equal(manifest.background_color, "#ffffff");
   assert.deepEqual(manifest.share_target, {
@@ -55,7 +55,7 @@ test("both launch pages register or reference the PWA", async () => {
   assert.match(index, /rel="manifest" href="\/manifest\.json"/);
   assert.match(app, /serviceWorker\.register\("\/sw\.js"\)/);
   assert.match(share, /src="\/share\.js"/);
-  assert.match(share, /src="\/icon-any-512\.png\?v=aru-success"/);
+  assert.match(share, /src="\/icon-any-512\.png\?v=aruno-ticket-20261107"/);
 });
 
 test("スマホ一覧は独立した未抽出ボタン・設定・終了領域と固定タブを備える", async () => {

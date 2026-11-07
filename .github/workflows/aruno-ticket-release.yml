@@ -1,0 +1,54 @@
+name: Aruno-Ticket branding release
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/aruno-ticket-release.yml]
+permissions:
+  contents: read
+concurrency:
+  group: winning-url-vault-production
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0, persist-credentials: false}
+      - uses: actions/setup-node@v4
+        with: {node-version: '24', cache: npm}
+      - run: npm ci
+      - name: Check PWA and prepare assets
+        run: |
+          node --test tests/pwa.test.mjs
+          python3 -m py_compile scripts/release-aruno-ticket.py
+          npx wrangler deploy --dry-run --outdir release-bundle
+      - name: Check live baseline and runtime
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-aruno-ticket.py preflight
+      - name: Publish the verified branding
+        id: publish
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-aruno-ticket.py publish
+      - name: Verify live assets and access controls
+        id: verify
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-aruno-ticket.py verify
+      - name: Restore the prior version after a failed release
+        if: failure() && (steps.publish.outcome == 'failure' || steps.verify.outcome == 'failure')
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: python3 scripts/release-aruno-ticket.py rollback
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aruno-ticket-release
+          path: aruno-ticket-release-evidence.json
+          if-no-files-found: warn
+          retention-days: 14
