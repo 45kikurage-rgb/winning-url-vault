@@ -1,5 +1,7 @@
 const PENDING_SHARE_KEY = "winning-url-vault:pending-share";
 const $ = id => document.getElementById(id);
+const clientRequestId = crypto.randomUUID?.() ||
+  `${Date.now().toString(16)}-${Math.random().toString(16).slice(2).padEnd(16, "0")}`;
 
 function cleanValue(value) {
   return String(value || "").trim().replace(/[.,;、。!?！？\])}]+$/, "");
@@ -32,26 +34,50 @@ function showState(label, type = "") {
   $("shareState").className = `share-state${type ? ` ${type}` : ""}`;
 }
 
+function displayCount(id, value) {
+  const known = Number.isSafeInteger(value) && value >= 0;
+  $(id).textContent = known ? `${value.toLocaleString("ja-JP")}件` : "未取得";
+  $(id).classList.toggle("compact", !known || value >= 100);
+}
+
+function showReceipt(payload, total) {
+  const { received, duplicate } = payload;
+  const counted = Number.isSafeInteger(received) && received >= 0 &&
+    Number.isSafeInteger(duplicate) && duplicate >= 0;
+  // A durable receipt confirms zero intake errors only when all sent entries are accounted for.
+  const errorCount = counted && received + duplicate === total ? 0 : null;
+  displayCount("shareNew", received);
+  displayCount("shareDuplicate", duplicate);
+  displayCount("shareError", errorCount);
+  $("shareState").classList.add("hidden");
+  $("shareResults").classList.remove("hidden");
+  const destination = payload.provisional ? "暫定保管" : "解析待ち";
+  $("shareMessage").textContent = Number.isSafeInteger(received) && received >= 0
+    ? `${received.toLocaleString("ja-JP")}件を${destination}へ登録しました。`
+    : "受付済みです。新規件数を取得できませんでした。";
+}
+
 function holdForLogin(text) {
   localStorage.setItem(PENDING_SHARE_KEY, JSON.stringify({ text, createdAt: Date.now() }));
   showState("ログインが必要です", "waiting");
   $("shareMessage").textContent = "共有データを保持しました。管理画面でログインすると自動受付します。";
-  $("shareOpen").textContent = "ログインして送信";
-  $("shareOpen").classList.remove("hidden");
+  $("shareLogin").classList.remove("hidden");
 }
 
 async function sendShared() {
   const { text, values } = sharedText();
   $("shareRetry").classList.add("hidden");
-  $("shareOpen").classList.add("hidden");
+  $("shareLogin").classList.add("hidden");
+  $("shareResults").classList.add("hidden");
   if (!values.length) {
     showState("URL・コードを取得できませんでした", "error");
     $("shareMessage").textContent = "共有元からデータが渡されていない可能性があります。";
-    $("shareOpen").classList.remove("hidden");
     return;
   }
 
-  $("shareCount").textContent = `${values.length.toLocaleString()}件を受信`;
+  const total = values.length.toLocaleString("ja-JP");
+  $("shareTitle").textContent = `${total}件のデータ送信`;
+  $("shareCount").textContent = `${total}件を受信`;
   $("shareValues").textContent = values.join("\n");
   $("shareValues").classList.remove("hidden");
   showState("サーバーへ送信中…");
@@ -60,22 +86,21 @@ async function sendShared() {
     const response = await fetch("/api/receive", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ values, clientRequestId: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}` })
+      body: JSON.stringify({ values, clientRequestId })
     });
-    const payload = await response.json().catch(() => ({}));
+    const payload = await response.json().catch(() => null);
     if (response.status === 401) return holdForLogin(text);
-    if (!response.ok || payload.ok === false) throw new Error(payload.error || `送信エラー ${response.status}`);
+    if (!response.ok || payload?.ok !== true || payload.stored !== true ||
+        payload.clientRequestId !== clientRequestId) {
+      throw new Error(payload?.error || "受付結果を確認できませんでした");
+    }
     localStorage.removeItem(PENDING_SHARE_KEY);
-    const accepted = Number(payload.job?.accepted || values.length);
-    showState("受付完了", "ok");
-    $("shareMessage").textContent = `${accepted.toLocaleString()}件を解析待ちへ登録しました。`;
-    $("shareOpen").classList.remove("hidden");
+    showReceipt(payload, values.length);
   } catch (error) {
     localStorage.setItem(PENDING_SHARE_KEY, JSON.stringify({ text, createdAt: Date.now() }));
-    showState("送信できませんでした", "error");
+    showState("送信結果を確認できませんでした", "error");
     $("shareMessage").textContent = `${error.message}。共有データは端末内に保持しています。`;
     $("shareRetry").classList.remove("hidden");
-    $("shareOpen").classList.remove("hidden");
   }
 }
 

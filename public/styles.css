@@ -165,17 +165,23 @@ body[data-operation-mode="production"] .summary article{padding:6px 8px;border-w
 body[data-operation-mode="production"] .summary span{font-size:10px}
 body[data-operation-mode="production"] .summary strong{margin-top:1px;font-size:18px}
 }
-.share-page{min-height:100svh;background:#fff;color:#111;color-scheme:light}
+.share-page{min-height:100svh;background:#fff;color:#111;color-scheme:light;padding-bottom:0}
 .share-shell{min-height:100svh;display:grid;place-items:center;padding:18px}
 .share-card{width:min(560px,100%);border:3px solid #111;background:#fff;padding:24px;text-align:center}
-.share-icon{display:block;width:132px;height:132px;object-fit:contain;margin:0 auto 8px}
+.share-icon{display:block;width:156px;height:156px;object-fit:contain;margin:0 auto 8px}
 .share-kicker{margin:0;color:#596273;font-size:12px;letter-spacing:.15em}
-.share-card h1{margin:3px 0 18px;font-size:30px}
+.share-card h1{margin:3px 0 18px;font-size:clamp(24px,8vw,33px)}
 .share-state{padding:18px 12px;border:2px solid #9bb9ef;background:#e9f1ff;color:#16498f;font-size:24px;font-weight:900}
-.share-state.ok{border-color:#79c596;background:#e5f8eb;color:#176438}
+.share-results{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin:0;border:1px solid #d4dce8}
+.share-result{min-width:0;min-height:102px;padding:7px 2px 6px;background:#fff3f4;color:#b42332}
+.share-result+.share-result{border-inline-start:1px solid #d4dce8}
+.share-result-new{background:#f0f6ff;color:#1055b6}
+.share-result dt{font-size:clamp(17px,5.83vw,24px);font-weight:800}
+.share-result dd{margin:0;font-size:clamp(24px,9.71vw,40px);font-weight:900;line-height:1.3;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.share-result dd.compact{font-size:clamp(17px,5.35vw,26px)}
 .share-state.waiting{border-color:#e4bd55;background:#fff6d9;color:#7b5700}
 .share-state.error{border-color:#dc9292;background:#fff0f0;color:#8d2424}
-.share-count{margin-top:12px;font-size:20px;font-weight:900}
+.share-count{margin-top:12px;font-size:22px;font-weight:900}
 .share-values{max-height:120px;overflow:auto;margin:10px 0 0;padding:10px;border:1px solid #ccd2dc;background:#f5f7fa;text-align:left;white-space:pre-wrap;word-break:break-all;font:12px/1.5 sans-serif}
 .share-message{min-height:1.5em;color:#3f4858;font-size:14px}
 .share-button{display:block;width:100%;min-height:48px;padding:11px 14px;border:2px solid #111;background:#0a53c8;color:#fff;text-decoration:none;font-size:17px}

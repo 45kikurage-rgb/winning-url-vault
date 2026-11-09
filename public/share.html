@@ -5,27 +5,32 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#020711">
   <meta name="mobile-web-app-capable" content="yes">
-  <title>Aruno-Ticket | 当選URL受信</title>
+  <title>Aruno-Ticket | データ送信</title>
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/icon-any-192.png?v=aruno-ticket-20261107">
   <link rel="icon" type="image/png" href="/icon-any-192.png?v=aruno-ticket-20261107">
-  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/styles.css?v=20261110-share-result">
 </head>
 <body class="share-page">
   <main class="share-shell">
     <section class="share-card">
       <img class="share-icon" src="/icon-any-512.png?v=aruno-ticket-20261107" alt="">
       <p class="share-kicker">Aruno-Ticket</p>
-      <h1>当選URL受信</h1>
+      <h1 id="shareTitle">データ送信</h1>
       <div id="shareState" class="share-state" aria-live="polite">共有データを確認しています…</div>
+      <dl id="shareResults" class="share-results hidden" aria-label="送信結果">
+        <div class="share-result share-result-new"><dt>新規</dt><dd id="shareNew"></dd></div>
+        <div class="share-result"><dt>重複</dt><dd id="shareDuplicate"></dd></div>
+        <div class="share-result"><dt>エラー</dt><dd id="shareError"></dd></div>
+      </dl>
       <div id="shareCount" class="share-count"></div>
       <pre id="shareValues" class="share-values hidden"></pre>
       <p id="shareMessage" class="share-message"></p>
-      <a id="shareOpen" class="share-button hidden" href="/">管理画面を開く</a>
+      <a id="shareLogin" class="share-button hidden" href="/">ログインして送信</a>
       <button id="shareRetry" class="hidden" type="button">もう一度送信</button>
       <p class="share-note">送信完了後はAndroidの「戻る」で共有元へ戻れます。</p>
     </section>
   </main>
-  <script src="/share.js"></script>
+  <script src="/share.js?v=20261110-share-result"></script>
 </body>
 </html>

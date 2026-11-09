@@ -1,4 +1,4 @@
-"""Release the Aruno-Ticket PWA assets through the existing production guard."""
+"""Release the Aruno-Ticket share screen through the existing production guard."""
 import importlib.util
 import json
 import re
@@ -14,13 +14,11 @@ spec.loader.exec_module(release)
 guard = release.g
 guard.STATE = guard.STATE.with_name("vault-aruno-ticket-private.json")
 guard.OUT = Path("aruno-ticket-release-evidence.json")
-release.BASE_SOURCE = "33b1c111f3dc04d1acec11573b5f8fb024e2e72b"
-release.ASSETS = [
-    "index.html", "share.html", "manifest.json", "manifest.webmanifest", "sw.js",
-    "icon-any-192.png", "icon-any-512.png", "icon-maskable-512.png",
-]
-release.ALLOWED = {f"public/{name}" for name in release.ASSETS} | {
-    "README.md", "tests/pwa.test.mjs", "scripts/release-aruno-ticket.py",
+release.BASE_SOURCE = "95c9a7afa184b40e6a7679871151b029d33047b5"
+SHARE_ASSETS = ["share.html", "share.js", "styles.css", "sw.js"]
+release.ASSETS = [*SHARE_ASSETS, "index.html", "manifest.json", "manifest.webmanifest"]
+release.ALLOWED = {f"public/{name}" for name in SHARE_ASSETS} | {
+    "tests/pwa.test.mjs", "scripts/release-aruno-ticket.py",
     ".github/workflows/aruno-ticket-release.yml",
 }
 release.expected_code_hash = lambda: release.hashlib.sha256(
@@ -31,7 +29,7 @@ def preflight():
     release.preflight()
     state = json.loads(guard.STATE.read_text())
     guard.require(state["worker_hashes"] == [release.expected_code_hash()],
-                  "BRANDING_RELEASE_WOULD_CHANGE_WORKER_CODE")
+                  "SHARE_RELEASE_WOULD_CHANGE_WORKER_CODE")
 
 
 def publish():
@@ -39,7 +37,7 @@ def publish():
     guard.require(guard.active() == state["version"], "CONCURRENT_DEPLOYMENT")
     output = subprocess.check_output([
         "npx", "wrangler", "deploy", "--config", ".release-wrangler.json",
-        "--keep-vars", "--message", "Aruno-Ticket branding",
+        "--keep-vars", "--message", "Aruno-Ticket share result",
     ], text=True)
     print(output, flush=True)
     match = re.search(r"Current Version ID: ([0-9a-f-]{36})", output)
@@ -60,7 +58,7 @@ def publish():
         guard.call(guard.endpoint("/deployments"), {
             "strategy": "percentage",
             "versions": [{"version_id": version, "percentage": 100}],
-            "annotations": {"workers/message": "Activate Aruno-Ticket branding"},
+            "annotations": {"workers/message": "Activate Aruno-Ticket share result"},
         })
 
 

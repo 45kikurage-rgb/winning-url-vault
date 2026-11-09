@@ -1,17 +1,18 @@
-name: Aruno-Ticket branding release
+name: Aruno-Ticket share result release
 on:
   push:
     branches: [main]
     paths: [.github/workflows/aruno-ticket-release.yml]
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: winning-url-vault-production
   cancel-in-progress: false
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 16
     env:
       WRANGLER_SEND_METRICS: 'false'
       CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
@@ -21,16 +22,32 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: '24', cache: npm}
       - run: npm ci
-      - name: Check PWA and prepare assets
+      - name: Require exact merged main commit CI success (no duplicate test suite)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          node --test tests/pwa.test.mjs
+          python3 - <<'PY'
+          import json,os,time,urllib.request
+          url=f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY']}/actions/workflows/ci.yml/runs?head_sha={os.environ['GITHUB_SHA']}"
+          for _ in range(48):
+              req=urllib.request.Request(url,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              runs=json.load(urllib.request.urlopen(req))['workflow_runs']
+              matches=[r for r in runs if r['head_sha']==os.environ['GITHUB_SHA'] and r['event']=='push']
+              if matches and matches[0]['status']=='completed':
+                  assert matches[0]['conclusion']=='success','CI_FAILED'
+                  print('Exact main commit CI passed');break
+              time.sleep(5)
+          else:raise SystemExit('CI_TIMEOUT')
+          PY
+      - name: Prepare the verified assets
+        run: |
           python3 -m py_compile scripts/release-aruno-ticket.py
           npx wrangler deploy --dry-run --outdir release-bundle
       - name: Check live baseline and runtime
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: python3 scripts/release-aruno-ticket.py preflight
-      - name: Publish the verified branding
+      - name: Publish the verified share screen
         id: publish
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

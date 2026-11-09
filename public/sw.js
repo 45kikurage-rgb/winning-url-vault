@@ -1,4 +1,4 @@
-const CACHE = "winning-url-vault-pwa-20261104-aruno-ticket-20261107";
+const CACHE = "winning-url-vault-pwa-20261110-share-result";
 const ASSETS = [
   "/",
   "/index.html",
@@ -16,7 +16,8 @@ const ASSETS = [
   "/tiktok-videos-ui.js",
   "/display-name.js",
   "/single-win-ui.js",
-  "/share.js",
+  "/share.js?v=20261110-share-result",
+  "/styles.css?v=20261110-share-result",
   "/manifest.json",
   "/manifest.webmanifest",
   "/icon-any-192.png?v=aruno-ticket-20261107",
