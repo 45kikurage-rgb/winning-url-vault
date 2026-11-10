@@ -1707,7 +1707,11 @@ async function submitConfirmation(card, action) {
   }
 }
 
-async function receive(pending = null) {
+async function receive() {
+  return receiveValues();
+}
+
+async function receiveValues(pending = null) {
   const values = pending?.values ?? parseReceiveValues($("receiveInput").value);
   if (!values.length) return false;
   const controls = [$("receive"), $("paste"), $("clear")];
@@ -1724,7 +1728,7 @@ async function receive(pending = null) {
     if (pending?.clientRequestId) removePendingShare(localStorage, requestId);
     if (result.provisional) {
       state.activeJobId = null;
-      $("receiveInput").value = "";
+      if (!pending) $("receiveInput").value = "";
       $("receiveProgress").classList.add("hidden");
       $("receiveResult").textContent = "暫定" + result.mode + " に " +
         Number(result.received || 0) + "件保管しました（重複 " +
@@ -1733,7 +1737,7 @@ async function receive(pending = null) {
       return true;
     }
     state.activeJobId = result.job.id;
-    $("receiveInput").value = "";
+    if (!pending) $("receiveInput").value = "";
     showJobProgress(result.job);
     await load();
     await loadJob();
@@ -1753,7 +1757,7 @@ async function resumePendingShare() {
   $("receiveResult").textContent = "共有されたURLを自動受付します…";
   document.querySelector(".receive")?.scrollIntoView({ block: "start" });
   for (const record of records) {
-    if (!(await receive(record))) break;
+    if (!(await receiveValues(record))) break;
   }
 }
 
