@@ -54,7 +54,7 @@ test("both launch pages register or reference the PWA", async () => {
   const share = await text("share.html");
   assert.match(index, /rel="manifest" href="\/manifest\.json"/);
   assert.match(app, /serviceWorker\.register\("\/sw\.js"\)/);
-  assert.match(share, /src="\/share\.js\?v=20261110-share-result"/);
+  assert.match(share, /type="module" src="\/share\.js\?v=20261110-share-durable"/);
   assert.match(share, /src="\/icon-any-512\.png\?v=aruno-ticket-20261107"/);
 });
 

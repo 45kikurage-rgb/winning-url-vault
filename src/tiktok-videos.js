@@ -5,7 +5,7 @@ const stamp = () => new Date().toISOString();
 const fail = (message, code, status = 409) => new VaultLedgerError(message, status, code);
 const pages = values => Array.from({length:Math.ceil(values.length / 60)},(_,i)=>values.slice(i*60,(i+1)*60));
 
-export async function classifyTikTokVideos(env, items) {
+export async function classifyTikTokVideos(env, items, write = statements => env.DB.batch(statements)) {
   const candidates = items.filter(item => isTikTokLongVideo(item.value));
   let changed = 0;
   for (const group of pages(candidates)) {
@@ -25,7 +25,7 @@ export async function classifyTikTokVideos(env, items) {
       statements.push(env.DB.prepare(`DELETE FROM unresolved_items WHERE item_id=?
         AND EXISTS(SELECT 1 FROM tiktok_video_links v WHERE v.item_id=unresolved_items.item_id)`).bind(itemId));
     }
-    const results = await env.DB.batch(statements);
+    const results = await write(statements);
     changed += results.filter((_,i)=>i%3===0).reduce((sum,r)=>sum+Number(r.meta?.changes || 0),0);
   }
   return changed;

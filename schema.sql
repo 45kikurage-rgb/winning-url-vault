@@ -83,9 +83,16 @@ CREATE TABLE IF NOT EXISTS analysis_jobs (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   started_at TEXT,
   completed_at TEXT,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  finalize_owner TEXT,
+  finalize_until TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_analysis_jobs_created ON analysis_jobs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_analysis_jobs_recovery ON analysis_jobs(status,updated_at);
+CREATE TABLE IF NOT EXISTS analysis_finalize_guard (
+  job_id TEXT PRIMARY KEY,
+  current_owner INTEGER NOT NULL CHECK(current_owner=1)
+);
 
 CREATE TABLE IF NOT EXISTS analysis_job_items (
   job_id TEXT NOT NULL,

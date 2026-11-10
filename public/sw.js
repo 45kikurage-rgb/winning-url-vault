@@ -1,10 +1,11 @@
-const CACHE = "winning-url-vault-pwa-20261110-share-result";
+const CACHE = "winning-url-vault-pwa-20261110-share-durable";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
+  "/share-storage.js",
   "/styles.css?v=20261103-full-recopy",
-  "/app.js?v=20261103-full-recopy",
+  "/app.js?v=20261110-share-durable",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
@@ -16,7 +17,7 @@ const ASSETS = [
   "/tiktok-videos-ui.js",
   "/display-name.js",
   "/single-win-ui.js",
-  "/share.js?v=20261110-share-result",
+  "/share.js?v=20261110-share-durable",
   "/styles.css?v=20261110-share-result",
   "/manifest.json",
   "/manifest.webmanifest",
@@ -35,6 +36,7 @@ async function handleShareTarget(request) {
     if (typeof value === "string" && value.trim()) params.set(key, value.trim());
   }
   const target = new URL("/share.html", self.location.origin);
+  params.set("receipt", crypto.randomUUID());
   target.hash = params.toString();
   return Response.redirect(target.href, 303);
 }

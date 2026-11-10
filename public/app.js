@@ -1,3 +1,4 @@
+import { pendingShares, removePendingShare, matchingShareReceipt } from "./share-storage.js";
 import { initSingleWinUI } from './single-win-ui.js';
 import { isTikTokVideoCard } from './tiktok-video.js';
 import { tikTokVideoCardHtml, initTikTokVideosUI } from './tiktok-videos-ui.js';
@@ -111,7 +112,6 @@ async function saveDisplayAlias() {
   } catch(error) { $('displayNameMessage').textContent = error.message; $('displayNameSave').disabled = false; }
 }
 const winningNodes = new Map(), winningGroups = new Map();
-const PENDING_SHARE_KEY = "winning-url-vault:pending-share";
 const LAST_EXPORT_BATCH_KEY = "winning-url-vault:last-export-batch";
 const OUTPUT_METHOD_LABELS = { unset:"未設定", normal:"通常URL", cokeon:"コークオン",
   wallet:"えらべるPay", paypay:"PayPay", text_single:"文字列" };
@@ -1707,8 +1707,8 @@ async function submitConfirmation(card, action) {
   }
 }
 
-async function receive() {
-  const values = parseReceiveValues($("receiveInput").value);
+async function receive(pending = null) {
+  const values = pending?.values ?? parseReceiveValues($("receiveInput").value);
   if (!values.length) return false;
   const controls = [$("receive"), $("paste"), $("clear")];
   controls.forEach(button => button.disabled = true);
@@ -1717,9 +1717,11 @@ async function receive() {
   $("progressCount").textContent = `${values.length.toLocaleString()}件`;
   $("receiveResult").textContent = "貼付内重複と既登録を確認しています…";
   try {
-    const requestId = crypto.randomUUID();
+    const requestId = pending?.clientRequestId ?? crypto.randomUUID();
     const result = await api("/api/receive", { method:"POST", headers:{ "content-type":"application/json" },
       body:JSON.stringify({ values, clientRequestId:requestId }) });
+    if (pending?.clientRequestId && !matchingShareReceipt(result, requestId)) throw new Error("共有データの受付結果を確認できませんでした");
+    if (pending?.clientRequestId) removePendingShare(localStorage, requestId);
     if (result.provisional) {
       state.activeJobId = null;
       $("receiveInput").value = "";
@@ -1744,18 +1746,15 @@ async function receive() {
 }
 
 async function resumePendingShare() {
-  let pending;
-  try { pending = JSON.parse(localStorage.getItem(PENDING_SHARE_KEY) || "null"); }
-  catch { localStorage.removeItem(PENDING_SHARE_KEY); return; }
-  if (!pending?.text) return;
-  if (Date.now() - Number(pending.createdAt || 0) > 24 * 60 * 60 * 1000) {
-    localStorage.removeItem(PENDING_SHARE_KEY);
-    return;
-  }
-  $("receiveInput").value = pending.text;
+  let records;
+  try { records = await pendingShares(localStorage, parseReceiveValues); }
+  catch { return; }
+  if (!records.length) return;
   $("receiveResult").textContent = "共有されたURLを自動受付します…";
   document.querySelector(".receive")?.scrollIntoView({ block: "start" });
-  if (await receive()) localStorage.removeItem(PENDING_SHARE_KEY);
+  for (const record of records) {
+    if (!(await receive(record))) break;
+  }
 }
 
 async function loadJob() {
