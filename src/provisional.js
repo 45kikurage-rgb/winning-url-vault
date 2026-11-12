@@ -1,3 +1,4 @@
+import { legacyCokeOnDuplicates } from './cokeon-duplicates.js';
 import { classifyValue, normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson } from "./core.js";
 import { digest, IntakeError } from "./sending-auth.js";
 
@@ -92,6 +93,7 @@ async function receiptByRequest(env, ownerKey, requestId) {
 async function finishReceive(env, receipt) {
   if (receipt.status !== "stored") {
     const plan = JSON.parse(receipt.plan_json);
+    const cokeDuplicates = await legacyCokeOnDuplicates(env,plan.map(entry=>entry.value));
     for (let cursor = receipt.cursor; cursor < plan.length; cursor += 30) {
       const chunk = plan.slice(cursor, cursor + 30);
       const statements = [];
@@ -99,8 +101,9 @@ async function finishReceive(env, receipt) {
         statements.push(env.DB.prepare(
           "INSERT OR IGNORE INTO items(id,value,canonical_value,value_type,status,analysis_json) " +
           "SELECT ?,?,?,?,'provisional',? WHERE EXISTS " +
-          "(SELECT 1 FROM provisional_receipts WHERE id=? AND status='receiving')"
-        ).bind(entry.id, entry.value, entry.canonical, entry.type, JSON.stringify(entry.analysis), receipt.id));
+          "(SELECT 1 FROM provisional_receipts WHERE id=? AND status='receiving') " +
+          "AND NOT EXISTS(SELECT 1 FROM items WHERE id=?)"
+        ).bind(entry.id, entry.value, entry.canonical, entry.type, JSON.stringify(entry.analysis), receipt.id, cokeDuplicates.get(classifyValue(entry.value)?.code)||''));
         statements.push(env.DB.prepare(
           "INSERT OR IGNORE INTO provisional_entries(item_id,receipt_id,bucket_id,source_label,parsed_expiry) " +
           "SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM items WHERE id=? AND status='provisional')"
@@ -284,4 +287,5 @@ export async function publishBucket(env, slot, bucketId, form) {
   return { ok: true, slot, cardId: card.id, count: Number(count.n), priceRecorded: amount !== null,
     warning: amount !== null ? "入力金額は暫定メモです。収益単価はキャンペーンへ仕分け後に確認・設定してください。" : "" };
 }
+
 

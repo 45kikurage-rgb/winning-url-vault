@@ -681,10 +681,10 @@ async function receive(request, env, identity = {ownerKey:'admin'}, ctx) {
   }
 }
 
-async function retryUnresolved(env,source='arunomatic') {
+async function retryUnresolved(env,source='arunomatic',onlyCokeOn=false) {
   const rows = await env.DB.prepare(`SELECT i.id,i.value,i.canonical_value,i.value_type,i.intake_source,u.retry_count
-    FROM unresolved_items u JOIN items i ON i.id=u.item_id WHERE i.intake_source=? ORDER BY u.updated_at ASC LIMIT 100`).bind(source).all();
-  const items = rows.results || [];
+    FROM unresolved_items u JOIN items i ON i.id=u.item_id WHERE i.intake_source=? ${onlyCokeOn ? `AND i.status='unresolved' AND i.card_id IS NULL AND i.pending_id IS NULL AND (i.value_type='cokeon' OR instr(lower(i.value),'https://c.cocacola.co.jp/spn/app/cp/linegift.html?')=1 OR instr(lower(i.value),'https://c.cocacola.co.jp/spn/app/cp/couponcode.html?')=1)` : ''} ORDER BY u.updated_at ASC LIMIT 100`).bind(source).all();
+  const items = (rows.results || []).filter(item=>!onlyCokeOn || classifyValue(item.value,env.COKEON_REDEEM_BASE_URL)?.type==='cokeon');
   const urlItems = []; const output = [];
   for (const item of items) {
     await env.DB.prepare("UPDATE unresolved_items SET retry_count=retry_count+1,updated_at=? WHERE item_id=?")
@@ -1274,7 +1274,11 @@ export default {
       }
       if (url.pathname === "/api/pending" && request.method === "GET") return listPending(env,requestIntakeSource(url));
       if (url.pathname === "/api/unresolved" && request.method === "GET") return listUnresolved(env,requestIntakeSource(url));
-      if (url.pathname === "/api/unresolved/retry" && request.method === "POST") return retryUnresolved(env,requestIntakeSource(url));
+      if (url.pathname === "/api/unresolved/retry" && request.method === "POST") {
+        const body = await request.json().catch(()=>({}));
+        if (body.target !== undefined && body.target !== "cokeon") return json({ok:false,error:"再解析対象が不正です"},400);
+        return retryUnresolved(env,requestIntakeSource(url),body.target === "cokeon");
+      }
       const unresolvedImageAnalyze = url.pathname.match(/^\/api\/unresolved\/([0-9a-f-]+)\/image-analyze$/i);
       if (unresolvedImageAnalyze && request.method === "POST") return analyzeUnresolvedImage(request, env, unresolvedImageAnalyze[1]);
       const unresolvedImageConfirm = url.pathname.match(/^\/api\/unresolved\/([0-9a-f-]+)\/image-confirm$/i);
@@ -1327,6 +1331,7 @@ export default {
     })());
   }
 };
+
 
 
 

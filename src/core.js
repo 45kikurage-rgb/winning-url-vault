@@ -77,8 +77,8 @@ function normalizePayPayCode(value) {
 export function classifyValue(raw, cokeOnBaseUrl = "https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=") {
   const text = String(raw || "").normalize("NFKC").trim();
   if (!text) return null;
-  if (/^cd[A-Za-z0-9]{12}$/.test(text)) {
-    const code = text.slice(0, 2).toLowerCase() + text.slice(2);
+  if (/^cd[A-Za-z0-9]{12}$/.test(String(raw || "").trim())) {
+    const code = String(raw).trim();
     return { type: "cokeon", canonicalValue: code, storedValue: `${cokeOnBaseUrl}${encodeURIComponent(code)}`, code };
   }
   if (/^[A-Za-z0-9]{16}$/.test(text) || /^[A-Za-z0-9]{4}(?:-[A-Za-z0-9]{4}){3}$/.test(text)) {
@@ -88,6 +88,17 @@ export function classifyValue(raw, cokeOnBaseUrl = "https://c.cocacola.co.jp/spn
   try {
     const url = new URL(text);
     if (url.protocol !== "https:") return { type: "unknown", canonicalValue: text, storedValue: text, reason: "HTTPS以外のURL" };
+    // Official Coke ON links identify the same ticket as its case-sensitive code.
+    // Keep the original URL for the user's manual charge; never follow it here.
+    if (url.hostname === "c.cocacola.co.jp" && !url.username && !url.password && (!url.port || url.port === "443") &&
+        ["/spn/app/cp/linegift.html", "/spn/app/cp/couponcode.html"].includes(url.pathname)) {
+      const originalUrl = new URL(String(raw || "").trim());
+      const codes = originalUrl.searchParams.getAll("couponcode");
+      if (codes.length === 1 && /^cd[A-Za-z0-9]{12}$/.test(codes[0])) {
+        return { type:"cokeon", canonicalValue:codes[0], storedValue:String(raw).trim(), code:codes[0] };
+      }
+      return { type:"unknown", canonicalValue:text, storedValue:text, reason:"Coke ONクーポンコードの形式が不正です" };
+    }
     url.hash = "";
     if (url.hostname === "giftcard.paypay.ne.jp") {
       return { type: "paypay", canonicalValue: url.href, storedValue: url.href, code: "" };
@@ -178,3 +189,4 @@ export function normalizeAnalysis(result) {
       && result.productImageDataUri.length <= 1_500_000 ? result.productImageDataUri : null
   };
 }
+

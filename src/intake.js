@@ -1,3 +1,4 @@
+import {legacyCokeOnDuplicates} from './cokeon-duplicates.js';
 import {intakeSource} from './intake-source.js';
 import {classifyValue,extractInputValues} from './core.js';
 import {digest,IntakeError} from './sending-auth.js';
@@ -59,12 +60,15 @@ export async function beginIntake(env, input, ownerKey) {
 export async function materializeIntake(env, receipt) {
   if(receipt.status==='stored') return receipt;
   const plan=JSON.parse(receipt.plan_json),jobId=receipt.job_id;
+  const cokeDuplicates=await legacyCokeOnDuplicates(env,plan.map(item=>item.storedValue));
   for(let start=receipt.cursor;start<plan.length;start+=40){
     const chunk=plan.slice(start,start+40),statements=[];
     for(const [offset,item] of chunk.entries()){
       statements.push(env.DB.prepare(`INSERT OR IGNORE INTO items(id,value,canonical_value,value_type,status,intake_source)
-        SELECT ?,?,?,?,'queued',? WHERE EXISTS(SELECT 1 FROM intake_receipts WHERE job_id=? AND status='receiving')`)
-        .bind(item.id,item.storedValue,item.canonicalValue,item.type,intakeSource(item.intakeSource),jobId));
+        SELECT ?,?,?,?,'queued',? WHERE EXISTS(SELECT 1 FROM intake_receipts WHERE job_id=? AND status='receiving')
+        AND NOT EXISTS(SELECT 1 FROM items WHERE id=?)`)
+        .bind(item.id,item.storedValue,item.canonicalValue,item.type,intakeSource(item.intakeSource),jobId,
+          cokeDuplicates.get(classifyValue(item.storedValue)?.code)||''));
       statements.push(env.DB.prepare(`INSERT OR IGNORE INTO analysis_job_items(job_id,item_id,ordinal,state,updated_at)
         SELECT ?,id,?,'queued',? FROM items WHERE id=?
         AND EXISTS(SELECT 1 FROM intake_receipts WHERE job_id=? AND status='receiving')`)
@@ -106,3 +110,4 @@ export async function recoverIntakes(env,processFully) {
   const rows=await env.DB.prepare('SELECT * FROM intake_receipts WHERE dispatched=0 ORDER BY created_at LIMIT 10').all();
   for(const receipt of rows.results||[]){try{await dispatchIntake(env,await materializeIntake(env,receipt),processFully);}catch{console.error('Intake recovery deferred',receipt.job_id);}}
 }
+

@@ -1,11 +1,11 @@
-const CACHE = "winning-url-vault-pwa-20261110-share-durable";
+const CACHE = "winning-url-vault-pwa-20261112-asahi-cokeon";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
   "/share-storage.js",
   "/styles.css?v=20261103-full-recopy",
-  "/app.js?v=20261110-share-durable",
+  "/app.js?v=20261112-asahi-cokeon",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
@@ -17,7 +17,7 @@ const ASSETS = [
   "/tiktok-videos-ui.js",
   "/display-name.js",
   "/single-win-ui.js",
-  "/share.js?v=20261110-share-durable",
+  "/share.js?v=20261112-asahi-cokeon",
   "/styles.css?v=20261110-share-result",
   "/manifest.json",
   "/manifest.webmanifest",
@@ -72,6 +72,7 @@ self.addEventListener("fetch", event => {
     }
   })());
 });
+
 
 
 

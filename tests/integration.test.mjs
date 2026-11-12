@@ -1702,3 +1702,44 @@ test('Chiritumo intake retains source and separates same-product cards, pending 
  assert.equal((await worker.fetch('https://vault.test/api/chiritumo/receive')).status,405);
  const invalid=await worker.fetch('https://vault.test/api/chiritumo/receive',post('not-a-url'));assert.equal(invalid.status,400);
 });
+
+
+// Synthetic tickets only; these tests never contact Coke ON.
+test('Coke ON links and code-only input deduplicate and retain the original manual-charge URL',async t=>{
+ const {mf,analyzer,worker,DB}=await createRuntime();t.after(()=>cleanup(mf,analyzer));
+ const code='cdAb12Cd34Ef56',link=`https://c.cocacola.co.jp/spn/app/cp/linegift.html?source=line&couponcode=${code}`;
+ const receive=values=>request(worker,'/api/receive',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({values,clientRequestId:crypto.randomUUID()})});
+ const first=await receive([link,code,`https://c.cocacola.co.jp/spn/app/cp/couponcode.html?couponcode=${code}`]);
+ assert.equal(first.received,1);assert.equal(first.duplicate,2);assert.equal(first.counts.active,1);
+ const replay=await receive([code]);assert.equal(replay.received,0);assert.equal(replay.duplicate,1);
+ assert.equal((await receive(['cdZz99Yy88Xx77','cdab12Cd34Ef56'])).received,2);
+ const row=await DB.prepare('SELECT value,canonical_value,value_type FROM items WHERE canonical_value=?').bind(code).first();
+ assert.equal(row.value,link);assert.equal(row.canonical_value,code);assert.equal(row.value_type,'cokeon');
+ const card=await DB.prepare('SELECT display_name,expires_on FROM cards JOIN product_master ON product_master.id=cards.product_id WHERE source_type=?').bind('cokeon').first();
+ assert.equal(card.display_name,'Coke ON');assert.equal(card.expires_on,'');assert.equal(analyzer.analysisRequests.length,0);
+});
+
+test('historical Coke ON URLs block duplicates and support targeted retry without deleting or merging rows',async t=>{
+ const {mf,analyzer,worker,DB}=await createRuntime();t.after(()=>cleanup(mf,analyzer));
+ const code='cdAb12Cd34Ef56',legacy='https://c.cocacola.co.jp/spn/app/cp/linegift.html?couponcode='+code;
+ await DB.prepare("INSERT INTO items(id,value,canonical_value,value_type,status,intake_source) VALUES ('legacy-coke',?,?,'url','unresolved','arunomatic')").bind(legacy,legacy).run();
+ await DB.prepare("INSERT INTO unresolved_items(item_id,reason,pattern_key) VALUES ('legacy-coke','旧版では解析不可','old-coke')").run();
+ await DB.prepare("INSERT INTO items(id,value,canonical_value,value_type,status,intake_source) VALUES ('other-unresolved','https://example.test/unsupported','https://example.test/unsupported','url','unresolved','arunomatic')").run();
+ await DB.prepare("INSERT INTO unresolved_items(item_id,reason,pattern_key,retry_count) VALUES ('other-unresolved','別カテゴリ','other',3)").run();
+ const before=await DB.prepare("SELECT * FROM items WHERE id='legacy-coke'").first();
+ const otherBefore=await DB.prepare("SELECT * FROM unresolved_items WHERE item_id='other-unresolved'").first();
+ const send=()=>request(worker,'/api/receive',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({values:[code],clientRequestId:crypto.randomUUID()})});
+ const duplicate=await send();assert.equal(duplicate.received,0);assert.equal(duplicate.duplicate,1);
+ assert.deepEqual(await DB.prepare("SELECT * FROM items WHERE id='legacy-coke'").first(),before);
+ const result=await request(worker,'/api/unresolved/retry',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({target:'cokeon'})});
+ assert.equal(result.retried,1);assert.equal(result.resolved,1);
+ const after=await DB.prepare("SELECT * FROM items WHERE id='legacy-coke'").first();
+ for(const key of ['id','value','canonical_value','value_type','received_at','intake_source'])assert.equal(after[key],before[key],key);
+ assert.equal(after.status,'active');assert.ok(after.card_id);
+ assert.deepEqual(await DB.prepare("SELECT * FROM unresolved_items WHERE item_id='other-unresolved'").first(),otherBefore);
+ const replay=await send();assert.equal(replay.received,0);assert.equal(replay.duplicate,1);
+ assert.equal((await DB.prepare('SELECT COUNT(*) n FROM items').first()).n,2);assert.equal(analyzer.analysisRequests.length,0);
+ const assignedBefore=await DB.prepare("SELECT * FROM items WHERE id='legacy-coke'").first();
+ const again=await request(worker,'/api/unresolved/retry',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({target:'cokeon'})});
+ assert.equal(again.retried,0);assert.deepEqual(await DB.prepare("SELECT * FROM items WHERE id='legacy-coke'").first(),assignedBefore);
+});

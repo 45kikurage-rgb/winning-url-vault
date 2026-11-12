@@ -1895,6 +1895,15 @@ $('campaignFilters').onclick = event => {const b=event.target.closest('[data-cp-
 $("receive").onclick = receive;
 $("clear").onclick = clearReceive;
 $("retry").onclick = retry;
+$("retryCokeon").onclick = async () => {
+  const button=$("retryCokeon");button.disabled=true;
+  try {
+    const result=await api("/api/unresolved/retry",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({target:"cokeon"})});
+    alert(`Coke ON ${result.retried}件を確認し、${result.resolved}件を移動しました。`);
+    await load();
+  } catch(error) {alert(error.message);}
+  finally {button.disabled=false;}
+};
 $("paste").onclick = async () => {
   try { $("receiveInput").value = await navigator.clipboard.readText(); }
   catch { $("receiveResult").textContent = "入力欄を長押しして貼り付けてください。"; }
@@ -2136,5 +2145,6 @@ async function deleteUsedCoupons() {
 $("recheckUsage").onclick=recheckSortingUsage;
 $("retrySortingLoad").onclick = () => { void refreshVisibleData(); };
 $("deleteUsed").onclick=deleteUsedCoupons;
+
 
 
