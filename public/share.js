@@ -1,7 +1,14 @@
-const PENDING_SHARE_KEY = "winning-url-vault:pending-share";
+import { validShareId, savePendingShare, removePendingShare, matchingShareReceipt } from "./share-storage.js";
 const $ = id => document.getElementById(id);
-const clientRequestId = crypto.randomUUID?.() ||
-  `${Date.now().toString(16)}-${Math.random().toString(16).slice(2).padEnd(16, "0")}`;
+function shareId() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const existing = params.get("receipt");
+  if (validShareId(existing)) return existing;
+  const id = crypto.randomUUID();
+  params.set("receipt", id);
+  history.replaceState(null, "", "#" + params.toString());
+  return id;
+}
 
 function cleanValue(value) {
   return String(value || "").trim().replace(/[.,;、。!?！？\])}]+$/, "");
@@ -57,15 +64,14 @@ function showReceipt(payload, total) {
     : "受付済みです。新規件数を取得できませんでした。";
 }
 
-function holdForLogin(text) {
-  localStorage.setItem(PENDING_SHARE_KEY, JSON.stringify({ text, createdAt: Date.now() }));
+function holdForLogin() {
   showState("ログインが必要です", "waiting");
   $("shareMessage").textContent = "共有データを保持しました。管理画面でログインすると自動受付します。";
   $("shareLogin").classList.remove("hidden");
 }
 
 async function sendShared() {
-  const { text, values } = sharedText();
+  const { values } = sharedText();
   $("shareRetry").classList.add("hidden");
   $("shareLogin").classList.add("hidden");
   $("shareResults").classList.add("hidden");
@@ -82,24 +88,26 @@ async function sendShared() {
   $("shareValues").classList.remove("hidden");
   showState("サーバーへ送信中…");
   $("shareMessage").textContent = "";
+  let saved = false;
   try {
+    const clientRequestId = shareId();
+    savePendingShare(localStorage, clientRequestId, values);
+    saved = true;
     const response = await fetch("/api/receive", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ values, clientRequestId })
     });
     const payload = await response.json().catch(() => null);
-    if (response.status === 401) return holdForLogin(text);
-    if (!response.ok || payload?.ok !== true || payload.stored !== true ||
-        payload.clientRequestId !== clientRequestId) {
+    if (response.status === 401) return holdForLogin();
+    if (!response.ok || !matchingShareReceipt(payload, clientRequestId)) {
       throw new Error(payload?.error || "受付結果を確認できませんでした");
     }
-    localStorage.removeItem(PENDING_SHARE_KEY);
+    removePendingShare(localStorage, clientRequestId);
     showReceipt(payload, values.length);
   } catch (error) {
-    localStorage.setItem(PENDING_SHARE_KEY, JSON.stringify({ text, createdAt: Date.now() }));
     showState("送信結果を確認できませんでした", "error");
-    $("shareMessage").textContent = `${error.message}。共有データは端末内に保持しています。`;
+    $("shareMessage").textContent = `${error.message}。${saved ? "共有データは端末内に保持しています。" : "端末に保存できなかったため送信していません。"}`;
     $("shareRetry").classList.remove("hidden");
   }
 }

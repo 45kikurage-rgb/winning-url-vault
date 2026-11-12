@@ -18,17 +18,16 @@ export async function usageOverview(env,source='arunomatic') {
   return { ids: urls.map(row => row.id), unsupported: rows.length - urls.length, usedIds: (used.results || []).map(row => row.id) };
 }
 
-export async function markUsed(env, itemId, result) {
-  const update = await env.DB.prepare(`UPDATE items SET status='used',card_id=NULL,pending_id=NULL,
+export async function markUsed(env, itemId, result, write = statements => env.DB.batch(statements)) {
+  const [update] = await write([
+    env.DB.prepare(`UPDATE items SET status='used',card_id=NULL,pending_id=NULL,
     analysis_json=?,analyzed_at=CURRENT_TIMESTAMP WHERE id=?
     AND status IN ('received','queued','active','pending_confirmation','unresolved','used') AND ${unassigned}`)
-    .bind(JSON.stringify(result), itemId).run();
-  if (Number(update.meta?.changes || 0)) {
-    await env.DB.prepare("DELETE FROM unresolved_items WHERE item_id=? AND EXISTS(SELECT 1 FROM items WHERE id=? AND status='used')")
-      .bind(itemId,itemId).run();
-    return true;
-  }
-  return false;
+    .bind(JSON.stringify(result), itemId),
+    env.DB.prepare(`DELETE FROM unresolved_items WHERE item_id=? AND EXISTS(
+      SELECT 1 FROM items WHERE id=? AND status='used' AND ${unassigned})`).bind(itemId,itemId)
+  ]);
+  return Number(update.meta?.changes || 0) > 0;
 }
 
 export async function recheckUsage(env, ids, analyzerRequest) {
