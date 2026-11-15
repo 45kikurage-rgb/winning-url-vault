@@ -34,10 +34,34 @@ class AuditReleaseGuard(unittest.TestCase):
         def git(args, **kwargs):
             return 'src/index.js\n' if '--name-only' in args else Path('wrangler.jsonc').read_bytes()
         with patch.dict(os.environ, GITHUB_SHA='candidate'), patch.object(r.subprocess,'check_output',side_effect=git), \
-             patch.object(r.g,'active',return_value='baseline'), patch.object(r.g,'code_hashes',return_value=(['unknown'],b'')), \
+             patch.object(r.g,'active',return_value=r.BASE_VERSION), \
+             patch.object(r.g,'call',return_value={'resources':{'script':{'etag':'pinned'}}}), \
+             patch.object(r,'expected_code_hash',return_value='candidate'), \
+             patch.object(r.g,'code_hashes',return_value=(['unknown'],b'')), \
              patch.object(r.g,'get_settings',side_effect=AssertionError('Unexpected runtime access')):
             with self.assertRaisesRegex(RuntimeError,'UNEXPECTED_PRODUCTION_WORKER'):
                 r.preflight()
+
+    def test_unknown_active_version_stops_before_script_or_database_access(self):
+        def git(args, **kwargs):
+            return 'src/index.js\n' if '--name-only' in args else Path('wrangler.jsonc').read_bytes()
+        with patch.dict(os.environ, GITHUB_SHA='candidate'), patch.object(r.subprocess,'check_output',side_effect=git), \
+             patch.object(r.g,'active',return_value='concurrent-version'), \
+             patch.object(r.g,'call',side_effect=AssertionError('Unexpected cloud operation')):
+            with self.assertRaisesRegex(RuntimeError,'UNEXPECTED_PRODUCTION_VERSION'):
+                r.preflight()
+
+    def test_asset_propagation_is_retried_without_accepting_old_bytes(self):
+        with patch.object(r,'verify_once',side_effect=[RuntimeError('PUBLIC_ASSET_MISMATCH_index.html'),None]) as verify, \
+             patch.object(r,'sleep') as pause:
+            r.verify();self.assertEqual(verify.call_count,2);pause.assert_called_once_with(5)
+
+    def test_configuration_mismatch_is_never_retried(self):
+        with patch.object(r,'verify_once',side_effect=RuntimeError('RUNTIME_SETTINGS_CHANGED')) as verify, \
+             patch.object(r,'sleep') as pause:
+            with self.assertRaisesRegex(RuntimeError,'RUNTIME_SETTINGS_CHANGED'):
+                r.verify()
+            verify.assert_called_once();pause.assert_not_called()
 
     def test_existing_align_service_and_exact_queue_configuration_are_accepted(self):
         settings, queues = fixtures()

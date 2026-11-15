@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 from copy import deepcopy
+from time import sleep
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("vault_guard", Path(__file__).with_name("release-provisional-controls.py"))
@@ -19,6 +20,7 @@ g.STATE = g.STATE.with_name("vault-full-recopy-private.json")
 g.OUT = Path("full-recopy-release-evidence.json")
 BASE_SOURCE = "1806000c903502252200d4d3435aab7132f15c03"
 BASE_WORKER = "49babf4779002e8e77d80f6152909062df47f310471e56da401b79d87b8eac71"
+BASE_VERSION = "68927a28-b7ed-45c1-a9ea-3f4853208f43"
 ASSETS = sorted(str(path.relative_to('public')) for path in Path('public').rglob('*') if path.is_file())
 ALLOWED = {
     "docs/AUDIT_FIXES_2026-11-15.md", "public/app.js", "public/device-login.js",
@@ -62,7 +64,13 @@ def preflight():
     base_config = subprocess.check_output(["git", "show", BASE_SOURCE + ":wrangler.jsonc"])
     require(base_config == Path("wrangler.jsonc").read_bytes(), "UNREVIEWED_CONFIGURATION_CHANGE")
     baseline_version = g.active()
-    require(g.code_hashes()[0] == [BASE_WORKER], 'UNEXPECTED_PRODUCTION_WORKER')
+    require(baseline_version == BASE_VERSION, 'UNEXPECTED_PRODUCTION_VERSION')
+    baseline_resources = g.call(g.endpoint('/versions/' + baseline_version))['resources']
+    require(bool(baseline_resources.get('script', {}).get('etag')), 'BASELINE_VERSION_HASH_MISSING')
+    # The script-content API can still expose the latest uploaded candidate
+    # after a version rollback. Pin the previously verified active version too;
+    # only our two known builds are allowed at the content API.
+    require(g.code_hashes()[0] in ([BASE_WORKER], [expected_code_hash()]), 'UNEXPECTED_PRODUCTION_WORKER')
     settings = g.get_settings()
     bindings = settings.get("bindings", [])
     known = {"AI","ASSETS","COUPON_ANALYZER","LEDGER_READER","LEDGER_VAULT","ALIGN_SINGLE_WIN","DB","ANALYSIS_QUEUE"}
@@ -84,9 +92,11 @@ def preflight():
     snapshot = {
         "version":baseline_version, "worker_hashes":[BASE_WORKER],
         "settings":runtime(settings), "schema":g.schema(),
-        "schedules":schedules, "subdomain":subdomain, "queues":queues
+        "schedules":schedules, "subdomain":subdomain, "queues":queues,
+        "version_resources":baseline_resources
     }
-    require(g.active() == baseline_version and g.code_hashes()[0] == [BASE_WORKER], 'PRODUCTION_MOVED')
+    require(g.active() == baseline_version and
+            g.call(g.endpoint('/versions/' + baseline_version))['resources'] == baseline_resources, 'PRODUCTION_MOVED')
     # Preserve private runtime state only on ephemeral runner; never upload this file.
     g.STATE.write_text(json.dumps(snapshot))
     g.STATE.chmod(0o600)
@@ -102,7 +112,7 @@ def consistent(state):
     require(g.call(g.endpoint("/subdomain")) == state["subdomain"], "PUBLICATION_SCOPE_CHANGED")
     require(q.queue_state(json.loads(Path('wrangler.jsonc').read_text())) == state['queues'], 'QUEUE_CONFIGURATION_CHANGED')
 
-def verify():
+def verify_once():
     state = json.loads(g.STATE.read_text())
     version = g.active()
     require(version != state["version"], "PUBLICATION_VERSION_UNCHANGED")
@@ -114,6 +124,10 @@ def verify():
     for name in ASSETS:
         status, live = g.public("/" + name + "?verify=" + os.environ["GITHUB_SHA"])
         expected = Path("public",name).read_bytes()
+        if status != 200 or live != expected:
+            print(json.dumps({'asset':name,'status':status,
+                              'expected_sha256':hashlib.sha256(expected).hexdigest(),
+                              'actual_sha256':hashlib.sha256(live).hexdigest()}), flush=True)
         require(status == 200 and live == expected, "PUBLIC_ASSET_MISMATCH_" + name)
         asset_hashes[name] = hashlib.sha256(live).hexdigest()
     code_path="/api/products/00000000-0000-0000-0000-000000000000/all-items"
@@ -129,6 +143,20 @@ def verify():
              "runtime_preserved":True,"schema_preserved":True,"queues_preserved":True,"database_mutations":0,
              "physical_device_test":"pending"})
     print("Live source, assets, authentication and runtime state verified.")
+
+def verify():
+    # Version activation and edge asset routing do not become visible together.
+    # Require exact bytes throughout; allow a bounded propagation window.
+    for attempt in range(12):
+        try:
+            return verify_once()
+        except RuntimeError as error:
+            retryable = str(error).startswith(('PUBLIC_ASSET_MISMATCH_', 'LIVE_WORKER_DIFFERS_',
+                                              'PUBLICATION_VERSION_UNCHANGED'))
+            if not retryable or attempt == 11:
+                raise
+            print('Waiting for exact production bytes: ' + str(error), flush=True)
+            sleep(5)
 
 def rollback():
     if not g.STATE.exists():
@@ -149,7 +177,8 @@ def rollback():
         "annotations":{"workers/message":"Restore prior version after full-recopy verification failure"}
     })
     require(g.active() == state["version"], "ROLLBACK_NOT_APPLIED")
-    require(g.code_hashes()[0] == state["worker_hashes"], "ROLLBACK_CODE_MISMATCH")
+    require(g.call(g.endpoint('/versions/' + state['version']))['resources'] == state['version_resources'],
+            'ROLLBACK_VERSION_RESOURCES_MISMATCH')
     consistent(state)
     g.write({"source_sha":os.environ["GITHUB_SHA"],"stage":"rolled_back",
              "previous_version":state["version"],"database_mutations":0})
