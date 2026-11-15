@@ -7,7 +7,7 @@ export function isTransientFetchError(error) {
 
 export async function fetchReadWithRetry(fetcher, path, options = undefined, { pause = ms => new Promise(resolve => setTimeout(resolve, ms)), timeoutMs = 12000 } = {}) {
   const method = String(options?.method || "GET").toUpperCase();
-  const canRetry = method === "GET" && SAFE_READ.test(String(path));
+  const canRetry = method === "GET" && SAFE_READ.test(String(path).split(/[?#]/, 1)[0]);
   if (!canRetry) return fetcher(path, options);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const controller = new AbortController();

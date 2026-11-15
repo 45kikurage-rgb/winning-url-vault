@@ -1,11 +1,11 @@
-const CACHE = "winning-url-vault-pwa-20261112-asahi-cokeon";
+const CACHE = "winning-url-vault-pwa-20261115-audit-safety";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
   "/share-storage.js",
-  "/styles.css?v=20261103-full-recopy",
-  "/app.js?v=20261112-asahi-cokeon",
+  "/styles.css?v=20261115-audit-safety",
+  "/app.js?v=20261115-audit-safety",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
@@ -17,8 +17,7 @@ const ASSETS = [
   "/tiktok-videos-ui.js",
   "/display-name.js",
   "/single-win-ui.js",
-  "/share.js?v=20261112-asahi-cokeon",
-  "/styles.css?v=20261110-share-result",
+  "/share.js?v=20261115-reliability",
   "/manifest.json",
   "/manifest.webmanifest",
   "/icon-any-192.png?v=aruno-ticket-20261107",

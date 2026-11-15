@@ -29,11 +29,11 @@ function parseValues(text) {
 function sharedText() {
   const params = new URLSearchParams(location.hash.replace(/^#/, ""));
   const sources = [params.get("text"), params.get("url"), params.get("title")].filter(Boolean);
-  for (const source of sources) {
-    const values = parseValues(source);
-    if (values.length) return { text: values.join("\n"), values };
-  }
-  return { text: "", values: [] };
+  // Prefer actual URLs across every share field; explanatory text must not
+  // replace a URL provided separately by the Android sharing application.
+  const urls = sources.flatMap(source => (source.match(/https:\/\/[^\s<>"']+/gi) || []).map(cleanValue));
+  const values = urls.length ? [...new Set(urls)] : parseValues(sources[0] || "");
+  return { text: values.join("\n"), values };
 }
 
 function showState(label, type = "") {

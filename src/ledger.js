@@ -197,7 +197,7 @@ export async function assignmentPreview(env, cardId, campaignId) {
       .bind(campaignId, model.redeem_place || "", model.specification || "", model.expires_on || "", model.raw_name, model.raw_name).all();
     if ((fallback.results || []).length === 1) exact = fallback.results[0];
   }
-  const possibleRows = await env.DB.prepare(`SELECT product_id,product_name,redemption_place,product_spec,valid_until
+  const possibleRows = await env.DB.prepare(`SELECT product_id,product_name,redemption_place,product_spec,valid_until,is_archived
     FROM ledger_products WHERE campaign_id=? AND identity_key<>? AND
     (lower(product_name)=lower(?) OR (COALESCE(redemption_place,'')=? AND COALESCE(product_spec,'')=? AND COALESCE(valid_until,'')=?))
     ORDER BY assigned_at LIMIT 20`).bind(campaignId, key, model.raw_name, model.redeem_place || "", model.specification || "", model.expires_on || "").all();
@@ -313,6 +313,14 @@ export async function assignCardToCampaign(env, cardId, campaignId, choice = {})
       VALUES (?,?,?,?,?,?,?,?,?,0,?,?)`).bind(productId, campaignId, cardId, model.raw_name,
       model.redeem_place || null, model.specification || null, model.expires_on || null, identityKey(model), occurredAt, occurredAt, occurredAt));
     product = { product_id: productId };
+  } else {
+    // Reassignment retains the old product identity to preserve history and the
+    // campaign/identity UNIQUE constraint. Reusing it must also restore its
+    // visibility, regardless of exact, legacy-name or explicit selection.
+    // Do not move any existing assignments back from another campaign.
+    statements.push(env.DB.prepare(`UPDATE ledger_products SET is_archived=0,updated_at=?
+      WHERE product_id=? AND campaign_id=? AND is_archived=1`)
+      .bind(occurredAt,product.product_id,campaignId));
   }
   const assignmentStatementIndex = statements.length;
   statements.push(env.DB.prepare(`INSERT OR IGNORE INTO item_campaign_assignments(item_id,campaign_id,product_id,assigned_at)
