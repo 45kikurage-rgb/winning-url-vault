@@ -35,3 +35,16 @@ test("AbortErrorは一時通信失敗として判定する", () => {
   assert.equal(isTransientFetchError(Object.assign(new Error("abort"), { name: "AbortError" })), true);
   assert.equal(isTransientFetchError(new Error("Other")), false);
 });
+
+test("受信元クエリ付き一覧にも読取再試行とtimeout signalが付く", async () => {
+ for (const path of ["/api/cards?intake_source=arunomatic", "/api/pending?intake_source=chiritumo", "/api/unresolved?intake_source=arunomatic", "/api/usage?intake_source=arunomatic"]) {
+  let calls=0;
+  const result=await fetchReadWithRetry(async (_path, options)=>{assert.ok(options.signal);if(++calls===1)throw new TypeError("network");return {ok:true};},path,undefined,{pause:async()=>{}});
+  assert.equal(result.ok,true);assert.equal(calls,2);
+ }
+});
+test("クエリ付き書込みと似た別パスには再試行しない",async()=>{
+ for(const [path,method] of [["/api/cards?intake_source=arunomatic","POST"],["/api/cards/remove?intake_source=arunomatic","GET"]]){
+  let calls=0;await assert.rejects(fetchReadWithRetry(async()=>{calls++;throw new TypeError("network");},path,{method}),TypeError);assert.equal(calls,1);
+ }
+});

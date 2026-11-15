@@ -290,8 +290,9 @@ export async function completeExportBatch(env, batchId) {
   for (const group of chunks(ids)) {
     const placeholders = group.map(() => "?").join(",");
     statements.push(env.DB.prepare(`UPDATE item_campaign_assignments SET exported_at=?,export_method='bulk',export_batch_id=?
-      WHERE product_id=? AND item_id IN (${placeholders}) AND exported_at IS NULL`)
-      .bind(completedAt, batchId, batch.product_id, ...group));
+      WHERE product_id=? AND item_id IN (${placeholders}) AND exported_at IS NULL
+        AND EXISTS(SELECT 1 FROM export_batches b WHERE b.id=? AND b.status='pending')`)
+      .bind(completedAt, batchId, batch.product_id, ...group,batchId));
   }
   statements.push(env.DB.prepare("UPDATE export_batches SET status='completed',completed_at=? WHERE id=? AND status='pending'")
     .bind(completedAt, batchId));

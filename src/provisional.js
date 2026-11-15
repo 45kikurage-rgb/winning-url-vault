@@ -1,5 +1,5 @@
 import { legacyCokeOnDuplicates } from './cokeon-duplicates.js';
-import { classifyValue, normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson } from "./core.js";
+import { classifyValue, extractInputValues, normalizeName, normalizeRedeemPlace, normalizeSpecification, stableJson } from "./core.js";
 import { digest, IntakeError } from "./sending-auth.js";
 
 const SLOTS = ["A", "B", "C", "D", "E"];
@@ -122,19 +122,24 @@ async function finishReceive(env, receipt) {
   if (!stored || stored.status !== "stored") throw invalid("暫定保管が完了していません。受付IDを変えず再送してください", 503, "INTAKE_INCOMPLETE");
   const count = await env.DB.prepare("SELECT COUNT(*) n FROM provisional_entries WHERE receipt_id=?")
     .bind(receipt.id).first();
+  // The durable raw envelope retains repeats removed from the unique storage plan.
+  // Derive counts from it for both existing receipts and lost-ACK replays.
+  const raw = JSON.parse(receipt.raw_json);
+  const values = extractInputValues({ text: [...(raw.values || []), raw.text || ""].join("\n") }, 5000);
+  const inputTotal = parseProvisionalValues(raw, values).filter(entry => classifyValue(entry.value)).length;
   return {
     ok: true, stored: true, provisional: true,
     mode: (await env.DB.prepare("SELECT slot FROM provisional_buckets WHERE id=?")
       .bind(receipt.bucket_id).first())?.slot,
     received: Number(count?.n || 0),
-    duplicate: JSON.parse(stored.plan_json).length - Number(count?.n || 0),
+    duplicate: inputTotal - Number(count?.n || 0),
     // ARUNOMATIC expects a durable job id, terminal status and inputTotal in
     // every stored:true receipt. Reuse the persisted provisional receipt UUID,
     // not a synthetic analysis job (provisional data is deliberately not analyzed).
     job: {
       id: receipt.id,
       status: "completed",
-      inputTotal: JSON.parse(stored.plan_json).length
+      inputTotal
     }
   };
 }

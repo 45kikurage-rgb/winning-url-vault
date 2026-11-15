@@ -496,7 +496,13 @@ async function load() {
   }
 }
 
+let imageAnalysisGeneration = 0, imageAnalysisRequest = 0, imageAnalysisReady = null;
+const imageConfirmations = new Set();
 function resetImageAnalysis() {
+  imageAnalysisGeneration++; imageAnalysisRequest++; imageAnalysisReady = null;
+  $("imageAnalysisDialog").classList.remove("image-analysis-working");
+  $("reanalyzeCouponImage").disabled = false;
+  $("confirmCouponImage").disabled = false;
   state.couponImageData = null;
   $("couponImageFile").value = "";
   $("couponImagePreview").innerHTML = "<span>画像未選択</span>";
@@ -534,40 +540,60 @@ async function imageToDataUri(file) {
 }
 
 async function setCouponImage(file) {
+  const itemId = state.imageAnalysisItemId;
+  if (!itemId || !$("imageAnalysisDialog").open) return;
+  resetImageAnalysis();
+  const generation = imageAnalysisGeneration;
+  const current = () => generation === imageAnalysisGeneration && itemId === state.imageAnalysisItemId && $("imageAnalysisDialog").open;
   try {
     const data = await imageToDataUri(file);
+    if (!current()) return;
     state.couponImageData = data;
     $("couponImagePreview").innerHTML = `<img src="${data}" alt="判定するスクリーンショット">`;
     await analyzeSelectedImage();
   } catch (error) {
-    $("imageAnalysisMessage").textContent = error.message;
+    if (current()) $("imageAnalysisMessage").textContent = error.message;
   }
 }
 
 async function pasteCouponImage() {
+  const itemId = state.imageAnalysisItemId, generation = imageAnalysisGeneration;
+  const current = () => generation === imageAnalysisGeneration && itemId === state.imageAnalysisItemId && $("imageAnalysisDialog").open;
   $("imageAnalysisMessage").textContent = "";
   try {
     if (!navigator.clipboard?.read) throw new Error("この端末では画像貼り付けを使えません。「画像を選択」を押してください");
     const items = await navigator.clipboard.read();
+    if (!current()) return;
     for (const item of items) {
       const type = item.types.find(value => /^image\/(?:png|jpeg|webp)$/i.test(value));
-      if (type) return setCouponImage(await item.getType(type));
+      if (type) {
+        const image = await item.getType(type);
+        if (current()) return setCouponImage(image);
+        return;
+      }
     }
     throw new Error("クリップボードに画像がありません");
   } catch (error) {
-    $("imageAnalysisMessage").textContent = error.message;
+    if (current()) $("imageAnalysisMessage").textContent = error.message;
   }
 }
 
 async function analyzeSelectedImage() {
-  if (!state.couponImageData || !state.imageAnalysisItemId) return;
+  const itemId = state.imageAnalysisItemId, image = state.couponImageData, generation = imageAnalysisGeneration;
+  if (!image || !itemId || !$("imageAnalysisDialog").open) return;
+  const request = ++imageAnalysisRequest;
+  const current = () => generation === imageAnalysisGeneration && request === imageAnalysisRequest && itemId === state.imageAnalysisItemId && $("imageAnalysisDialog").open;
+  imageAnalysisReady = null;
+  $("confirmCouponImage").classList.add("hidden");
   $("imageAnalysisDialog").classList.add("image-analysis-working");
   $("imageAnalysisMessage").textContent = "画像を読み取っています…";
   $("reanalyzeCouponImage").disabled = true;
   try {
-    const result = await api(`/api/unresolved/${state.imageAnalysisItemId}/image-analyze`, {
-      method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify({ image:state.couponImageData })
+    const result = await api(`/api/unresolved/${itemId}/image-analyze`, {
+      method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify({ image })
     });
+    if (!current()) return;
+    if (result.itemId !== itemId) throw new Error("画像判定の対象URLを確認できませんでした。再読取してください。");
     const proposal = result.proposal || {};
     $("imageProductName").value = proposal.productName || "";
     $("imageDisplayName").value = proposal.displayName || proposal.productName || "";
@@ -576,19 +602,28 @@ async function analyzeSelectedImage() {
     $("imageExpiresOn").value = proposal.expiresOn || "";
     $("imageAnalysisFields").classList.remove("hidden");
     $("reanalyzeCouponImage").classList.remove("hidden");
+    imageAnalysisReady = { itemId, generation, request };
     $("confirmCouponImage").classList.remove("hidden");
     $("imageAnalysisMessage").textContent = "読取結果を確認してください。違う箇所は修正できます。";
   } catch (error) {
-    $("reanalyzeCouponImage").classList.remove("hidden");
-    $("imageAnalysisMessage").textContent = error.message;
+    if (current()) {
+      $("reanalyzeCouponImage").classList.remove("hidden");
+      $("imageAnalysisMessage").textContent = error.message;
+    }
   } finally {
-    $("imageAnalysisDialog").classList.remove("image-analysis-working");
-    $("reanalyzeCouponImage").disabled = false;
+    if (current()) {
+      $("imageAnalysisDialog").classList.remove("image-analysis-working");
+      $("reanalyzeCouponImage").disabled = false;
+    }
   }
 }
 
 async function confirmSelectedImage() {
-  if (!state.imageAnalysisItemId) return;
+  const itemId = state.imageAnalysisItemId, generation = imageAnalysisGeneration;
+  if (!itemId || imageConfirmations.has(itemId) || imageAnalysisReady?.itemId !== itemId ||
+      imageAnalysisReady.generation !== generation || imageAnalysisReady.request !== imageAnalysisRequest || !$("imageAnalysisDialog").open) return;
+  const current = () => generation === imageAnalysisGeneration && itemId === state.imageAnalysisItemId && $("imageAnalysisDialog").open;
+  imageConfirmations.add(itemId);
   const button = $("confirmCouponImage");
   button.disabled = true;
   $("imageAnalysisMessage").textContent = "この1件を確定しています…";
@@ -600,16 +635,21 @@ async function confirmSelectedImage() {
     expires_on: $("imageExpiresOn").value
   };
   try {
-    await api(`/api/unresolved/${state.imageAnalysisItemId}/image-confirm`, {
+    await api(`/api/unresolved/${itemId}/image-confirm`, {
       method:"POST", headers:{ "content-type":"application/json" }, body:JSON.stringify(body)
     });
-    $("imageAnalysisDialog").close();
-    state.imageAnalysisItemId = null;
-    resetImageAnalysis();
+    if (current()) {
+      $("imageAnalysisDialog").close();
+      state.imageAnalysisItemId = null;
+      resetImageAnalysis();
+    }
     await load();
   } catch (error) {
-    $("imageAnalysisMessage").textContent = error.message;
-  } finally { button.disabled = false; }
+    if (current()) $("imageAnalysisMessage").textContent = error.message;
+  } finally {
+    imageConfirmations.delete(itemId);
+    if (current()) button.disabled = false;
+  }
 }
 
 function methodLabel(method) {
@@ -1473,7 +1513,16 @@ async function confirmAssignment() {
   await refreshAfterAssignment(result, source);
 }
 
+let closeGeneration = 0, closePreviewTarget = null;
+const closingCampaigns = new Set();
+function invalidateClosePreview() {
+  closeGeneration++; closePreviewTarget = null;
+  state.closeCampaignId = null; state.closePreview = null;
+  $("closeConfirm").disabled = true;
+}
 async function openClose(campaignId) {
+  const generation = ++closeGeneration;
+  closePreviewTarget = null; state.closePreview = null;
   state.closeCampaignId = campaignId;
   const campaign = state.campaigns.find(item => item.campaign_id === campaignId);
   $("closeTitle").textContent = `${campaign ? campaignLabel(campaign) : campaignId} を終了`;
@@ -1483,6 +1532,8 @@ async function openClose(campaignId) {
   $("closeDialog").showModal();
   try {
     const preview = await api(`/api/ledger/campaigns/${campaignId}/close-preview`);
+    if (generation !== closeGeneration || state.closeCampaignId !== campaignId || !$("closeDialog").open) return;
+    closePreviewTarget = { campaignId, generation };
     state.closePreview = preview;
     $("closePreview").innerHTML = `<div class="close-totals">
       <span>キャンペーン総当選数<strong>${Number(preview.final_winner_count).toLocaleString()}</strong></span>
@@ -1492,24 +1543,33 @@ async function openClose(campaignId) {
       <div class="preview-products">${(preview.products || []).map(product => `<div><span>${esc(product.product_name)}</span><strong>${Number(product.final_winner_count).toLocaleString()}件</strong></div>`).join("")}</div>`;
     $("closeConfirm").textContent = preview.has_mismatch ? "差分を承認して終了" : "終了を確定";
     $("closeConfirm").disabled = false;
-  } catch (error) { $("closeMessage").textContent = error.message; }
+  } catch (error) {
+    if (generation === closeGeneration && state.closeCampaignId === campaignId && $("closeDialog").open) $("closeMessage").textContent = error.message;
+  }
 }
 
 async function confirmClose() {
+  const campaignId = state.closeCampaignId, generation = closeGeneration, preview = state.closePreview;
+  if (!campaignId || !preview || closingCampaigns.has(campaignId) || closePreviewTarget?.campaignId !== campaignId ||
+      closePreviewTarget.generation !== generation || !$("closeDialog").open) return;
+  const current = () => generation === closeGeneration && state.closeCampaignId === campaignId && $("closeDialog").open;
+  closingCampaigns.add(campaignId);
   $("closeConfirm").disabled = true;
   $("closeMessage").textContent = "最終値を確定中…";
   try {
-    const result = await api(`/api/ledger/campaigns/${state.closeCampaignId}/close`, {
+    const result = await api(`/api/ledger/campaigns/${campaignId}/close`, {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ accept_mismatch: state.closePreview?.has_mismatch === true })
+      body: JSON.stringify({ accept_mismatch: preview.has_mismatch === true })
     });
     if (!result.delivery?.ok) throw new Error("終了要求は保存されましたが中央台帳への送信に失敗しました。自動再送します。");
-    $("closeDialog").close();
+    if (current()) { $("closeDialog").close(); invalidateClosePreview(); }
     await Promise.all([loadCampaigns(),loadWinningLists()]);
   } catch (error) {
-    $("closeMessage").textContent = error.message;
-    $("closeConfirm").disabled = false;
-  }
+    if (current()) {
+      $("closeMessage").textContent = error.message;
+      $("closeConfirm").disabled = false;
+    }
+  } finally { closingCampaigns.delete(campaignId); }
 }
 
 function openCorrection(campaignId) {
@@ -1853,19 +1913,30 @@ async function retry() {
   finally { $("retry").disabled = false; }
 }
 
+let itemsGeneration = 0, itemsLoading = false;
+function invalidateItems() {
+  itemsGeneration++; itemsLoading = false; state.cardId = null; state.cursor = null;
+}
 async function openItems(cardId, title) {
+  itemsGeneration++; itemsLoading = false;
   state.cardId = cardId; state.cursor = null;
   $("dialogTitle").textContent = title;
   $("itemList").innerHTML = "";
+  $("loadMore").classList.add("hidden");
   $("itemsDialog").showModal();
   await loadItems();
 }
 
 async function loadItems() {
+  const cardId = state.cardId, generation = itemsGeneration, source = state.sortingSource;
+  if (!cardId || itemsLoading || !$("itemsDialog").open) return;
+  const current = () => generation === itemsGeneration && cardId === state.cardId && source === state.sortingSource && $("itemsDialog").open;
+  itemsLoading = true; $("loadMore").disabled = true;
   const query = new URLSearchParams({ limit:"50" });
   if (state.cursor) query.set("cursor", state.cursor);
   try {
-    const result = await api(`/api/cards/${state.cardId}/items?${query}`);
+    const result = await api(`/api/cards/${cardId}/items?${query}`);
+    if (!current()) return;
     $("itemList").insertAdjacentHTML("beforeend", result.items.map(item => {
       const value = /^https:\/\//.test(item.value)
         ? `<a href="${esc(item.value)}" target="_blank" rel="noreferrer">開く</a>`
@@ -1875,7 +1946,8 @@ async function loadItems() {
     state.cursor = result.nextCursor;
     $("loadMore").classList.toggle("hidden", !state.cursor);
     document.querySelectorAll(".copy-item").forEach(button => button.onclick = () => navigator.clipboard.writeText(button.dataset.value));
-  } catch (error) { $("itemList").textContent = error.message; }
+  } catch (error) { if (current()) $("itemList").textContent = error.message; }
+  finally { if (current()) { itemsLoading = false; $("loadMore").disabled = false; } }
 }
 
 $('settingsInspectUnexported').onclick=openUnexportedContents;
@@ -1912,12 +1984,14 @@ $("pasteCouponImage").onclick = pasteCouponImage;
 $("couponImageFile").onchange = event => setCouponImage(event.currentTarget.files?.[0]);
 $("reanalyzeCouponImage").onclick = analyzeSelectedImage;
 $("confirmCouponImage").onclick = confirmSelectedImage;
-$("imageAnalysisClose").onclick = () => $("imageAnalysisDialog").close();
+$("imageAnalysisClose").onclick = () => { $("imageAnalysisDialog").close(); state.imageAnalysisItemId = null; resetImageAnalysis(); };
 $("imageAnalysisDialog").addEventListener("close", () => {
+  if ($("imageAnalysisDialog").open) return;
   state.imageAnalysisItemId = null;
   resetImageAnalysis();
 });
-$("dialogClose").onclick = () => $("itemsDialog").close();
+$("dialogClose").onclick = () => { $("itemsDialog").close(); invalidateItems(); };
+$("itemsDialog").addEventListener("close", () => { if (!$("itemsDialog").open) invalidateItems(); });
 $("loadMore").onclick = loadItems;
 $("loginForm").onsubmit = login;
 $("deviceLoginButton").onclick = async () => {
@@ -1970,7 +2044,8 @@ $("assignmentSingleWin").onclick = openSingleWinFromAssignment;
 $("assignmentClose").onclick = () => { if (!assignmentSaving) { assignmentPreviewRequest++; $("assignmentDialog").close(); } };
 $("assignmentDialog").addEventListener('cancel', event => { if (assignmentSaving) event.preventDefault(); else assignmentPreviewRequest++; });
 $("closeConfirm").onclick = confirmClose;
-$("closeDialogClose").onclick = () => $("closeDialog").close();
+$("closeDialogClose").onclick = () => { $("closeDialog").close(); invalidateClosePreview(); };
+$("closeDialog").addEventListener("close", () => { if (!$("closeDialog").open) invalidateClosePreview(); });
 $("correctionConfirm").onclick = confirmCorrection;
 $("correctionDialogClose").onclick = () => $("correctionDialog").close();
 $("cancelTrialReset").onclick = () => $("trialResetDialog").close();

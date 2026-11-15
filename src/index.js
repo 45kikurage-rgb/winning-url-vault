@@ -467,21 +467,21 @@ async function stageJobBatch(env, jobId, batchNo, scheduleFinalize = true) {
 
 async function updateItemsAsGroup(env, entries, model, write) {
   if (!entries.length) return;
-  const analysisJson = JSON.stringify(entries[0].result || {});
-  const idChunks = sliceInto(entries.map(entry => entry.item_id), 80);
-  const completed = new Set(entries.filter(entry => entry.state === 'done').map(entry => entry.item_id));
-  for (const chunk of idChunks) {
-    const ids = chunk.filter(itemId => !completed.has(itemId));
-    if (!ids.length) continue;
+  for (const chunk of sliceInto(entries.filter(entry => entry.state !== 'done'), 80)) {
+    const ids = chunk.map(entry => entry.item_id);
+    // Share only the destination; balances and other evidence belong to each URL.
+    // One JSON binding keeps each statement below D1's parameter limit.
+    const analyses = JSON.stringify(Object.fromEntries(chunk.map(entry =>
+      [entry.item_id, JSON.stringify(entry.result || {})])));
     const statements = [];
     if (model.status === "active") {
       statements.push(env.DB.prepare(`UPDATE items SET status='active',card_id=?,pending_id=NULL,
-        analysis_json=?,analyzed_at=?,classified_at=? WHERE id IN (${bindList(ids)})`)
-        .bind(model.cardId, analysisJson, nowSql(), nowSql(), ...ids));
+        analysis_json=json_extract(?, '$.' || json_quote(id)),analyzed_at=?,classified_at=? WHERE id IN (${bindList(ids)})`)
+        .bind(model.cardId, analyses, nowSql(), nowSql(), ...ids));
     } else {
       statements.push(env.DB.prepare(`UPDATE items SET status='pending_confirmation',card_id=NULL,pending_id=?,
-        analysis_json=?,analyzed_at=? WHERE id IN (${bindList(ids)})`)
-        .bind(model.pendingId, analysisJson, nowSql(), ...ids));
+        analysis_json=json_extract(?, '$.' || json_quote(id)),analyzed_at=? WHERE id IN (${bindList(ids)})`)
+        .bind(model.pendingId, analyses, nowSql(), ...ids));
     }
     statements.push(env.DB.prepare(`DELETE FROM unresolved_items WHERE item_id IN (${bindList(ids)})`).bind(...ids));
     statements.push(env.DB.prepare("INSERT INTO audit_log (id,item_id,action,detail) VALUES (?,NULL,?,?)")
@@ -499,13 +499,13 @@ async function updateItemsAsUnresolved(env, entries, write) {
     buckets.get(key).entries.push(entry);
   }
   for (const bucket of buckets.values()) {
-    for (const chunk of sliceInto(bucket.entries, 80)) {
-      const ids = chunk.filter(entry => entry.state !== 'done').map(entry => entry.item_id);
-      if (!ids.length) continue;
-      const analysisJson = JSON.stringify(chunk[0].result || {});
+    for (const chunk of sliceInto(bucket.entries.filter(entry => entry.state !== 'done'), 80)) {
+      const ids = chunk.map(entry => entry.item_id);
+      const analyses = JSON.stringify(Object.fromEntries(chunk.map(entry =>
+        [entry.item_id, JSON.stringify(entry.result || {})])));
       await write([
         env.DB.prepare(`UPDATE items SET status='unresolved',card_id=NULL,pending_id=NULL,
-          analysis_json=?,analyzed_at=? WHERE id IN (${bindList(ids)})`).bind(analysisJson, nowSql(), ...ids),
+          analysis_json=json_extract(?, '$.' || json_quote(id)),analyzed_at=? WHERE id IN (${bindList(ids)})`).bind(analyses, nowSql(), ...ids),
         env.DB.prepare(`INSERT INTO unresolved_items (item_id,reason,pattern_key,last_error,updated_at)
           SELECT id,?,?,NULL,? FROM items WHERE id IN (${bindList(ids)})
           ON CONFLICT(item_id) DO UPDATE SET reason=excluded.reason,pattern_key=excluded.pattern_key,
