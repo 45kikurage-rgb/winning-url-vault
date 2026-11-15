@@ -1,10 +1,15 @@
-"""One-time read-only full-copy release guard. Never accesses or mutates coupon values."""
+"""Read-only guarded release, reused for the approved 2026-11-15 audit fixes.
+
+No migration or business-row access. The existing full-recopy workflow is the
+serialized release entry point; its production credentials remain in CI only.
+"""
 import hashlib
 import importlib.util
 import json
 import os
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 spec = importlib.util.spec_from_file_location("vault_guard", Path(__file__).with_name("release-provisional-controls.py"))
@@ -12,20 +17,43 @@ g = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(g)
 g.STATE = g.STATE.with_name("vault-full-recopy-private.json")
 g.OUT = Path("full-recopy-release-evidence.json")
-BASE_SOURCE = "8de9e93c8c6d4c9ba4bc3fbc7de3f3be324d72f6"
-ASSETS = ["index.html", "app.js", "styles.css", "sw.js", "winning-view.js", "single-win-ui.js"]
+BASE_SOURCE = "1806000c903502252200d4d3435aab7132f15c03"
+BASE_WORKER = "49babf4779002e8e77d80f6152909062df47f310471e56da401b79d87b8eac71"
+ASSETS = sorted(str(path.relative_to('public')) for path in Path('public').rglob('*') if path.is_file())
 ALLOWED = {
-    "src/extraction.js", "src/index.js", "public/app.js", "public/index.html",
-    "public/styles.css", "public/sw.js", "tests/integration.test.mjs",
-    "scripts/release-full-recopy.py", ".github/workflows/full-recopy-release.yml",
-    "docs/releases/full-recopy-20261103.md"
+    "docs/AUDIT_FIXES_2026-11-15.md", "public/app.js", "public/device-login.js",
+    "public/index.html", "public/network-read.js", "public/share.html", "public/share.js",
+    "public/styles.css", "public/sw.js", "src/extraction.js", "src/index.js",
+    "src/ledger.js", "src/provisional.js", "tests/analysis-intake-regression.test.mjs",
+    "tests/assignment-export-safety.test.mjs", "tests/device-pairing-recovery.test.mjs",
+    "tests/network-read.test.mjs", "tests/pwa.test.mjs", "tests/share-reliability.test.mjs",
+    "tests/ui-async-safety.test.mjs", "scripts/release-full-recopy.py",
+    "scripts/test-audit-release-guards.py", "docs/releases/full-recopy-20261103.md"
 }
+spec = importlib.util.spec_from_file_location('queue_guards', Path(__file__).with_name('release-mobile-reliability.py'))
+q = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(q)
+
+def runtime(settings):
+    return q.normalized_runtime(deepcopy(settings))
+
+def validate_targets(config, settings, queues):
+    # Reuse the established queue/service validator, omitting only its old
+    # "new Align binding must be absent" rule. Align is already live here.
+    existing = deepcopy(config)
+    existing['services'] = [s for s in existing['services'] if s['binding'] != 'ALIGN_SINGLE_WIN']
+    q.validate_live_targets(existing, settings, queues)
+    for service in config['services']:
+        live = next((b for b in settings['bindings'] if b['name'] == service['binding']), {})
+        require(live.get('type') == 'service' and live.get('service') == service['service']
+                and live.get('entrypoint') == service.get('entrypoint')
+                and live.get('environment') in (None, 'production'), 'LIVE_SERVICE_TARGET_CHANGED')
 
 def require(condition, message):
     g.require(condition, message)
 
 def expected_code_hash():
-    return hashlib.sha256(Path("release-bundle/index.js").read_bytes()).hexdigest()
+    return hashlib.sha256(Path("release-bundle/worker.js").read_bytes()).hexdigest()
 
 def preflight():
     changed = set(subprocess.check_output(
@@ -33,6 +61,8 @@ def preflight():
     require(changed and changed <= ALLOWED, "UNREVIEWED_FILE_CHANGE")
     base_config = subprocess.check_output(["git", "show", BASE_SOURCE + ":wrangler.jsonc"])
     require(base_config == Path("wrangler.jsonc").read_bytes(), "UNREVIEWED_CONFIGURATION_CHANGE")
+    baseline_version = g.active()
+    require(g.code_hashes()[0] == [BASE_WORKER], 'UNEXPECTED_PRODUCTION_WORKER')
     settings = g.get_settings()
     bindings = settings.get("bindings", [])
     known = {"AI","ASSETS","COUPON_ANALYZER","LEDGER_READER","LEDGER_VAULT","ALIGN_SINGLE_WIN","DB","ANALYSIS_QUEUE"}
@@ -46,32 +76,40 @@ def preflight():
         status, live = g.public("/" + name + "?preflight=" + os.environ["GITHUB_SHA"])
         require(status == 200 and live == old, "UNEXPECTED_LIVE_BASELINE_" + name)
     subdomain = g.call(g.endpoint("/subdomain"))
+    config = g.deployment_config(settings, subdomain)
+    queues = q.queue_state(config)
+    validate_targets(config, settings, queues)
+    schedules = g.schedules()
+    require(sorted(config['triggers']['crons']) == schedules, 'LIVE_CRON_CONFIGURATION_CHANGED')
     snapshot = {
-        "version":g.active(), "worker_hashes":g.code_hashes()[0],
-        "settings":g.runtime(settings), "schema":g.schema(),
-        "schedules":g.schedules(), "subdomain":subdomain
+        "version":baseline_version, "worker_hashes":[BASE_WORKER],
+        "settings":runtime(settings), "schema":g.schema(),
+        "schedules":schedules, "subdomain":subdomain, "queues":queues
     }
+    require(g.active() == baseline_version and g.code_hashes()[0] == [BASE_WORKER], 'PRODUCTION_MOVED')
     # Preserve private runtime state only on ephemeral runner; never upload this file.
     g.STATE.write_text(json.dumps(snapshot))
     g.STATE.chmod(0o600)
-    Path(".release-wrangler.json").write_text(json.dumps(g.deployment_config(settings,subdomain)))
+    Path(".release-wrangler.json").write_text(json.dumps(config))
     g.write({"source_sha":os.environ["GITHUB_SHA"],"stage":"preflight_passed",
              "previous_version":snapshot["version"],"database_mutations":0})
     print("Safe production preflight passed; no business rows or secrets inspected.")
 
 def consistent(state):
-    require(g.runtime(g.get_settings()) == state["settings"], "RUNTIME_SETTINGS_CHANGED")
+    require(runtime(g.get_settings()) == state["settings"], "RUNTIME_SETTINGS_CHANGED")
     require(g.schema() == state["schema"], "DATABASE_SCHEMA_CHANGED")
     require(g.schedules() == state["schedules"], "CRON_SCHEDULE_CHANGED")
     require(g.call(g.endpoint("/subdomain")) == state["subdomain"], "PUBLICATION_SCOPE_CHANGED")
+    require(q.queue_state(json.loads(Path('wrangler.jsonc').read_text())) == state['queues'], 'QUEUE_CONFIGURATION_CHANGED')
 
 def verify():
     state = json.loads(g.STATE.read_text())
-    consistent(state)
     version = g.active()
     require(version != state["version"], "PUBLICATION_VERSION_UNCHANGED")
     hashes, _ = g.code_hashes()
     require(hashes == [expected_code_hash()], "LIVE_WORKER_DIFFERS_FROM_REVIEWED_BUILD")
+    Path('.audit-deployed-version').write_text(version)
+    consistent(state)
     asset_hashes = {}
     for name in ASSETS:
         status, live = g.public("/" + name + "?verify=" + os.environ["GITHUB_SHA"])
@@ -88,7 +126,7 @@ def verify():
     g.write({"source_sha":os.environ["GITHUB_SHA"],"stage":"published_verified",
              "previous_version":state["version"],"current_version":version,
              "worker_sha256":expected_code_hash(),"assets_sha256":asset_hashes,
-             "runtime_preserved":True,"schema_preserved":True,"database_mutations":0,
+             "runtime_preserved":True,"schema_preserved":True,"queues_preserved":True,"database_mutations":0,
              "physical_device_test":"pending"})
     print("Live source, assets, authentication and runtime state verified.")
 
@@ -102,6 +140,8 @@ def rollback():
         return
     # Do not rollback a concurrent different deployment.
     require(g.code_hashes()[0] == [expected_code_hash()], "ROLLBACK_REFUSED_OTHER_DEPLOYMENT")
+    require(Path('.audit-deployed-version').exists() and
+            g.active() == Path('.audit-deployed-version').read_text(), 'ROLLBACK_REFUSED_CONCURRENT_VERSION')
     consistent(state)
     g.call(g.endpoint("/deployments"), {
         "strategy":"percentage",
@@ -118,6 +158,8 @@ def rollback():
 if __name__ == "__main__":
     try:
         require(len(sys.argv) == 2 and sys.argv[1] in ("preflight","verify","rollback"), "USAGE")
+        if sys.argv[1] == 'preflight':
+            subprocess.run([sys.executable, 'scripts/test-audit-release-guards.py'], check=True)
         {"preflight":preflight,"verify":verify,"rollback":rollback}[sys.argv[1]]()
     except Exception as e:
         print("Release stopped: " + (str(e) if isinstance(e,RuntimeError) else type(e).__name__), file=sys.stderr)
