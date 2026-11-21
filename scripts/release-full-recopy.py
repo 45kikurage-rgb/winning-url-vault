@@ -23,7 +23,7 @@ BASE_WORKER = "e55217433b767aa0c3de565caa0e9ed6be3837a170540b94bcd4eb4ce0414dde"
 BASE_VERSION = "43b6c309-7017-4abd-a723-d9c2a2b944ef"
 ASSETS = sorted(str(path.relative_to('public')) for path in Path('public').rglob('*') if path.is_file())
 ALLOWED = {
-    "src/index.js", "tests/analysis-intake-regression.test.mjs",
+    "src/index.js", "tests/analysis-intake-regression.test.mjs", "tests/finalize-ownership.test.mjs",
     "scripts/release-full-recopy.py", "docs/releases/full-recopy-20261103.md",
 }
 spec = importlib.util.spec_from_file_location('queue_guards', Path(__file__).with_name('release-mobile-reliability.py'))

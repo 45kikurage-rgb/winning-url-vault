@@ -11,7 +11,7 @@ const { default: worker } = await import(pathToFileURL(resolve(root, "src/index.
 const job = "00000000-0000-4000-8000-000000000001";
 const url = "https://example.test/race-only";
 const stageRead = "SELECT ji.item_id,i.value,i.canonical_value,i.value_type";
-const finalizeRead = "SELECT s.item_id,s.result_json,s.error_reason";
+const finalizeRead = "SELECT s.item_id,";
 
 function barrier() {
   let notifyEntered;
