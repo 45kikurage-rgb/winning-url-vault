@@ -15,7 +15,13 @@ async function runtime(t, resultFor) {
   const DB = { prepare(query) {
     const statement = sql.prepare(query); let args = [];
     return {
-      bind(...values) { assert.ok(values.length <= 100, 'D1 parameter limit'); args = values; return this; },
+      bind(...values) {
+        assert.ok(values.length <= 100, 'D1 parameter limit');
+        assert.ok(values.every(value => typeof value !== 'string' || Buffer.byteLength(value) <= 2_000_000),
+          'D1 string limit');
+        args = values;
+        return this;
+      },
       async first() { return statement.get(...args) || null; },
       async all() { return { results: statement.all(...args) }; },
       async run() { return this.execute(); },
@@ -29,7 +35,7 @@ async function runtime(t, resultFor) {
   const env = { DB, SESSION_SECRET: 'regression-only', ACCESS_PASSWORD_SHA256: await digest('regression-only'),
     COUPON_ANALYZER: { async fetch(request) {
       const body = await request.json();
-      return Response.json({ results: body.items.map(item => ({ label: item.label, url: item.url, ...resultFor(item.url) })) });
+      return Response.json({ results: body.items.map(item => ({ label: item.label, url: item.url, ...resultFor(item.url, body) })) });
     } } };
   const login = await worker.fetch(new Request('https://vault.test/api/auth/login', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ password: 'regression-only' })
@@ -79,6 +85,76 @@ test('unresolved tickets retain their individual evidence instead of copying a g
     assert.equal(row.status, 'unresolved');
     assert.equal(JSON.parse(row.analysis_json).url, row.value);
     assert.equal(JSON.parse(row.analysis_json).evidence, row.value);
+  }
+});
+
+const beer = { status: 'ok', site: 'seven', kind: 'coupon', product: 'ザ・ビタリスト',
+  capacity: '350ml', redeemPlace: 'セブンイレブン', expiresOn: '2026-12-01' };
+
+test('finalization recovers 30 already staged image-heavy tickets without fetching them again', async t => {
+  let analyzerCalls = 0;
+  const { sql, env, receive, request } = await runtime(t, () => {
+    analyzerCalls += 1;
+    return beer;
+  });
+  const queue = [];
+  env.ANALYSIS_QUEUE = { async send(message) { queue.push(message); } };
+  const urls = Array.from({ length: 30 }, (_, i) => `https://example.test/beer/${i}`);
+  const { job } = await receive(urls);
+  const imageBase64 = 'A'.repeat(245_124);
+  const representative = 'data:image/jpeg;base64,' + imageBase64;
+  const addStaging = sql.prepare('INSERT INTO analysis_staging(item_id,job_id,batch_no,result_json) VALUES (?,?,0,?)');
+  for (const item of sql.prepare('SELECT id,value FROM items').all()) {
+    addStaging.run(item.id, job.id, JSON.stringify({ ...beer, url: item.value,
+      productImageDataUri: representative, imageBase64 }));
+  }
+  sql.prepare("UPDATE analysis_job_items SET state='staged' WHERE job_id=?").run(job.id);
+  sql.prepare(`UPDATE analysis_jobs SET status='finalizing',finalize_owner='expired',
+    finalize_until='2000-01-01T00:00:00.000Z',last_error='SQLITE_TOOBIG' WHERE id=?`).run(job.id);
+
+  let scheduled;
+  await worker.scheduled(null, env, { waitUntil(promise) { scheduled = promise; } });
+  await scheduled;
+  const finalize = queue.find(message => message.type === 'finalize');
+  assert.equal(finalize?.jobId, job.id);
+  let acknowledgements = 0;
+  const delivery = { body: finalize, ack() { acknowledgements += 1; }, retry() { assert.fail('Unexpected retry'); } };
+  await worker.queue({ messages: [delivery, delivery] }, env);
+  assert.equal(acknowledgements, 2);
+  assert.equal(analyzerCalls, 0);
+  assert.equal(sql.prepare('SELECT COUNT(*) AS count FROM analysis_staging').get().count, 0);
+  const pending = (await request('/api/pending')).items;
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].item_count, 30);
+  assert.equal(pending[0].image_data_uri, representative);
+  await request(`/api/pending/${pending[0].id}/confirm`, { action: 'ok' });
+  const cards = (await request('/api/cards')).cards;
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].unassigned_count, 30);
+  for (const row of sql.prepare('SELECT value,analysis_json FROM items').all()) {
+    assert.deepEqual(JSON.parse(row.analysis_json), { ...beer, url: row.value });
+  }
+});
+
+test('background intake ignores oversized image fields and fetches only one confirmation image', async t => {
+  const requests = [];
+  const representative = 'data:image/png;base64,aW1hZ2U=';
+  const largeImage = 'A'.repeat(2_100_000);
+  const { sql, receive, request } = await runtime(t, (url, body) => {
+    requests.push({ url, includeProductImage: body.includeProductImage });
+    return { ...beer, productImageDataUri: body.includeProductImage ? representative : 'data:image/jpeg;base64,' + largeImage,
+      imageBase64: body.includeProductImage ? 'aW1hZ2U=' : largeImage };
+  });
+  await receive(['https://example.test/beer/1', 'https://example.test/beer/2']);
+  const pending = (await request('/api/pending')).items;
+  assert.equal(pending[0].item_count, 2);
+  assert.equal(pending[0].image_data_uri, representative);
+  assert.equal(requests.filter(item => item.includeProductImage).length, 1);
+  for (const { analysis_json } of sql.prepare('SELECT analysis_json FROM items').all()) {
+    const analysis = JSON.parse(analysis_json);
+    assert.equal(analysis.product, beer.product);
+    assert.equal(analysis.imageBase64, undefined);
+    assert.equal(analysis.productImageDataUri, undefined);
   }
 });
 

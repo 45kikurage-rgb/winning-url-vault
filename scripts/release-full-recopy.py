@@ -1,4 +1,4 @@
-"""Read-only guarded release, reused for the approved 2026-11-15 audit fixes.
+"""Guarded Worker release for the staged analysis recovery fix.
 
 No migration or business-row access. The existing full-recopy workflow is the
 serialized release entry point; its production credentials remain in CI only.
@@ -18,19 +18,13 @@ g = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(g)
 g.STATE = g.STATE.with_name("vault-full-recopy-private.json")
 g.OUT = Path("full-recopy-release-evidence.json")
-BASE_SOURCE = "1806000c903502252200d4d3435aab7132f15c03"
-BASE_WORKER = "49babf4779002e8e77d80f6152909062df47f310471e56da401b79d87b8eac71"
-BASE_VERSION = "68927a28-b7ed-45c1-a9ea-3f4853208f43"
+BASE_SOURCE = "372fab611cb5677d677913c86e206d5e0004bb1e"
+BASE_WORKER = "e55217433b767aa0c3de565caa0e9ed6be3837a170540b94bcd4eb4ce0414dde"
+BASE_VERSION = "43b6c309-7017-4abd-a723-d9c2a2b944ef"
 ASSETS = sorted(str(path.relative_to('public')) for path in Path('public').rglob('*') if path.is_file())
 ALLOWED = {
-    "docs/AUDIT_FIXES_2026-11-15.md", "public/app.js", "public/device-login.js",
-    "public/index.html", "public/network-read.js", "public/share.html", "public/share.js",
-    "public/styles.css", "public/sw.js", "src/extraction.js", "src/index.js",
-    "src/ledger.js", "src/provisional.js", "tests/analysis-intake-regression.test.mjs",
-    "tests/assignment-export-safety.test.mjs", "tests/device-pairing-recovery.test.mjs",
-    "tests/network-read.test.mjs", "tests/pwa.test.mjs", "tests/share-reliability.test.mjs",
-    "tests/ui-async-safety.test.mjs", "scripts/release-full-recopy.py",
-    "scripts/test-audit-release-guards.py", "docs/releases/full-recopy-20261103.md"
+    "src/index.js", "tests/analysis-intake-regression.test.mjs",
+    "scripts/release-full-recopy.py", "docs/releases/full-recopy-20261103.md",
 }
 spec = importlib.util.spec_from_file_location('queue_guards', Path(__file__).with_name('release-mobile-reliability.py'))
 q = importlib.util.module_from_spec(spec)
