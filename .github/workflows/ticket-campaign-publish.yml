@@ -35,4 +35,28 @@ jobs:
           assert(url && readFileSync('public/sw.js','utf8').includes(JSON.stringify(url)));
           JS
       - name: Deploy the Worker using the existing storage
-        run: npx wrangler deploy
+        run: npx wrangler deploy --keep-vars
+      - name: Verify published PWA manifest and launcher icons
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const origin = 'https://winning-url-vault.45kikurage.workers.dev';
+          const manifest = JSON.parse(readFileSync('public/manifest.webmanifest','utf8'));
+          const paths = ['/manifest.webmanifest', '/manifest.json', ...manifest.icons.map(icon=>icon.src)];
+          for (const path of paths) {
+            const url = new URL(path, origin);
+            assert.equal(url.origin, origin);
+            const expected = readFileSync('public'+url.pathname);
+            let matched = false;
+            for (let attempt = 0; attempt < 6 && !matched; attempt++) {
+              try {
+                const res = await fetch(url, {cache:'no-store', signal:AbortSignal.timeout(10000)});
+                matched = res.ok && Buffer.from(await res.arrayBuffer()).equals(expected);
+              } catch {}
+              if (!matched && attempt < 5) await new Promise(resolve=>setTimeout(resolve,3000));
+            }
+            assert(matched, 'Production asset mismatch: '+url.pathname);
+            console.log('Verified production asset: '+url.pathname);
+          }
+          JS
