@@ -26,5 +26,13 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - name: Check that the installed app and cache use the same styles
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const url=readFileSync('public/index.html','utf8').match(/href="(\/styles\.css\?v=[^"]+)"/)?.[1];
+          assert(url && readFileSync('public/sw.js','utf8').includes(JSON.stringify(url)));
+          JS
       - name: Deploy the Worker using the existing storage
         run: npx wrangler deploy
