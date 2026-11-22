@@ -1,4 +1,4 @@
-const CACHE = "winning-url-vault-pwa-20261122-campaign-layout";
+const CACHE = "winning-url-vault-pwa-home-t-20261122";
 const ASSETS = [
   "/",
   "/index.html",
@@ -20,9 +20,8 @@ const ASSETS = [
   "/share.js?v=20261115-reliability",
   "/manifest.json",
   "/manifest.webmanifest",
-  "/icon-any-192.png?v=aruno-ticket-20261107",
-  "/icon-any-512.png?v=aruno-ticket-20261107",
-  "/icon-maskable-512.png?v=aruno-ticket-20261107"
+  "/icon-any-192.png?v=home-t-20261122",
+  "/icon-any-512.png?v=home-t-20261122"
 ];
 
 async function handleShareTarget(request) {

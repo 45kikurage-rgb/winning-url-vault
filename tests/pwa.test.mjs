@@ -29,11 +29,11 @@ test("PWA manifests expose the Android share target", async () => {
   });
   assert.ok(manifest.icons.some(icon => icon.sizes === "192x192" && icon.purpose === "any"));
   assert.ok(manifest.icons.some(icon => icon.sizes === "512x512" && icon.purpose === "any"));
-  assert.ok(manifest.icons.some(icon => icon.sizes === "512x512" && icon.purpose === "maskable"));
+  assert.ok(manifest.icons.every(icon => icon.purpose === "any"));
 });
 
 test("PWA icon files have the declared dimensions", async () => {
-  for (const [name, width] of [["icon-any-192.png", 192], ["icon-any-512.png", 512], ["icon-maskable-512.png", 512]]) {
+  for (const [name, width] of [["icon-any-192.png", 192], ["icon-any-512.png", 512]]) {
     const size = pngSize(await readFile(new URL(name, root)));
     assert.deepEqual(size, { width, height: width });
   }
@@ -55,7 +55,7 @@ test("both launch pages register or reference the PWA", async () => {
   assert.match(index, /rel="manifest" href="\/manifest\.json"/);
   assert.match(app, /serviceWorker\.register\("\/sw\.js"\)/);
   assert.match(share, /type="module" src="\/share\.js\?v=20261115-reliability"/);
-  assert.match(share, /src="\/icon-any-512\.png\?v=aruno-ticket-20261107"/);
+  assert.match(share, /src="\/icon-any-512\.png\?v=home-t-20261122"/);
 });
 
 test("スマホ一覧は独立した未抽出ボタン・設定・終了領域と固定タブを備える", async () => {
