@@ -1307,13 +1307,133 @@ function campaignLabel(campaign) {
   return `${campaign.campaign_name}　${campaign.lottery_start_date}`;
 }
 
+let campaignManagement = null;
+let managementDialog = null;
+let managementSaving = false;
+
+async function loadCampaignManagement() {
+  campaignManagement = await api("/api/campaign-management").catch(() => null);
+  $("campaignCreate").classList.toggle("hidden", !campaignManagement);
+}
+
+function placementActions(campaign) {
+  const row = campaignManagement?.campaigns.find(item => item.id === campaign.campaign_id);
+  if (!row || row.ending || campaign.status !== 'active') return '';
+  const id = esc(row.id);
+  const position = campaignManagement.campaigns.indexOf(row);
+  const order = row.layout_enabled ? '<small>配置順 ' + (campaignManagement.campaigns.slice(0, position).filter(item => item.layout_enabled && !item.ending).length + 1) + '</small>' : '';
+  return `<button type="button" class="secondary" data-manage-edit="${id}">編集</button>
+    <button type="button" class="secondary" data-manage-layout="${id}">${row.layout_enabled ? '配置換え対象' : '配置換え対象外'}</button>
+    ${order}<button type="button" class="secondary" data-manage-move="-1" data-manage-id="${id}" aria-label="配置順を上へ" ${position === 0 ? 'disabled' : ''}>↑</button>
+    <button type="button" class="secondary" data-manage-move="1" data-manage-id="${id}" aria-label="配置順を下へ" ${position === campaignManagement.campaigns.length - 1 ? 'disabled' : ''}>↓</button>
+    <button type="button" class="secondary" data-manage-end="${id}">終了へ</button>`;
+}
+
+async function openCampaignManagement(action, id = null, assignment = null) {
+  if (managementSaving) return;
+  const dialog = $("campaignManageDialog");
+  const row = campaignManagement?.campaigns.find(item => item.id === id);
+  const edits = action === "create" || action === "update";
+  if (action !== "create" && !row) return;
+  managementDialog = { action, id: id || crypto.randomUUID(), assignment, total: campaignManagement?.total_app_count, layout: row?.layout_enabled };
+  $("campaignManageTitle").textContent = { create: "新規キャンペーン", update: "キャンペーン編集", end: "終了の確認を開始", set_layout_enabled: "配置換え対象を変更" }[action];
+  $("campaignManageInputs").hidden = !edits;
+  $("campaignManageName").required = edits;
+  $("campaignManageDate").required = edits;
+  $("campaignManageName").value = row?.name || "";
+  $("campaignManageDate").value = row?.start_date || "";
+  $("campaignManageLayoutField").hidden = action !== "create";
+  $("campaignManageLayout").value = assignment ? "no" : "yes";
+  $("campaignManageSummary").textContent = action === "end"
+    ? `${row.name} の終了確認を開始します。端末のアカウント母数は ${campaignManagement.total_app_count.toLocaleString()} です。`
+    : action === "set_layout_enabled" ? `${row.name} を配置換え${row.layout_enabled ? '対象外' : '対象'}にします。` : "";
+  $("campaignManageMessage").textContent = "";
+  $("campaignManageSave").textContent = action === "end" ? "終了確認を開始" : action === "create" ? "登録する" : "変更する";
+  $("campaignManageSave").disabled = false;
+  if (assignment) {
+    assignmentPreviewRequest++;
+    $("assignmentDialog").close();
+  }
+  dialog.showModal();
+  if (!campaignManagement) {
+    $("campaignManageSave").disabled = true;
+    await loadCampaignManagement();
+    if (managementDialog?.assignment !== assignment || !dialog.open) return;
+    $("campaignManageSave").disabled = !campaignManagement;
+    if (!campaignManagement) $("campaignManageMessage").textContent = "キャンペーン管理に接続できません。再読込してもう一度開いてください。";
+  }
+}
+
+function submitCampaignChange(input) {
+  return api("/api/campaign-management", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ revision: campaignManagement.revision, ...input }) });
+}
+
+async function saveCampaignManagement(event) {
+  event.preventDefault();
+  if (managementSaving || !managementDialog || !campaignManagement) return;
+  const { action, id, assignment } = managementDialog;
+  const row = campaignManagement.campaigns.find(item => item.id === id);
+  const input = { action, id };
+  if (action === "create" || action === "update") {
+    input.name = $("campaignManageName").value.trim();
+    input.start_date = $("campaignManageDate").value;
+    if (action === "create") input.layout_enabled = $("campaignManageLayout").value === "yes";
+  } else if (action === "end") {
+    input.confirm = true;
+    input.final_account_count = managementDialog.total;
+  } else if (action === "set_layout_enabled" && row) {
+    input.confirm = true;
+    input.layout_enabled = !managementDialog.layout;
+  }
+  managementSaving = true;
+  $("campaignManageSave").disabled = $("campaignManageCancel").disabled = true;
+  $("campaignManageMessage").textContent = "保存中…";
+  try {
+    campaignManagement = await submitCampaignChange(input);
+    await loadCampaigns();
+    $("campaignManageDialog").close();
+    if (assignment) {
+      await openAssignment(assignment.cardId, assignment.title, id);
+      if (!$("assignmentCampaign").querySelector(`option[value="${id}"]`)) {
+        $("assignmentMessage").textContent = "キャンペーンは登録済みです。中央台帳への反映後、仕分け先から選べます。";
+      }
+    }
+    if (action === "end" && state.campaigns.some(campaign => campaign.campaign_id === id && campaign.status === "closing")) await openClose(id);
+  } catch (error) {
+    $("campaignManageMessage").textContent = error.message;
+    await loadCampaignManagement();
+  } finally {
+    managementSaving = false;
+    const changed = action === "end" && campaignManagement?.total_app_count !== managementDialog.total;
+    const layoutChanged = action === "set_layout_enabled" && campaignManagement?.campaigns.find(item => item.id === id)?.layout_enabled !== managementDialog.layout;
+    $("campaignManageSave").disabled = !campaignManagement || changed || layoutChanged;
+    $("campaignManageCancel").disabled = false;
+  }
+}
+
+async function moveCampaign(id, offset) {
+  if (managementSaving || !campaignManagement) return;
+  const ids = campaignManagement.campaigns.map(row => row.id);
+  const from = ids.indexOf(id), to = from + offset;
+  if (from < 0 || to < 0 || to >= ids.length) return;
+  [ids[from], ids[to]] = [ids[to], ids[from]];
+  managementSaving = true;
+  try {
+    campaignManagement = await submitCampaignChange({ action: "reorder", ids });
+    renderCampaigns();
+  } catch (error) {
+    await loadCampaigns();
+    $("ledgerSyncStatus").textContent = error.message;
+  } finally { managementSaving = false; }
+}
+
 function campaignHtml(campaign) {
   const labels = { active: "実施中", closing: "終了確認待ち", closed: "終了済み", correcting: "訂正中" };
   const count = campaign.status === "closed" ? campaign.final_winner_count : campaign.current_winner_count;
   const action = campaign.status === "closing" || campaign.status === "correcting"
     ? `<button data-close-campaign="${esc(campaign.campaign_id)}">終了確認</button>`
     : campaign.status === "closed"
-      ? `<button class="secondary" data-correct-campaign="${esc(campaign.campaign_id)}">訂正</button>` : "";
+      ? `<button class="secondary" data-correct-campaign="${esc(campaign.campaign_id)}">訂正</button>` : placementActions(campaign);
   return `<article class="campaign-row status-${esc(campaign.status)}">
     <div><strong>${esc(campaign.campaign_name)}</strong><small><span>開始 ${esc(campaign.lottery_start_date || '未取得')}</span><span>${esc(labels[campaign.status] || campaign.status)}</span><span>${campaign.status === 'closed' ? '確定当選' : '当選'}${Number(count || 0).toLocaleString()}件${campaign.status === 'closed' ? '' : '（URL・コード）'}</span></small></div><div class="campaign-actions">${action}</div>
   </article>`;
@@ -1348,7 +1468,7 @@ async function loadOutbox() {
 async function loadCampaigns() {
   $("refreshCampaigns").disabled = true;
   try {
-    const result = await api("/api/ledger/campaigns");
+    const [result] = await Promise.all([api("/api/ledger/campaigns"), loadCampaignManagement()]);
     state.campaigns = result.campaigns || [];
     renderCampaigns();
     if (result.stale) $("ledgerSyncStatus").textContent = `キャッシュ表示中：${result.warning}`;
@@ -1361,6 +1481,10 @@ async function loadCampaigns() {
 }
 
 function bindCampaignControls() {
+  document.querySelectorAll("[data-manage-edit]").forEach(button => button.onclick = () => openCampaignManagement("update", button.dataset.manageEdit));
+  document.querySelectorAll("[data-manage-end]").forEach(button => button.onclick = () => openCampaignManagement("end", button.dataset.manageEnd));
+  document.querySelectorAll("[data-manage-layout]").forEach(button => button.onclick = () => openCampaignManagement("set_layout_enabled", button.dataset.manageLayout));
+  document.querySelectorAll("[data-manage-move]").forEach(button => button.onclick = () => moveCampaign(button.dataset.manageId, Number(button.dataset.manageMove)));
   document.querySelectorAll("[data-close-campaign]").forEach(button => button.onclick = () => openClose(button.dataset.closeCampaign));
   document.querySelectorAll("[data-correct-campaign]").forEach(button => button.onclick = () => openCorrection(button.dataset.correctCampaign));
 }
@@ -1403,7 +1527,7 @@ async function refreshAfterAssignment(result, source, label = '仕分けまし�
     setSortingNotice(source, `${saved} ${remaining ? `残り${remaining.toLocaleString()}件を続けて仕分けできます。` : '仕分け待ちのカードはありません。'}`);
   }
 }
-async function openAssignment(cardId, title) {
+async function openAssignment(cardId, title, preferredCampaign = "") {
   if (assignmentSaving) return;
   assignmentPreviewRequest++;
   state.assignmentCardId = cardId;
@@ -1425,6 +1549,10 @@ async function openAssignment(cardId, title) {
   $("assignmentDecision").innerHTML = available.length ? "" : '<div class="empty">仕分け可能なキャンペーンがありません</div>';
   $("assignmentMessage").textContent = "";
   $("assignmentConfirm").disabled = !available.length;
+  if (preferredCampaign && available.some(campaign => campaign.campaign_id === preferredCampaign)) {
+    $("assignmentCampaign").value = preferredCampaign;
+    $("assignmentPrediction").classList.add("hidden");
+  }
   $("assignmentDialog").showModal();
   if (available.length) await loadAssignmentPreview();
 }
@@ -2038,6 +2166,22 @@ $("confirmDeviceSetup").onclick = async () => {
 $("logout").onclick = logout;
 $("openTrialReset").onclick = openTrialReset;
 $("refreshCampaigns").onclick = loadCampaigns;
+$("campaignCreate").onclick = () => openCampaignManagement("create");
+$("campaignManageForm").onsubmit = saveCampaignManagement;
+$("campaignManageCancel").onclick = () => {
+  const assignment = managementDialog?.assignment;
+  $("campaignManageDialog").close();
+  if (assignment) openAssignment(assignment.cardId, assignment.title);
+};
+$("campaignManageDialog").addEventListener("cancel", event => {
+  event.preventDefault();
+  if (!managementSaving) $("campaignManageCancel").click();
+});
+$("assignmentCampaignCreate").onclick = () => {
+  if (assignmentSaving || !state.assignmentCardId) return;
+  const title = $("assignmentTitle").textContent.replace(/ を振り分け$/, "");
+  openCampaignManagement("create", null, { cardId: state.assignmentCardId, title });
+};
 $("assignmentCampaign").onchange = loadAssignmentPreview;
 $("assignmentConfirm").onclick = confirmAssignment;
 $("assignmentSingleWin").onclick = openSingleWinFromAssignment;
@@ -2220,6 +2364,5 @@ async function deleteUsedCoupons() {
 $("recheckUsage").onclick=recheckSortingUsage;
 $("retrySortingLoad").onclick = () => { void refreshVisibleData(); };
 $("deleteUsed").onclick=deleteUsedCoupons;
-
 
 

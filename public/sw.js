@@ -1,11 +1,11 @@
-const CACHE = "winning-url-vault-pwa-20261115-audit-safety";
+const CACHE = "winning-url-vault-pwa-20261122-campaign-management";
 const ASSETS = [
   "/",
   "/index.html",
   "/share.html",
   "/share-storage.js",
   "/styles.css?v=20261115-audit-safety",
-  "/app.js?v=20261115-audit-safety",
+  "/app.js?v=20261122-campaign-management",
   "/analysis-amount.js",
   "/provisional-ui.js",
   "/network-read.js",
@@ -71,7 +71,6 @@ self.addEventListener("fetch", event => {
     }
   })());
 });
-
 
 
 

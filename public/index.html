@@ -150,7 +150,7 @@
   <section id="tabCampaigns" class="tab-page hidden">
   <section class="panel ledger-panel">
     <div class="row"><div><h2>キャンペーン連携</h2><p>中央管理台帳のキャンペーンと同期します。表示はキャンペーン名＋抽選開始日、関連付けはcampaign_idです。</p></div>
-      <button id="refreshCampaigns" class="secondary">再読込</button></div>
+      <div class="actions"><button id="refreshCampaigns" class="secondary">再読込</button><button id="campaignCreate" type="button" class="hidden">新規キャンペーン</button></div></div>
     <div id="ledgerSyncStatus" class="sync-summary">同期状態を確認中…</div>
     <label for="campaignSearch" class="sr-only">キャンペーンを検索</label><input id="campaignSearch" type="search" placeholder="キャンペーンを検索" autocomplete="off">
     <div id="campaignFilters" class="campaign-filters"><button data-cp-filter="all" aria-pressed="true">すべて</button><button data-cp-filter="active" class="secondary" aria-pressed="false">実施中</button><button data-cp-filter="attention" class="secondary" aria-pressed="false">要対応</button><button data-cp-filter="closed" class="secondary" aria-pressed="false">終了済み</button></div><p id="campaignMetric" class="meta"></p>
@@ -347,6 +347,7 @@
   <div class="dialog-head"><div><small>当選の仕分け</small><h2 id="assignmentTitle">振り分け</h2></div><button id="assignmentClose" class="secondary">閉じる</button></div>
   <div class="assignment-single-win"><p>キャンペーン名がない少数の当選はこちらから登録できます。</p><button id="assignmentSingleWin" class="secondary">単発当選として登録</button></div>
   <p>キャンペーンがある場合は下から選んでください。同名のキャンペーンは抽選開始日で区別します。</p>
+  <button id="assignmentCampaignCreate" type="button" class="secondary">新規キャンペーンを作成</button>
   <label>仕分け先キャンペーン
     <select id="assignmentCampaign"></select>
   </label>
@@ -354,6 +355,20 @@
   <div id="assignmentDecision" class="assignment-decision"></div>
   <p id="assignmentMessage" class="result" aria-live="polite"></p>
   <div class="confirm-actions"><button id="assignmentConfirm">確認して振り分け</button></div>
+</dialog>
+
+<dialog id="campaignManageDialog" aria-labelledby="campaignManageTitle">
+  <div class="dialog-head"><h2 id="campaignManageTitle"></h2><button id="campaignManageCancel" type="button" class="secondary">閉じる</button></div>
+  <form id="campaignManageForm">
+    <div id="campaignManageInputs">
+      <label>キャンペーン名<input id="campaignManageName" maxlength="80" autocomplete="off"></label>
+      <label>抽選開始日<input id="campaignManageDate" type="date"></label>
+      <label id="campaignManageLayoutField">配置換え<select id="campaignManageLayout"><option value="yes">対象</option><option value="no">対象外</option></select></label>
+    </div>
+    <p id="campaignManageSummary"></p>
+    <p id="campaignManageMessage" class="result" aria-live="polite"></p>
+    <div class="confirm-actions"><button id="campaignManageSave" type="submit">登録する</button></div>
+  </form>
 </dialog>
 
 <dialog id="closeDialog">
@@ -379,11 +394,9 @@
   <p id="trialResetMessage" class="result" aria-live="polite"></p>
   <div class="confirm-actions"><button id="cancelTrialReset" class="secondary">戻る</button><button id="confirmTrialReset" class="danger" disabled>完全削除する</button></div>
 </dialog>
-<script type="module" src="/app.js?v=20261115-audit-safety"></script>
+<script type="module" src="/app.js?v=20261122-campaign-management"></script>
 </body>
 </html>
-
-
 
 
 

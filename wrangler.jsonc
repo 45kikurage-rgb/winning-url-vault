@@ -13,7 +13,7 @@
     { "binding": "COUPON_ANALYZER", "service": "coupon-analyzer-api" },
     { "binding": "LEDGER_READER", "service": "aruno-consolidated-ledger-api", "entrypoint": "ReaderAPI" },
     { "binding": "LEDGER_VAULT", "service": "aruno-consolidated-ledger-api", "entrypoint": "VaultAPI" },
-    { "binding": "ALIGN_SINGLE_WIN", "service": "arunomatic-align", "entrypoint": "VaultCampaignAPI" }
+    { "binding": "ALIGN_SINGLE_WIN", "service": "arunomatic-dashboard", "entrypoint": "VaultCampaignAPI" }
   ],
   "triggers": { "crons": ["*/1 * * * *"] },
   "d1_databases": [
@@ -47,4 +47,3 @@
   },
   "observability": { "enabled": true }
 }
-

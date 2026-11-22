@@ -1244,6 +1244,22 @@ export default {
       if (exportBatchRoute && request.method === "DELETE") {
         return json({ ok: true, ...await cancelExportBatch(env, exportBatchRoute[1]) });
       }
+      if (url.pathname === "/api/campaign-management" && ["GET", "POST"].includes(request.method)) {
+        const service = env.ALIGN_SINGLE_WIN;
+        if (!service?.readCampaigns || !service?.changeCampaign) {
+          return json({ ok: false, error: "キャンペーン管理に接続できません。" }, 503);
+        }
+        if (request.method === "GET") {
+          const result = await service.readCampaigns();
+          return json(result, result.ok ? 200 : result.status);
+        }
+        if (request.headers.get("origin") !== url.origin) {
+          return json({ ok: false, error: "管理画面から操作してください。" }, 403);
+        }
+        const body = await request.json().catch(() => null);
+        const result = await service.changeCampaign(body);
+        return json(result, result.ok ? 200 : result.status);
+      }
       if (url.pathname === "/api/ledger/campaigns" && request.method === "GET") {
         return json({ ok: true, ...await refreshCampaigns(env) });
       }
@@ -1343,7 +1359,6 @@ export default {
     })());
   }
 };
-
 
 
 
