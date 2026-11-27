@@ -1,0 +1,66 @@
+name: Release provisional select publish
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/provisional-select-release.yml']
+permissions:
+  contents: read
+concurrency:
+  group: winning-url-vault-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: 02100d2235d6f7d7f893b4217b58b902
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - name: Check that the installed app and cache use the same styles
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const url=readFileSync('public/index.html','utf8').match(/href="(\/styles\.css\?v=[^"]+)"/)?.[1];
+          assert(url && readFileSync('public/sw.js','utf8').includes(JSON.stringify(url)));
+          JS
+      - name: Deploy the Worker using the existing storage
+        run: npx wrangler deploy --keep-vars --message "Provisional select publish ${GITHUB_SHA}"
+      - name: Verify published assets match the release source
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {readFileSync} from 'node:fs';
+          const origin = 'https://winning-url-vault.45kikurage.workers.dev';
+          const manifest = JSON.parse(readFileSync('public/manifest.webmanifest','utf8'));
+          const paths = ['/provisional-ui.js', '/styles.css', '/manifest.webmanifest', '/manifest.json',
+            ...manifest.icons.map(icon=>icon.src)];
+          for (const path of paths) {
+            const url = new URL(path, origin);
+            assert.equal(url.origin, origin);
+            const expected = readFileSync('public'+url.pathname);
+            let matched = false;
+            for (let attempt = 0; attempt < 6 && !matched; attempt++) {
+              try {
+                const res = await fetch(url, {cache:'no-store', signal:AbortSignal.timeout(10000)});
+                matched = res.ok && Buffer.from(await res.arrayBuffer()).equals(expected);
+              } catch {}
+              if (!matched && attempt < 5) await new Promise(resolve=>setTimeout(resolve,3000));
+            }
+            assert(matched, 'Production asset mismatch: '+url.pathname);
+            console.log('Verified production asset: '+url.pathname);
+          }
+          assert(readFileSync('public/provisional-ui.js','utf8').includes('data-publish-selected'));
+          console.log('Selection publish UI present in release source');
+          JS
