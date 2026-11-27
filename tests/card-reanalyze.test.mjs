@@ -160,6 +160,31 @@ test('re-judgement requires the confirmation text and an existing card', async t
   assert.equal(noOrigin.status, 403);
 });
 
+test('partial (selected) publish still counts and re-judges its items', async t => {
+  const parts = await runtime(t, () => ({ status: 'unknown', message: '判定不能' }));
+  const { env, request } = parts;
+  await changeMode(env, 'C');
+  const held = await request('/api/receive', {
+    values: ['EFGH5678IJKL9012', 'https://example.test/partial-a', 'https://example.test/partial-b'],
+    clientRequestId: crypto.randomUUID()
+  });
+  assert.equal(held.status, 202, JSON.stringify(held.body));
+  const overview = await request('/api/provisional');
+  const bucket = overview.body.buckets.find(row => row.slot === 'C');
+  assert.ok(bucket?.bucketId);
+  assert.equal(bucket.items.length, 3);
+  const selected = bucket.items.slice(0, 2).map(item => item.id);
+  const published = await request('/api/provisional/C/publish', { bucket_id: bucket.bucketId, item_ids: selected });
+  assert.equal(published.status, 200, JSON.stringify(published.body));
+  await changeMode(env, 'normal');
+  const cardId = published.body.cardId;
+  const cards = (await request('/api/cards')).body.cards;
+  assert.equal(cards.find(card => card.id === cardId)?.provisional_count, 2);
+  const result = await request(`/api/cards/${cardId}/reanalyze`, { confirmation: '再判定' });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.processed, 2);
+});
+
 test('re-judgement processes at most 100 items per call and reports the rest', async t => {
   const parts = await runtime(t, () => beer);
   const { request } = parts;
