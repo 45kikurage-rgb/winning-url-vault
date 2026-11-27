@@ -839,12 +839,20 @@ async function listCards(env,source='arunomatic') {
     // Items published from a provisional bucket were never analyzed; they
     // keep a provisional marker in their analysis until they are re-judged.
     // Kept out of enrichCards, whose query shape is frozen by its tests.
-    const provisionalRows = await env.DB.prepare(`SELECT i.card_id,COUNT(*) count FROM items i
-      WHERE i.card_id IS NOT NULL AND i.status='active'
-        AND json_valid(i.analysis_json) AND json_extract(i.analysis_json,'$.provisional')=1
-        AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)
-      GROUP BY i.card_id`).all();
-    const provisionalCounts = new Map((provisionalRows.results || []).map(row => [row.card_id, Number(row.count || 0)]));
+    // The count must stay scoped to the listed cards (idx_items_card): an
+    // unscoped variant with per-row JSON parsing overloaded D1 under the
+    // app's polling on 2026-11-27 and locked the user out at login.
+    const provisionalCounts = new Map();
+    const cardIds = cards.map(card => card.id);
+    for (let start = 0; start < cardIds.length; start += 90) {
+      const chunk = cardIds.slice(start, start + 90);
+      const provisionalRows = await env.DB.prepare(`SELECT i.card_id,COUNT(*) count FROM items i
+        WHERE i.card_id IN (${chunk.map(() => "?").join(",")}) AND i.status='active'
+          AND json_valid(i.analysis_json) AND json_extract(i.analysis_json,'$.provisional')=1
+          AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)
+        GROUP BY i.card_id`).bind(...chunk).all();
+      for (const row of provisionalRows.results || []) provisionalCounts.set(row.card_id, Number(row.count || 0));
+    }
     for (const card of cards) card.provisional_count = provisionalCounts.get(card.id) || 0;
   }
   return json({ ok: true, cards });
