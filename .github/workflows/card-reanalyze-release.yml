@@ -36,7 +36,7 @@ jobs:
           assert(url && readFileSync('public/sw.js','utf8').includes(JSON.stringify(url)));
           JS
       - name: Deploy the Worker using the existing storage
-        run: npx wrangler deploy --keep-vars --message "Card reanalyze fix ${GITHUB_SHA}"
+        run: npx wrangler deploy --keep-vars --message "Card reanalyze fix 2 ${GITHUB_SHA}"
       - name: Verify published assets match the release source
         run: |
           node --input-type=module <<'JS'
