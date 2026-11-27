@@ -715,6 +715,49 @@ async function retryUnresolved(env,source='arunomatic',onlyCokeOn=false) {
   return json({ ok: true, retried: items.length, resolved: output.filter(item => item.status !== "unresolved").length, items: output });
 }
 
+// Re-judge items that were published from a provisional bucket without ever
+// being analyzed. Each item goes through the same classification as a normal
+// retry: code types move to their code card, URLs are analyzed and land on a
+// confirmed product card, in first-time confirmation, in unresolved, or in
+// used. Only unassigned items still carrying the provisional marker on this
+// card are eligible, so confirmed cards and campaign assignments are never
+// reinterpreted. At most 100 items are processed per call.
+async function reanalyzeCardItems(env, cardId) {
+  const card = await env.DB.prepare("SELECT id FROM cards WHERE id=?").bind(cardId).first();
+  if (!card) return { ok: false, error: "カードが見つかりません" };
+  const eligible = `FROM items i WHERE i.card_id=? AND i.status='active'
+    AND json_valid(i.analysis_json) AND json_extract(i.analysis_json,'$.provisional')=1
+    AND NOT EXISTS (SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)`;
+  const totalRow = await env.DB.prepare(`SELECT COUNT(*) AS count ${eligible}`).bind(cardId).first();
+  const total = Number(totalRow?.count || 0);
+  if (!total) return { ok: true, cardId, processed: 0, remaining: 0, outcomes: {} };
+  const rows = await env.DB.prepare(`SELECT i.id,i.value,i.canonical_value,i.value_type,i.intake_source ${eligible}
+    ORDER BY i.received_at,i.id LIMIT 100`).bind(cardId).all();
+  const items = rows.results || [];
+  const urlItems = []; const output = [];
+  for (const item of items) {
+    const classified = classifyValue(item.value, env.COKEON_REDEEM_BASE_URL);
+    if (isTikTokLongVideo(item.value)) {
+      await classifyTikTokVideos(env, [item]);
+      output.push({ id: item.id, status: "active" });
+    } else if (classified && ["cokeon", "paypay", "quocardpay"].includes(classified.type)) {
+      const targetCardId = await ensureCodeCard(env, classified.type, intakeSource(item.intake_source));
+      output.push(await assignCard(env, item.id, targetCardId));
+      // assignCard keeps the previous analysis for code types; drop the
+      // provisional marker so the item is not offered for re-judgement again
+      // on its new card.
+      await env.DB.prepare(`UPDATE items SET analysis_json=json_remove(analysis_json,'$.provisional')
+        WHERE id=? AND json_valid(analysis_json)`).bind(item.id).run();
+    } else if (classified?.type === "url") urlItems.push(item);
+    else output.push(await markUnresolved(env, item, classified?.reason || "未対応の入力形式"));
+  }
+  output.push(...await processUrls(env, urlItems));
+  const outcomes = {};
+  for (const row of output) outcomes[row.status] = (outcomes[row.status] || 0) + 1;
+  await audit(env, null, "card_reanalyzed", { cardId, processed: items.length, outcomes });
+  return { ok: true, cardId, processed: items.length, remaining: total - items.length, outcomes };
+}
+
 async function confirmPending(request, env, pendingId) {
   const body = await request.json().catch(() => ({}));
   const pending = await env.DB.prepare("SELECT * FROM pending_confirmations WHERE id=?").bind(pendingId).first();
@@ -791,7 +834,20 @@ async function listCards(env,source='arunomatic') {
     LEFT JOIN items i ON i.card_id=c.id AND i.status='active'
     WHERE c.intake_source=? GROUP BY c.id HAVING COUNT(i.id)>0
     ORDER BY CASE WHEN c.expires_on='' THEN 1 ELSE 0 END,c.expires_on ASC,c.created_at DESC`).bind(source).all();
-  return json({ ok: true, cards: await enrichCards(env, rows.results || []) });
+  const cards = await enrichCards(env, rows.results || []);
+  if (cards.length) {
+    // Items published from a provisional bucket were never analyzed; they
+    // keep a provisional marker in their analysis until they are re-judged.
+    // Kept out of enrichCards, whose query shape is frozen by its tests.
+    const provisionalRows = await env.DB.prepare(`SELECT i.card_id,COUNT(*) count FROM items i
+      WHERE i.card_id IS NOT NULL AND i.status='active'
+        AND json_valid(i.analysis_json) AND json_extract(i.analysis_json,'$.provisional')=1
+        AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)
+      GROUP BY i.card_id`).all();
+    const provisionalCounts = new Map((provisionalRows.results || []).map(row => [row.card_id, Number(row.count || 0)]));
+    for (const card of cards) card.provisional_count = provisionalCounts.get(card.id) || 0;
+  }
+  return json({ ok: true, cards });
 }
 
 async function listPending(env,source='arunomatic') {
@@ -1125,6 +1181,16 @@ export default {
         const result=await deleteUsed(env,body.ids);
         if (result.ok) await audit(env,null,"used_deleted",{count:result.deleted});
         return json(result,result.ok?200:400);
+      }
+      const cardReanalyze = url.pathname.match(/^\/api\/cards\/([0-9a-f-]{36})\/reanalyze$/i);
+      if (cardReanalyze && request.method === "POST") {
+        if (request.headers.get('origin') !== url.origin)
+          return json({ok:false,error:'管理画面から操作してください',code:'SCOPE_DENIED'},403);
+        const body = await request.json().catch(() => ({}));
+        if (body?.confirmation !== '再判定')
+          return json({ok:false,error:'再判定の確認が必要です'},400);
+        const result = await reanalyzeCardItems(env, cardReanalyze[1]);
+        return json(result, result.ok ? 200 : 404);
       }
       const sortingDelete = url.pathname.match(/^\/api\/cards\/([0-9a-f-]{36})\/delete-unassigned$/i);
       if (sortingDelete && ['GET','POST'].includes(request.method)) {

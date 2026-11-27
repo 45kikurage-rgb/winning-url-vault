@@ -400,6 +400,7 @@ function cardHtml(card) {
     <div class="coupon-foot"><div class="card-actions">
       ${Number(card.unassigned_count || 0) > 0 ? `<button data-assign-card="${esc(card.id)}" data-title="${esc(card.display_name)}">振分</button>` : ""}
       ${Number(card.unassigned_count || 0) > 0 ? `<button class="danger" data-delete-sorting="${esc(card.id)}">削除</button>` : ""}
+      ${Number(card.provisional_count || 0) > 0 ? `<button class="secondary" data-reanalyze-card="${esc(card.id)}">再判定</button>` : ""}
       <button class="secondary" data-edit-sorting-name="${esc(card.id)}">表示名</button><button class="secondary" data-card="${esc(card.id)}" data-title="${esc(card.display_name)}">内容</button></div></div>
   </article>`;
 }
@@ -1726,6 +1727,35 @@ async function confirmCorrection() {
 }
 
 const sortingDeletes = new Set();
+const reanalyzingCards = new Set();
+async function reanalyzeCard(button) {
+  const cardId = button.dataset.reanalyzeCard;
+  if (reanalyzingCards.has(cardId)) return;
+  const card = state.cards.get(cardId);
+  const count = Number(card?.provisional_count || 0);
+  if (!count) { await load(); return; }
+  const title = displayLabel('sorting',cardId,card?.display_name);
+  if (!confirm(`${title}\n暫定からカード化した${count.toLocaleString()}件を解析して再判定しますか？\n判定できたものは正規のカード・初回確認・未判定へ移り、このカードには残りません。`)) return;
+  reanalyzingCards.add(cardId);button.disabled = true;button.textContent = "再判定中…";
+  try {
+    const result = await api(`/api/cards/${encodeURIComponent(cardId)}/reanalyze`,{method:'POST',headers:{'content-type':'application/json'},
+      body:JSON.stringify({confirmation:'再判定'})});
+    await load();
+    const outcomes = result.outcomes || {};
+    const parts = [];
+    if (outcomes.active) parts.push(`カードへ仕分け ${outcomes.active.toLocaleString()}件`);
+    if (outcomes.pending_confirmation) parts.push(`初回確認へ ${outcomes.pending_confirmation.toLocaleString()}件`);
+    if (outcomes.unresolved) parts.push(`未判定へ ${outcomes.unresolved.toLocaleString()}件`);
+    if (outcomes.used) parts.push(`使用済み ${outcomes.used.toLocaleString()}件`);
+    alert(`${Number(result.processed || 0).toLocaleString()}件を再判定しました。${parts.length ? `\n${parts.join('、')}` : ''}${result.remaining ? `\nまだ${Number(result.remaining).toLocaleString()}件が未処理です。もう一度「再判定」を押してください。` : ''}`);
+  } catch (error) { alert(error.message); }
+  finally {
+    reanalyzingCards.delete(cardId);
+    document.querySelectorAll('[data-reanalyze-card]').forEach(current => {
+      current.disabled = reanalyzingCards.has(current.dataset.reanalyzeCard);
+    });
+  }
+}
 async function deleteSortingCard(button) {
   const cardId = button.dataset.deleteSorting, source = state.sortingSource;
   const key = `${source}:${cardId}`;
@@ -1755,6 +1785,7 @@ function bindDynamic() {
   bindProductNames();
   refreshSingleWinRecovery();
   document.querySelectorAll('[data-delete-sorting]').forEach(button => { button.disabled=sortingDeletes.has(`${state.sortingSource}:${button.dataset.deleteSorting}`);button.onclick=()=>deleteSortingCard(button); });
+  document.querySelectorAll('[data-reanalyze-card]').forEach(button => { button.disabled=reanalyzingCards.has(button.dataset.reanalyzeCard);button.onclick=()=>reanalyzeCard(button); });
   document.querySelectorAll('[data-edit-sorting-name]').forEach(button => button.onclick = () => openDisplayName('sorting',button.dataset.editSortingName));
   document.querySelectorAll("[data-card]").forEach(button => button.onclick = () => openItems(button.dataset.card, button.dataset.title));
   document.querySelectorAll("[data-assign-card]").forEach(button => button.onclick = () => openAssignment(button.dataset.assignCard, button.dataset.title));
