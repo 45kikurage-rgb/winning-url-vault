@@ -11,6 +11,50 @@ function shortValue(value) {
   const text = String(value || "");
   return text.length > 200 ? text.slice(0, 200) + "…" : text;
 }
+// The sorting tab re-renders this panel every few seconds (polling refresh).
+// Snapshot the per-bucket UI state before the rebuild and restore it after,
+// so an open list, typed card fields and checkbox selections are not lost.
+function snapshotProvisionalState(container) {
+  const saved = new Map();
+  for (const group of container.querySelectorAll("[data-provisional-slot]")) {
+    saved.set(group.dataset.provisionalSlot, {
+      open: Boolean(group.querySelector("details")?.open),
+      fields: [...group.querySelectorAll("input[name]")].map(input => [input.name, input.value]),
+      checked: [...group.querySelectorAll("[data-select-item]:checked")].map(box => box.dataset.selectItem)
+    });
+  }
+  return saved;
+}
+function syncSelectUI(group) {
+  const boxes = [...group.querySelectorAll("[data-select-item]")];
+  const checked = boxes.filter(box => box.checked).length;
+  const all = group.querySelector("[data-select-all]");
+  if (all) {
+    all.checked = boxes.length > 0 && checked === boxes.length;
+    all.indeterminate = checked > 0 && checked < boxes.length;
+  }
+  const button = group.querySelector("[data-publish-selected]");
+  if (button) button.textContent = checked
+    ? "選択したものだけカード化（" + checked + "件）" : "選択したものだけカード化";
+}
+function restoreProvisionalState(container, saved) {
+  for (const [slot, state] of saved) {
+    const group = [...container.querySelectorAll("[data-provisional-slot]")]
+      .find(row => row.dataset.provisionalSlot === slot);
+    if (!group) continue;
+    const details = group.querySelector("details");
+    if (details) details.open = state.open;
+    for (const [name, value] of state.fields) {
+      const input = group.querySelector('input[name="' + name + '"]');
+      if (input) input.value = value;
+    }
+    for (const id of state.checked) {
+      const box = group.querySelector('[data-select-item="' + id + '"]');
+      if (box) box.checked = true;
+    }
+    syncSelectUI(group);
+  }
+}
 function renderOverview(data) {
   for (const button of document.querySelectorAll("[data-provisional-mode]")) {
     const mode = button.dataset.provisionalMode;
@@ -25,6 +69,7 @@ function renderOverview(data) {
   $("receiveContext").textContent = $("provisionalModeStatus").textContent;
   const container = $("provisionalSortingResults");
   if (!container) return;
+  const savedState = snapshotProvisionalState(container);
   const total = $("provisionalTotalCount");
   if (total) total.textContent = (data.buckets || []).reduce((sum, bucket) => sum + bucket.count, 0).toLocaleString() + "件";
   const buckets = (data.buckets || []).filter(bucket => bucket.count > 0);
@@ -34,7 +79,9 @@ function renderOverview(data) {
   }
   container.innerHTML = buckets.map(bucket => {
     const codes = (bucket.items || []).map(item =>
-      '<li><div class="provisional-code-value"><code>' + escapeText(shortValue(item.value)) + '</code>' +
+      '<li><label class="provisional-select"><input type="checkbox" data-select-item="' +
+      escapeText(item.id) + '" aria-label="暫定' + escapeText(bucket.slot) +
+      'の項目を選択">選択</label><div class="provisional-code-value"><code>' + escapeText(shortValue(item.value)) + '</code>' +
       (item.source === "coin_plus" ? ' <span>COIN+</span>' : "") +
       (item.expires_on ? ' <span>受取期限 ' + escapeText(item.expires_on) + '</span>' : "") +
       (item.source === "coin_plus_unparsed" ? ' <span>コード要確認</span>' : "") +
@@ -48,9 +95,11 @@ function renderOverview(data) {
       '<div class="row"><strong>暫定' + escapeText(bucket.slot) + ' の解析結果　' +
       Number(bucket.count).toLocaleString() + '件</strong></div>' +
       '<details><summary>保管内容を確認・削除・カード化</summary>' +
+      '<label class="provisional-select-all"><input type="checkbox" data-select-all="' +
+      escapeText(bucket.slot) + '"> 表示中の全件を選択</label>' +
       '<ul class="provisional-codes">' + codes + '</ul>' +
-      (bucket.truncated ? '<p>先頭40件を表示しています。全件がカード化対象です。</p>' : "") +
-      '<p>この保管箱にある全件を一つのカードにします。別キャンペーンは別の保管箱を選択してください。</p>' +
+      (bucket.truncated ? '<p>先頭40件を表示しています。「この暫定をカード化」は全件が対象です。</p>' : "") +
+      '<p>この保管箱にある全件を一つのカードにします。別キャンペーンは別の保管箱を選択してください。チェックを入れた項目だけを別のカードに分けることもできます。</p>' +
       '<div class="provisional-fields">' +
       '<label>カード名（任意）<input name="name" maxlength="160" value="' +
         (coin ? "COIN+ ギフトコード" : "") + '" placeholder="未入力でもカード化できます"></label>' +
@@ -62,6 +111,8 @@ function renderOverview(data) {
       '</div>' +
       '<button type="button" data-publish-slot="' + escapeText(bucket.slot) +
       '" data-bucket-id="' + escapeText(bucket.bucketId) + '">この暫定をカード化</button>' +
+      '<button type="button" class="secondary" data-publish-selected="' + escapeText(bucket.slot) +
+      '" data-bucket-id="' + escapeText(bucket.bucketId) + '">選択したものだけカード化</button>' +
       '<p class="provisional-publish-message" aria-live="polite"></p>' +
       '</details></section>';
   }).join("");
@@ -130,6 +181,54 @@ function renderOverview(data) {
       }
     });
   }
+  for (const box of container.querySelectorAll("[data-select-item]")) {
+    box.addEventListener("change", () => {
+      const group = box.closest("[data-provisional-slot]");
+      if (group) syncSelectUI(group);
+    });
+  }
+  for (const all of container.querySelectorAll("[data-select-all]")) {
+    all.addEventListener("change", () => {
+      const group = all.closest("[data-provisional-slot]");
+      if (!group) return;
+      for (const box of group.querySelectorAll("[data-select-item]")) box.checked = all.checked;
+      syncSelectUI(group);
+    });
+  }
+  for (const button of container.querySelectorAll("[data-publish-selected]")) {
+    button.addEventListener("click", async () => {
+      const section = button.closest("[data-provisional-slot]");
+      const slot = button.dataset.publishSelected;
+      const message = section.querySelector(".provisional-publish-message");
+      const ids = [...section.querySelectorAll("[data-select-item]:checked")].map(box => box.dataset.selectItem);
+      if (!ids.length) {
+        message.textContent = "チェックを入れた項目がありません。";
+        return;
+      }
+      const fields = Object.fromEntries([...section.querySelectorAll("input[name]")].map(input => [input.name, input.value]));
+      if (!confirm("暫定" + slot + " の選択した " + ids.length +
+          "件を同じカードに移しますか？\n選択していない項目は暫定に残ります。")) return;
+      button.disabled = true;
+      message.textContent = "カード化中…";
+      try {
+        const result = await apiFn("/api/provisional/" + slot + "/publish", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ...fields, bucket_id: button.dataset.bucketId, item_ids: ids })
+        });
+        await Promise.resolve(afterPublish?.());
+        await refreshProvisionalUI();
+        const group = [...container.querySelectorAll("[data-provisional-slot]")]
+          .find(row => row.dataset.provisionalSlot === slot);
+        const note = group?.querySelector(".provisional-publish-message");
+        if (note) note.textContent = result.warning ||
+          ("選択した" + ids.length + "件をカード化しました。残りは暫定に残っています。");
+      } catch (error) {
+        message.textContent = error.message;
+        button.disabled = false;
+      }
+    });
+  }
+  restoreProvisionalState(container, savedState);
 }
 
 export async function refreshProvisionalUI() {

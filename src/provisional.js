@@ -240,6 +240,29 @@ export async function publishBucket(env, slot, bucketId, form) {
     "WHERE e.bucket_id=? AND i.status='provisional'"
   ).bind(bucketId).first();
   if (!Number(count?.n)) throw invalid("保管中のデータがありません", 409);
+  // Optional partial publish: only the checked items move to the new card and
+  // the bucket stays open with the rest. Absent item_ids keeps the original
+  // whole-bucket behaviour below.
+  let selectedIds = null;
+  if (form?.item_ids !== undefined) {
+    if (!Array.isArray(form.item_ids) || !form.item_ids.length || form.item_ids.length > 500)
+      throw invalid("選択した項目が正しくありません");
+    selectedIds = [...new Set(form.item_ids.map(value => String(value)))];
+    if (selectedIds.some(id => !/^[0-9a-f-]{36}$/i.test(id)))
+      throw invalid("選択した項目が正しくありません");
+    const marks = selectedIds.map(() => "?").join(",");
+    const selected = await env.DB.prepare(
+      "SELECT COUNT(*) n FROM provisional_entries e JOIN items i ON i.id=e.item_id " +
+      "WHERE e.bucket_id=? AND i.status='provisional' AND e.item_id IN (" + marks + ")"
+    ).bind(bucketId, ...selectedIds).first();
+    if (Number(selected?.n || 0) !== selectedIds.length)
+      throw invalid("選択した項目が更新されています。最新の一覧を読み込んでください", 409, "PROVISIONAL_CHANGED");
+    const receiving = await env.DB.prepare(
+      "SELECT COUNT(*) n FROM provisional_receipts WHERE bucket_id=? AND status='receiving'"
+    ).bind(bucketId).first();
+    if (Number(receiving?.n || 0))
+      throw invalid("受信中のデータがあります。時間をおいて再試行してください", 409, "PROVISIONAL_BUSY");
+  }
   const name = String(form?.name || "").normalize("NFKC").trim().slice(0, 160) || ("未設定（暫定" + slot + "）");
   const expiry = String(form?.expires_on || "").trim();
   if (!dateValid(expiry)) throw invalid("受取期限は正しい日付を入力するか空欄にしてください");
@@ -264,6 +287,19 @@ export async function publishBucket(env, slot, bucketId, form) {
     .bind(cardId, product.id, expiry).run();
   const card = await env.DB.prepare("SELECT id FROM cards WHERE product_id=? AND expires_on=?")
     .bind(product.id, expiry).first();
+  if (selectedIds) {
+    const marks = selectedIds.map(() => "?").join(",");
+    const moved = await env.DB.prepare(
+      "UPDATE items SET status='active',card_id=?,pending_id=NULL,classified_at=? " +
+      "WHERE status='provisional' AND id IN (SELECT e.item_id FROM provisional_entries e " +
+      "WHERE e.bucket_id=? AND e.item_id IN (" + marks + "))"
+    ).bind(card.id, now(), bucketId, ...selectedIds).run();
+    if (Number(moved?.meta?.changes || 0) !== selectedIds.length)
+      throw invalid("選択した項目が更新されています。最新の一覧を読み込んでください", 409, "PROVISIONAL_CHANGED");
+    return { ok: true, slot, cardId: card.id, count: selectedIds.length, partial: true,
+      priceRecorded: amount !== null,
+      warning: amount !== null ? "入力金額は暫定メモです。収益単価はキャンペーンへ仕分け後に確認・設定してください。" : "" };
+  }
   const nextBucketId = uid();
   const tick = now();
   const result = await env.DB.batch([
