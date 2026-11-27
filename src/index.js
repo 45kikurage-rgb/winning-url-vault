@@ -839,15 +839,18 @@ async function listCards(env,source='arunomatic') {
     // Items published from a provisional bucket were never analyzed; they
     // keep a provisional marker in their analysis until they are re-judged.
     // Kept out of enrichCards, whose query shape is frozen by its tests.
-    // The count must stay scoped to the listed cards (idx_items_card): an
-    // unscoped variant with per-row JSON parsing overloaded D1 under the
-    // app's polling on 2026-11-27 and locked the user out at login.
+    // The count must be driven by provisional_entries, the small ledger of
+    // provisional-received items: scanning items (even scoped to the listed
+    // cards) reads every active row and overloaded D1 under the app's
+    // polling on 2026-11-27. Entries survive both whole and partial
+    // publishes, so no bucket bookkeeping is needed here.
     const provisionalCounts = new Map();
     const cardIds = cards.map(card => card.id);
     for (let start = 0; start < cardIds.length; start += 90) {
       const chunk = cardIds.slice(start, start + 90);
       const provisionalRows = await env.DB.prepare(`SELECT i.card_id,COUNT(*) count FROM items i
-        WHERE i.card_id IN (${chunk.map(() => "?").join(",")}) AND i.status='active'
+        WHERE i.id IN (SELECT item_id FROM provisional_entries)
+          AND i.card_id IN (${chunk.map(() => "?").join(",")}) AND i.status='active'
           AND json_valid(i.analysis_json) AND json_extract(i.analysis_json,'$.provisional')=1
           AND NOT EXISTS(SELECT 1 FROM item_campaign_assignments a WHERE a.item_id=i.id)
         GROUP BY i.card_id`).bind(...chunk).all();
