@@ -12,9 +12,18 @@
   <link rel="apple-touch-icon" href="/icon-any-192.png?v=home-t-20261122">
   <link rel="icon" type="image/png" href="/icon-any-192.png?v=home-t-20261122">
   <link rel="stylesheet" href="/styles.css?v=20261122-campaign-layout">
+  <style>
+    .boot-splash{position:fixed;inset:0;z-index:60;display:grid;place-content:center;gap:10px;justify-items:center;background:#020711;color:#fff;text-align:center}
+    .boot-splash strong{font-size:28px;letter-spacing:.02em}
+    .boot-splash small{color:#9fb4d8}
+  </style>
 </head>
 <body>
-<section id="loginScreen" class="login-screen">
+<div id="bootSplash" class="boot-splash" role="status" aria-label="読み込み中">
+  <strong>Aruno-Ticket</strong>
+  <small>読み込み中…</small>
+</div>
+<section id="loginScreen" class="login-screen hidden">
   <form id="loginForm" class="login-card">
 
     <h1>Aruno-Ticket</h1>
