@@ -193,6 +193,7 @@ async function loadRevenueSummary() {
 
 function showLogin(message = "") {
   state.authenticated = false;
+  $("bootSplash").classList.add("hidden");
   $("app").classList.add("hidden");
   $("loginScreen").classList.remove("hidden");
   $("loginForm").classList.toggle("hidden", state.deviceOnlyMode);
@@ -205,6 +206,7 @@ function showLogin(message = "") {
 function showApp(mode) {
   state.authenticated = true;
   setMode(mode);
+  $("bootSplash").classList.add("hidden");
   $("loginScreen").classList.add("hidden");
   $("app").classList.remove("hidden");
 }

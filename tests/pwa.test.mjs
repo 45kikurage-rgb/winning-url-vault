@@ -152,3 +152,12 @@ test("端末限定ログインUIはローカル非抽出鍵・登録手順とCoo
   assert.doesNotMatch(device,/localStorage/);
   assert.match(sw,/\/device-login\.js/);
 });
+
+test("起動直後はログイン画面を出さず、認証結果が出てから切り替える", async () => {
+  const index = await text("index.html");
+  const app = await text("app.js");
+  assert.match(index, /id="bootSplash"/);
+  assert.match(index, /id="loginScreen" class="login-screen hidden"/);
+  assert.match(app, /function showLogin\(message = ""\) \{\n  state\.authenticated = false;\n  \$\("bootSplash"\)\.classList\.add\("hidden"\)/);
+  assert.match(app, /function showApp\(mode\) \{\n  state\.authenticated = true;\n  setMode\(mode\);\n  \$\("bootSplash"\)\.classList\.add\("hidden"\)/);
+});
